@@ -429,7 +429,10 @@ func (d *dockerRuntime) Restart() error {
 }
 
 func (d *dockerRuntime) Running() bool {
-	if !d.started {
+	d.mu.Lock()
+	started := d.started
+	d.mu.Unlock()
+	if !started {
 		return false
 	}
 	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", d.cfg.ContainerName).Output()

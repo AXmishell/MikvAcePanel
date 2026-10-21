@@ -27,9 +27,12 @@ type localHysteriaConfig struct {
 }
 
 type statsPoller struct {
-	client   *http.Client
-	secret   string
-	baseURL  string
+	client *http.Client
+
+	mu      sync.RWMutex
+	secret  string
+	baseURL string
+
 	totalTx  atomic.Int64
 	totalRy  atomic.Int64
 	onlineMu sync.RWMutex
@@ -60,23 +63,32 @@ func (s *statsPoller) Configure(yamlText string) {
 	if err := yaml.Unmarshal([]byte(yamlText), &c); err != nil {
 		return
 	}
+	baseURL := ""
 	if c.TrafficStats.Listen != "" {
 		addr := c.TrafficStats.Listen
 		if strings.HasPrefix(addr, ":") {
 			addr = "127.0.0.1" + addr
 		}
-		s.baseURL = "http://" + addr
+		baseURL = "http://" + addr
+	}
+	s.mu.Lock()
+	if baseURL != "" {
+		s.baseURL = baseURL
 	}
 	s.secret = c.TrafficStats.Secret
+	s.mu.Unlock()
 }
 
 func (s *statsPoller) request(ctx context.Context, path string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+path, nil)
+	s.mu.RLock()
+	baseURL, secret := s.baseURL, s.secret
+	s.mu.RUnlock()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
 	if err != nil {
 		return nil, err
 	}
-	if s.secret != "" {
-		req.Header.Set("Authorization", s.secret)
+	if secret != "" {
+		req.Header.Set("Authorization", secret)
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {

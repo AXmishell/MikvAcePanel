@@ -116,6 +116,24 @@ func TestBuildCSR(t *testing.T) {
 	}
 }
 
+func TestRequiresManagedCert(t *testing.T) {
+	a := &Agent{}
+	reality := `{"inbounds":[{"streamSettings":{"security":"reality"}}]}`
+	tlsCfg := `{"inbounds":[{"streamSettings":{"security":"tls"}}]}`
+	if a.requiresManagedCert("xray", reality, "managed") {
+		t.Fatal("reality should not require a managed certificate")
+	}
+	if a.requiresManagedCert("hysteria", "any", "selfsigned") {
+		t.Fatal("selfsigned mode should not require a managed certificate")
+	}
+	if !a.requiresManagedCert("hysteria", "any", "managed") {
+		t.Fatal("hysteria managed mode requires a certificate")
+	}
+	if !a.requiresManagedCert("xray", tlsCfg, "managed") {
+		t.Fatal("xray tls managed mode requires a certificate")
+	}
+}
+
 func TestNeedsManagedCert(t *testing.T) {
 	a := &Agent{}
 	reality := `{"inbounds":[{"streamSettings":{"security":"reality"}}]}`

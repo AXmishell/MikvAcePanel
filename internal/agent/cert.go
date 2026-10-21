@@ -146,16 +146,27 @@ func (a *Agent) needsManagedCert(protocol, configText string) bool {
 	return false
 }
 
+// requiresManagedCert reports whether a certificate must exist before the
+// configuration can run. Xray REALITY/plaintext nodes never use the file.
+func (a *Agent) requiresManagedCert(protocol, configText, tlsMode string) bool {
+	return strings.EqualFold(strings.TrimSpace(tlsMode), "managed") && a.needsManagedCert(protocol, configText)
+}
+
 // maybeRequestCert asks the panel for a certificate when the installed one is
 // missing or about to expire.
 func (a *Agent) maybeRequestCert(_ context.Context, reason string) {
 	a.configMu.Lock()
 	mode := a.meta.TLSMode
 	host := a.meta.Host
+	protocol := a.meta.Protocol
+	configText := a.currentConfig
 	if host == "" {
 		host = a.meta.Domain
 	}
 	a.configMu.Unlock()
+	if configText != "" && !a.requiresManagedCert(protocol, configText, mode) {
+		return
+	}
 	a.certMu.Lock()
 	pendingManaged, pendingHost := a.pendingManaged, a.pendingHost
 	a.certMu.Unlock()
@@ -368,11 +379,12 @@ func (a *Agent) handleCertPush(raw json.RawMessage) {
 		a.handleConfig(pending)
 		return
 	}
+	rt, _ := a.runtimeState()
 	a.configMu.Lock()
-	hasConfig := a.currentConfig != "" && a.runtime != nil
+	hasConfig := a.currentConfig != "" && rt != nil
 	a.configMu.Unlock()
-	if hasConfig && a.runtime.Running() {
-		if err := a.runtime.Restart(); err != nil {
+	if hasConfig && rt.Running() {
+		if err := rt.Restart(); err != nil {
 			a.log.Error("restart after certificate install", "error", err)
 		}
 	}

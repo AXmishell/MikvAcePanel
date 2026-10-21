@@ -26,8 +26,10 @@ type Agent struct {
 	cfg Config
 	log *slog.Logger
 
-	runtime      Runtime
-	protocol     string
+	runtimeMu sync.RWMutex
+	runtime   Runtime
+	protocol  string
+
 	stats        *statsPoller
 	xrayStats    *xrayStatsPoller
 	sampler      sampler
@@ -96,18 +98,32 @@ func New(cfg Config, logger *slog.Logger) (*Agent, error) {
 		if err != nil {
 			return nil, err
 		}
+		a.runtimeMu.Lock()
 		a.runtime = rt
 		a.protocol = protocol
+		a.runtimeMu.Unlock()
 	}
 	a.stats = newStatsPoller("", "127.0.0.1:9999")
 	a.xrayStats = newXrayStatsPoller(cfg.XrayBin)
 	return a, nil
 }
 
+// runtimeState returns the active runtime and protocol. Callers must not hold
+// runtimeMu.
+func (a *Agent) runtimeState() (Runtime, string) {
+	a.runtimeMu.RLock()
+	defer a.runtimeMu.RUnlock()
+	return a.runtime, a.protocol
+}
+
 func (a *Agent) ensureRuntime(protocol string) error {
 	if protocol == "" {
 		protocol = "hysteria"
 	}
+	// Serialize runtime switches: they are rare and Close can block while the
+	// old proxy process shuts down.
+	a.runtimeMu.Lock()
+	defer a.runtimeMu.Unlock()
 	if a.runtime != nil && a.protocol == protocol {
 		return nil
 	}
@@ -125,19 +141,24 @@ func (a *Agent) ensureRuntime(protocol string) error {
 
 // Run starts the node agent and blocks until the context is cancelled.
 func (a *Agent) Run(ctx context.Context) error {
-	if a.runtime != nil {
-		defer a.runtime.Close()
+	rt, protocol := a.runtimeState()
+	if rt != nil {
+		defer rt.Close()
 	}
 	defer a.stopAccessTail()
 	go a.logBatcher(ctx)
 	go a.retransmitLoop(ctx)
 	go a.certRetryLoop(ctx)
-	if a.currentConfig != "" && a.runtime != nil {
+	a.configMu.Lock()
+	currentConfig := a.currentConfig
+	meta := a.meta
+	a.configMu.Unlock()
+	if currentConfig != "" && rt != nil {
 		blocked := false
-		if strings.EqualFold(a.meta.TLSMode, "managed") {
-			host := a.meta.Host
+		if a.requiresManagedCert(protocol, currentConfig, meta.TLSMode) {
+			host := meta.Host
 			if host == "" {
-				host = a.meta.Domain
+				host = meta.Domain
 			}
 			if _, err := a.managedCertStatus(host); err != nil {
 				a.log.Warn("waiting for a panel certificate before starting", "error", err)
@@ -145,19 +166,19 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 		}
 		if !blocked {
-			if a.protocol == "xray" {
-				a.xrayStats.Configure(a.currentConfig)
+			if protocol == "xray" {
+				a.xrayStats.Configure(currentConfig)
 				a.startAccessTail(a.accessLogPath())
 			} else {
-				a.stats.Configure(a.currentConfig)
-				if a.meta.PortRange != "" {
-					if err := SetupPortHopping(a.meta.Port, a.meta.PortRange); err != nil {
+				a.stats.Configure(currentConfig)
+				if meta.PortRange != "" {
+					if err := SetupPortHopping(meta.Port, meta.PortRange); err != nil {
 						a.log.Warn("port hopping setup", "error", err)
 					}
 				}
 			}
-			if err := a.runtime.Start(); err != nil {
-				a.log.Warn("start "+a.protocol+" from local config", "error", err)
+			if err := rt.Start(); err != nil {
+				a.log.Warn("start "+protocol+" from local config", "error", err)
 			}
 		}
 	}
@@ -314,8 +335,8 @@ func (a *Agent) session(ctx context.Context) error {
 
 func (a *Agent) sendHello() {
 	version, runtimeName := "unknown", "unknown"
-	if a.runtime != nil {
-		version, runtimeName = a.runtime.Version(), a.runtime.Name()
+	if rt, _ := a.runtimeState(); rt != nil {
+		version, runtimeName = rt.Version(), rt.Name()
 	}
 	a.configMu.Lock()
 	certFP := a.meta.CertFingerprint
@@ -334,10 +355,11 @@ func (a *Agent) sendHello() {
 }
 
 func (a *Agent) onlineCount() int {
-	if a.runtime == nil {
+	rt, protocol := a.runtimeState()
+	if rt == nil {
 		return 0
 	}
-	if a.protocol == "xray" {
+	if protocol == "xray" {
 		a.xrayOnlineMu.Lock()
 		defer a.xrayOnlineMu.Unlock()
 		cutoff := time.Now().Add(-2 * time.Minute)
@@ -355,7 +377,8 @@ func (a *Agent) onlineCount() int {
 }
 
 func (a *Agent) trafficTotals() (int64, int64) {
-	if a.protocol == "xray" {
+	_, protocol := a.runtimeState()
+	if protocol == "xray" {
 		return a.xrayStats.Totals()
 	}
 	return a.stats.Totals()
@@ -399,8 +422,8 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 			sys := a.sampler.Sample(a.cfg.DataDir)
 			tx, rx := a.trafficTotals()
 			hy2Running := false
-			if a.runtime != nil {
-				hy2Running = a.runtime.Running()
+			if rt, _ := a.runtimeState(); rt != nil {
+				hy2Running = rt.Running()
 			}
 			a.write("heartbeat", map[string]any{
 				"cpuPct": sys.CPUPct, "memUsed": sys.MemUsed, "memTotal": sys.MemTotal,
@@ -421,7 +444,7 @@ func (a *Agent) statsLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			var batch *model.StatsBatch
-			if a.protocol == "xray" {
+			if _, protocol := a.runtimeState(); protocol == "xray" {
 				batch = a.xrayStats.Poll(ctx)
 			} else {
 				batch = a.stats.Poll(ctx)
@@ -597,37 +620,44 @@ func (a *Agent) handleConfig(raw json.RawMessage) {
 	}
 	a.clearPendingConfig()
 	preparedPreview := PrepareConfig(a.cfg, configText)
+	rt, activeProtocol := a.runtimeState()
 	a.configMu.Lock()
-	if a.runtime != nil && msg.Revision == a.appliedRevision && preparedPreview == a.currentConfig && a.protocol == protocol && a.runtime.Running() {
-		a.configMu.Unlock()
+	unchanged := msg.Revision == a.appliedRevision && preparedPreview == a.currentConfig
+	previous := a.currentConfig
+	a.configMu.Unlock()
+	if rt != nil && unchanged && activeProtocol == protocol && rt.Running() {
 		a.write("config.ack", map[string]any{"revision": msg.Revision, "ok": true})
 		return
 	}
-	previous := a.currentConfig
-	previousProtocol := a.protocol
-	a.configMu.Unlock()
+	previousProtocol := activeProtocol
 
 	if err := a.applyConfig(msg.Revision, protocol, configText, msg.TLSMode, msg.Domain, msg.Host, msg.Port, msg.PortRange); err != nil {
 		a.log.Error("apply config failed", "revision", msg.Revision, "error", err)
 		// Restore the previous configuration so the node keeps serving.
-		if a.protocol == protocol {
+		if _, currentProtocol := a.runtimeState(); currentProtocol == protocol {
 			RemovePortHopping(msg.Port, msg.PortRange)
 		}
 		if previous != "" {
-			if a.protocol != previousProtocol {
+			if _, currentProtocol := a.runtimeState(); currentProtocol != previousProtocol {
 				if err := a.ensureRuntime(previousProtocol); err != nil {
 					a.log.Error("restore runtime", "error", err)
 				}
 			}
-			_ = a.writeConfigFile(previous)
+			restoreRuntime, _ := a.runtimeState()
+			_ = a.writeConfigFile(restoreRuntime, previous)
 			if previousProtocol == "xray" {
 				a.xrayStats.Configure(previous)
 			} else {
 				a.stats.Configure(previous)
 			}
-			_ = a.runtime.Restart()
-			if a.meta.PortRange != "" && previousProtocol != "xray" {
-				_ = SetupPortHopping(a.meta.Port, a.meta.PortRange)
+			if restoreRuntime != nil {
+				_ = restoreRuntime.Restart()
+			}
+			a.configMu.Lock()
+			prevPort, prevPortRange := a.meta.Port, a.meta.PortRange
+			a.configMu.Unlock()
+			if prevPortRange != "" && previousProtocol != "xray" {
+				_ = SetupPortHopping(prevPort, prevPortRange)
 			}
 		}
 		a.write("config.ack", map[string]any{"revision": msg.Revision, "ok": false, "error": err.Error()})
@@ -641,17 +671,23 @@ func (a *Agent) applyConfig(revision int64, protocol, configText, tlsMode, domai
 	if err := a.ensureRuntime(protocol); err != nil {
 		return err
 	}
-	if tlsMode == "managed" {
+	rt, _ := a.runtimeState()
+	if rt == nil {
+		return fmt.Errorf("no runtime available for %s", protocol)
+	}
+	// REALITY and plaintext Xray inbounds never use the certificate file, even
+	// when the node's TLS mode is set to managed.
+	if a.requiresManagedCert(protocol, configText, tlsMode) {
 		if _, err := a.managedCertStatus(host); err != nil {
 			return fmt.Errorf("managed certificate: %w", err)
 		}
-	} else if tlsMode != "acme" {
+	} else if tlsMode != "acme" && a.needsManagedCert(protocol, configText) {
 		if err := EnsureSelfSignedCert(a.cfg.DataDir, host); err != nil {
 			return fmt.Errorf("certificate: %w", err)
 		}
 	}
 	prepared := PrepareConfig(a.cfg, configText)
-	if err := a.writeConfigFile(prepared); err != nil {
+	if err := a.writeConfigFile(rt, prepared); err != nil {
 		return err
 	}
 	if protocol == "xray" {
@@ -659,7 +695,9 @@ func (a *Agent) applyConfig(revision int64, protocol, configText, tlsMode, domai
 	} else {
 		a.stats.Configure(prepared)
 	}
+	a.configMu.Lock()
 	prev := a.meta
+	a.configMu.Unlock()
 	if protocol != "xray" {
 		if prev.PortRange != portRange || prev.Port != port {
 			RemovePortHopping(prev.Port, prev.PortRange)
@@ -670,12 +708,12 @@ func (a *Agent) applyConfig(revision int64, protocol, configText, tlsMode, domai
 	} else {
 		RemovePortHopping(prev.Port, prev.PortRange)
 	}
-	if err := a.runtime.Restart(); err != nil {
+	if err := rt.Restart(); err != nil {
 		return fmt.Errorf("start %s: %w", protocol, err)
 	}
 	// Give the process a moment to validate the config and bind its port.
 	time.Sleep(1500 * time.Millisecond)
-	if !a.runtime.Running() {
+	if !rt.Running() {
 		return fmt.Errorf("%s exited after applying the configuration", protocol)
 	}
 	a.configMu.Lock()
@@ -698,19 +736,22 @@ func (a *Agent) applyConfig(revision int64, protocol, configText, tlsMode, domai
 	} else {
 		a.stopAccessTail()
 	}
-	if tlsMode == "managed" {
+	if a.requiresManagedCert(protocol, configText, tlsMode) {
 		a.maybeRequestCert(context.Background(), "apply")
 	}
 	a.sendHello()
 	return nil
 }
 
-func (a *Agent) writeConfigFile(content string) error {
+func (a *Agent) writeConfigFile(rt Runtime, content string) error {
+	if rt == nil {
+		return fmt.Errorf("no runtime configured")
+	}
 	dir := filepath.Join(a.cfg.DataDir, "config")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	path := a.runtime.ConfigPath()
+	path := rt.ConfigPath()
 	if err := os.WriteFile(path+".tmp", []byte(content), 0o600); err != nil {
 		return err
 	}
@@ -726,17 +767,18 @@ func (a *Agent) handleCommand(raw json.RawMessage) {
 		return
 	}
 	var err error
-	if a.runtime == nil {
+	rt, _ := a.runtimeState()
+	if rt == nil {
 		a.write("command.ack", map[string]any{"id": cmd.ID, "action": cmd.Action, "ok": false, "output": "no configuration applied yet"})
 		return
 	}
 	switch cmd.Action {
 	case "start":
-		err = a.runtime.Start()
+		err = rt.Start()
 	case "stop":
-		err = a.runtime.Stop()
+		err = rt.Stop()
 	case "restart":
-		err = a.runtime.Restart()
+		err = rt.Restart()
 	default:
 		err = fmt.Errorf("unknown action %q", cmd.Action)
 	}
