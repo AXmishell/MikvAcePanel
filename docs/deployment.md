@@ -227,6 +227,8 @@ docker compose start panel
 3. 推送到 `main` 后，工作流会构建 `site/` 并发布；
 4. 默认地址为 `https://<owner>.github.io/MikvAcePanel/`。
 
+工作流会先读取 Pages 配置：如果尚未启用，或 Source 仍是“Deploy from a branch”，构建步骤会跳过并给出提示；启用 **GitHub Actions** 后重新运行 **Docs** 工作流即可。
+
 本地预览：
 
 ```bash
