@@ -136,6 +136,7 @@ type Node struct {
 	SSHUser          string       `json:"sshUser"`
 	SSHPassword      string       `json:"-"`
 	SSHKey           string       `json:"-"`
+	SSHHostKey       string       `json:"sshHostKey,omitempty"`
 	SSHInstallDocker bool         `json:"sshInstallDocker"`
 	TLSMode          string       `json:"tlsMode"`
 	ACMEEmail        string       `json:"acmeEmail"`

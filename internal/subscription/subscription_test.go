@@ -208,6 +208,94 @@ func TestVLESSURIAndFormats(t *testing.T) {
 	}
 }
 
+func TestSpecialCharacterPasswordStaysRawInClientConfigs(t *testing.T) {
+	u := &model.User{UserID: "alice", Password: "p@ss:word", XrayUUID: "11111111-1111-4111-8111-111111111111"}
+	nodes := []model.Node{{ID: 1, Name: "Edge", IP: "203.0.113.1", Port: 443}}
+	wantAuth := "alice:p@ss:word"
+
+	clash, err := Clash(u, nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clashDoc map[string]any
+	if err := yaml.Unmarshal([]byte(clash), &clashDoc); err != nil {
+		t.Fatal(err)
+	}
+	proxy := clashDoc["proxies"].([]any)[0].(map[string]any)
+	if proxy["password"] != wantAuth {
+		t.Fatalf("clash password = %v", proxy["password"])
+	}
+
+	sb, err := Singbox(u, nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sbDoc map[string]any
+	if err := json.Unmarshal([]byte(sb), &sbDoc); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, raw := range sbDoc["outbounds"].([]any) {
+		ob := raw.(map[string]any)
+		if ob["type"] == "hysteria2" {
+			found = true
+			if ob["password"] != wantAuth {
+				t.Fatalf("sing-box password = %v", ob["password"])
+			}
+		}
+	}
+	if !found {
+		t.Fatal("hysteria2 outbound missing")
+	}
+
+	xr, err := Xray(u, nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var xrDoc map[string]any
+	if err := json.Unmarshal([]byte(xr), &xrDoc); err != nil {
+		t.Fatal(err)
+	}
+	found = false
+	for _, raw := range xrDoc["outbounds"].([]any) {
+		ob := raw.(map[string]any)
+		if ob["protocol"] == "hysteria" {
+			found = true
+			stream := ob["streamSettings"].(map[string]any)
+			hysteria := stream["hysteriaSettings"].(map[string]any)
+			if hysteria["auth"] != wantAuth {
+				t.Fatalf("xray auth = %v", hysteria["auth"])
+			}
+		}
+	}
+	if !found {
+		t.Fatal("hysteria outbound missing")
+	}
+
+	eps := Endpoints(nodes[0])
+	link := URI(u, nodes[0], eps[0])
+	if !strings.Contains(link, "alice:p%40ss%3Aword@") {
+		t.Fatalf("share link should be escaped: %s", link)
+	}
+}
+
+func TestVLESSURLCertificateVerification(t *testing.T) {
+	u := &model.User{XrayUUID: "11111111-1111-4111-8111-111111111111"}
+	n := model.Node{
+		Type: "xray", Name: "TLS Edge", Domain: "edge.example.com", Port: 443, TLSMode: "managed",
+		Xray: model.XraySettings{Transport: "tcp", Security: "tls", ALPN: []string{"h2", "http/1.1"}},
+	}
+	uri := VLESSURI(u, n)
+	if strings.Contains(uri, "allowInsecure=1") {
+		t.Fatalf("managed certificate link skips verification: %s", uri)
+	}
+	n.TLSMode = "selfsigned"
+	uri = VLESSURI(u, n)
+	if !strings.Contains(uri, "allowInsecure=1") {
+		t.Fatalf("self-signed link should allow insecure mode: %s", uri)
+	}
+}
+
 func TestEndpointsManagedCertificate(t *testing.T) {
 	_, nodes := fixture()
 	n := nodes[1]

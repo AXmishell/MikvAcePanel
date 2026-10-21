@@ -156,7 +156,7 @@ xray run -c /data/config/config.json
 - REALITY 的 x25519 密钥与 short id 由面板生成；
 - Xray access log 写入 `/data/log/access.log`，Agent 自动 tail 并上报；
 - 用户流量通过 `xray api statsquery` 获取，按 email（userId）聚合；
-- 新增/修改/禁用用户后，面板会重新渲染并下发所有 Xray 节点配置。
+- 新增/修改/禁用用户后，面板会重新渲染并下发所有 Xray 节点配置；定时任务和流量批次也会移除已过期或超流量的用户。
 
 ## SSH 自动安装
 
@@ -164,7 +164,7 @@ xray run -c /data/config/config.json
 
 - 面板服务器能访问节点 SSH；
 - 使用 root 或具备 Docker 权限的用户；
-- 默认不验证 SSH host key（使用 `InsecureIgnoreHostKey`），请限制面板出口 IP 并使用专用凭据；
+- 首次连接会以 TOFU（首次信任）方式固定节点 SSH host key，后续安装会严格校验；也可以在节点 API/表单中预先填写 `sshHostKey`（authorized_keys 格式）来避免首次信任风险；
 - 可选自动执行 `get.docker.com` 安装 Docker；
 - 私钥暂不支持 passphrase。
 

@@ -38,6 +38,7 @@ type nodePayload struct {
 	SSHUser          string             `json:"sshUser"`
 	SSHPassword      string             `json:"sshPassword"`
 	SSHKey           string             `json:"sshKey"`
+	SSHHostKey       string             `json:"sshHostKey"`
 	SSHInstallDocker bool               `json:"sshInstallDocker"`
 	TLSMode          string             `json:"tlsMode"`
 	ACMEEmail        string             `json:"acmeEmail"`
@@ -465,8 +466,9 @@ func (s *Server) nodeFromPayload(p *nodePayload, existing *model.Node) (*model.N
 		Listen: strings.TrimSpace(p.Listen), Port: port, PortRange: portRange,
 		HopInterval: strings.TrimSpace(p.HopInterval), ObfsType: obfs, ObfsPassword: p.ObfsPassword,
 		StatsPort: statsPort, SSHPort: sshPort, SSHUser: strings.TrimSpace(p.SSHUser),
-		SSHPassword: p.SSHPassword, SSHKey: p.SSHKey, SSHInstallDocker: p.SSHInstallDocker,
-		TLSMode: tlsMode, ACMEEmail: strings.TrimSpace(p.ACMEEmail),
+		SSHPassword: p.SSHPassword, SSHKey: p.SSHKey, SSHHostKey: strings.TrimSpace(p.SSHHostKey),
+		SSHInstallDocker: p.SSHInstallDocker,
+		TLSMode:          tlsMode, ACMEEmail: strings.TrimSpace(p.ACMEEmail),
 		BandwidthUp: strings.TrimSpace(p.BandwidthUp), BandwidthDown: strings.TrimSpace(p.BandwidthDown),
 		MasqueradeURL: strings.TrimSpace(p.MasqueradeURL), ACL: acl, Outbounds: outbounds,
 		Xray: p.Xray, MaxOnline: p.MaxOnline, Ranking: ranking, Active: active,
@@ -503,6 +505,9 @@ func (s *Server) nodeFromPayload(p *nodePayload, existing *model.Node) (*model.N
 		if n.SSHKey == "" {
 			n.SSHKey = existing.SSHKey
 		}
+		if n.SSHHostKey == "" {
+			n.SSHHostKey = existing.SSHHostKey
+		}
 	}
 	if n.StatsSecret == "" {
 		n.StatsSecret = store.RandomToken(16)
@@ -525,6 +530,10 @@ func (s *Server) nodeResponse(n *model.Node) map[string]any {
 // syncNodeConfig renders and stores a node configuration, then pushes it when
 // force is true or the agent is connected and has not applied it yet.
 func (s *Server) syncNodeConfig(ctx context.Context, n *model.Node, force bool) (*model.NodeConfig, bool) {
+	// Serialize config generation: user edits, quota reconciliation and agent
+	// reconnects can otherwise race for the next revision number.
+	s.configSyncMu.Lock()
+	defer s.configSyncMu.Unlock()
 	pub, _ := s.store.GetSetting(ctx, "public_url")
 	pub = strings.TrimRight(pub, "/")
 	if pub == "" {

@@ -32,17 +32,23 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// DNS credentials are write-only and served through /api/cert/settings.
-	if token := strings.TrimSpace(settings["cert_dns_config"]); token != "" {
-		settings["cert_dns_config_set"] = "true"
-	}
-	delete(settings, "cert_dns_config")
 	writeJSON(w, http.StatusOK, map[string]any{
-		"settings": settings,
+		"settings": redactSettings(settings),
 		"version":  version.String(),
 		"platform": version.Platform(),
 		"dataDir":  s.cfg.DataDir,
 	})
+}
+
+// redactSettings removes write-only secrets before settings are returned to a
+// client. The DNS credentials remain available through /api/cert/settings,
+// which reports only whether they are configured.
+func redactSettings(settings map[string]string) map[string]string {
+	if token := strings.TrimSpace(settings["cert_dns_config"]); token != "" {
+		settings["cert_dns_config_set"] = "true"
+	}
+	delete(settings, "cert_dns_config")
+	return settings
 }
 
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +122,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	settings, _ := s.store.GetSettings(r.Context())
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "settings": settings})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "settings": redactSettings(settings)})
 }
 
 func (s *Server) syncAllNodes(ctx context.Context) (total, pushed int) {

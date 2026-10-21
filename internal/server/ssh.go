@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -51,7 +52,18 @@ func (s *Server) handleNodeSSHInstall(w http.ResponseWriter, r *http.Request) {
 	script := s.sshInstallScript(n)
 	s.hub.Disconnect(id)
 	s.store.AddEvent(r.Context(), "node.ssh_setup", id, "info", "已开始对节点 "+n.Name+" 执行 SSH 自动安装")
-	result := runSSHInstall(host, port, n.SSHUser, n.SSHPassword, n.SSHKey, script)
+	result, hostKey := runSSHInstall(host, port, n.SSHUser, n.SSHPassword, n.SSHKey, n.SSHHostKey, script)
+	if hostKey != "" && strings.TrimSpace(n.SSHHostKey) == "" {
+		// Trust-on-first-use: pin the key so subsequent installs cannot be
+		// redirected to a different host by a MITM. Use a detached context
+		// because the install may outlive the HTTP request.
+		pinCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := s.store.SetNodeSSHHostKey(pinCtx, id, hostKey); err == nil {
+			s.store.AddEvent(pinCtx, "node.ssh_host_key_pinned", id, "info",
+				"已固定节点 SSH 主机密钥："+sshHostKeyFingerprint(hostKey))
+		}
+		cancel()
+	}
 	if !result.OK {
 		s.store.AddEvent(r.Context(), "node.ssh_setup_failed", id, "warning", "SSH 自动安装失败："+result.Error)
 		writeJSON(w, http.StatusBadGateway, result)
@@ -103,7 +115,7 @@ echo "MikvAce node agent started."
 `, dockerCheck, installDocker, shellQuote(pub), shellQuote(n.Token))
 }
 
-func runSSHInstall(host string, port int, user, password, key, script string) sshInstallResult {
+func runSSHInstall(host string, port int, user, password, key, expectedHostKey, script string) (sshInstallResult, string) {
 	res := sshInstallResult{}
 	var auths []ssh.AuthMethod
 	if password != "" {
@@ -113,34 +125,45 @@ func runSSHInstall(host string, port int, user, password, key, script string) ss
 		signer, err := ssh.ParsePrivateKey([]byte(key))
 		if err != nil {
 			res.Error = "cannot parse SSH private key: " + err.Error()
-			return res
+			return res, ""
 		}
 		auths = append(auths, ssh.PublicKeys(signer))
 	}
+	var observedKey ssh.PublicKey
 	cfg := &ssh.ClientConfig{
-		User:            user,
-		Auth:            auths,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         20 * time.Second,
+		User: user,
+		Auth: auths,
+		HostKeyCallback: func(hostname string, remote net.Addr, hostKey ssh.PublicKey) error {
+			if err := verifySSHHostKey(expectedHostKey, hostKey); err != nil {
+				return err
+			}
+			observedKey = hostKey
+			return nil
+		},
+		Timeout: 20 * time.Second,
 	}
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", addr, 20*time.Second)
 	if err != nil {
 		res.Error = err.Error()
-		return res
+		return res, ""
 	}
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
 	if err != nil {
 		_ = conn.Close()
 		res.Error = err.Error()
-		return res
+		return res, ""
 	}
 	client := ssh.NewClient(sshConn, chans, reqs)
 	defer client.Close()
+	pinned := ""
+	if observedKey != nil {
+		pinned = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(observedKey)))
+	}
 	session, err := client.NewSession()
 	if err != nil {
 		res.Error = err.Error()
-		return res
+		return res, pinned
 	}
 	defer session.Close()
 	cmd := "bash -lc " + shellQuote(script)
@@ -158,15 +181,40 @@ func runSSHInstall(host string, port int, user, password, key, script string) ss
 		res.Output = truncateOutput(string(rr.out), 128*1024)
 		if rr.err != nil {
 			res.Error = rr.err.Error()
-			return res
+			return res, pinned
 		}
 		res.OK = true
-		return res
+		return res, pinned
 	case <-time.After(5 * time.Minute):
 		res.Error = "SSH command timed out after 5 minutes"
 		_ = session.Close()
-		return res
+		return res, pinned
 	}
+}
+
+// verifySSHHostKey accepts the key when no pin exists, otherwise requires an
+// exact match. Pins use the authorized_keys format.
+func verifySSHHostKey(expected string, key ssh.PublicKey) error {
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return nil
+	}
+	want, _, _, _, err := ssh.ParseAuthorizedKey([]byte(expected))
+	if err != nil {
+		return fmt.Errorf("invalid pinned SSH host key: %w", err)
+	}
+	if !bytes.Equal(want.Marshal(), key.Marshal()) {
+		return fmt.Errorf("SSH host key mismatch (got %s)", ssh.FingerprintSHA256(key))
+	}
+	return nil
+}
+
+func sshHostKeyFingerprint(value string) string {
+	key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(value)))
+	if err != nil {
+		return ""
+	}
+	return ssh.FingerprintSHA256(key)
 }
 
 func shellQuote(s string) string {

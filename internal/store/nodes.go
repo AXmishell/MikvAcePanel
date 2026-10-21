@@ -13,7 +13,7 @@ import (
 )
 
 const nodeSelect = `SELECT id, name, type, flag, ip, domain, sni, listen, port, port_range, hop_interval,
-	obfs_type, obfs_password, stats_port, stats_secret, xray_json, ssh_port, ssh_user, ssh_password, ssh_key, ssh_install_docker,
+	obfs_type, obfs_password, stats_port, stats_secret, xray_json, ssh_port, ssh_user, ssh_password, ssh_key, ssh_host_key, ssh_install_docker,
 	tls_mode, acme_email, bandwidth_up, bandwidth_down,
 	masquerade_url, acl_json, outbounds_json, max_online, ranking, active, status, token_hash, token, token_prefix,
 	agent_version, os, arch, hy2_version, runtime, last_seen_at, config_revision, applied_revision,
@@ -29,7 +29,7 @@ func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
 	var created, updated string
 	err := row.Scan(&n.ID, &n.Name, &n.Type, &n.Flag, &n.IP, &n.Domain, &n.SNI, &n.Listen,
 		&n.Port, &n.PortRange, &n.HopInterval, &n.ObfsType, &n.ObfsPassword, &n.StatsPort, &n.StatsSecret,
-		&xrayJSON, &n.SSHPort, &n.SSHUser, &n.SSHPassword, &n.SSHKey, &sshInstallDocker,
+		&xrayJSON, &n.SSHPort, &n.SSHUser, &n.SSHPassword, &n.SSHKey, &n.SSHHostKey, &sshInstallDocker,
 		&n.TLSMode, &n.ACMEEmail, &n.BandwidthUp, &n.BandwidthDown, &n.MasqueradeURL, &acl, &outbounds,
 		&n.MaxOnline, &n.Ranking, &active, &n.Status, new(string), &n.Token, &n.TokenPrefix, &n.AgentVersion,
 		&n.OS, &n.Arch, &n.Hy2Version, &n.Runtime, &last, &n.ConfigRevision, &n.AppliedRevision,
@@ -187,13 +187,13 @@ func (s *Store) CreateNode(ctx context.Context, n *model.Node, tokenHash, tokenP
 	}
 	res, err := s.DB.ExecContext(ctx,
 		`INSERT INTO nodes (name, type, flag, ip, domain, sni, listen, port, port_range, hop_interval,
-		 obfs_type, obfs_password, stats_port, stats_secret, xray_json, ssh_port, ssh_user, ssh_password, ssh_key, ssh_install_docker,
+		 obfs_type, obfs_password, stats_port, stats_secret, xray_json, ssh_port, ssh_user, ssh_password, ssh_key, ssh_host_key, ssh_install_docker,
 		 tls_mode, acme_email, bandwidth_up, bandwidth_down,
 		 masquerade_url, acl_json, outbounds_json, max_online, ranking, active, status, token_hash, token, token_prefix,
 		 created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.Name, n.Type, n.Flag, n.IP, n.Domain, n.SNI, n.Listen, n.Port, n.PortRange, n.HopInterval,
-		n.ObfsType, n.ObfsPassword, n.StatsPort, n.StatsSecret, marshalJSON(n.Xray), n.SSHPort, n.SSHUser, n.SSHPassword, n.SSHKey,
+		n.ObfsType, n.ObfsPassword, n.StatsPort, n.StatsSecret, marshalJSON(n.Xray), n.SSHPort, n.SSHUser, n.SSHPassword, n.SSHKey, n.SSHHostKey,
 		boolInt(n.SSHInstallDocker), n.TLSMode, n.ACMEEmail, n.BandwidthUp, n.BandwidthDown,
 		n.MasqueradeURL, marshalJSON(n.ACL), marshalJSON(n.Outbounds), n.MaxOnline, n.Ranking, boolInt(n.Active),
 		"offline", tokenHash, n.Token, tokenPrefix, ts(nowT), ts(nowT))
@@ -212,11 +212,11 @@ func (s *Store) UpdateNode(ctx context.Context, n *model.Node, groupIDs []int64)
 	res, err := s.DB.ExecContext(ctx,
 		`UPDATE nodes SET name = ?, flag = ?, ip = ?, domain = ?, sni = ?, listen = ?, port = ?, port_range = ?,
 		 hop_interval = ?, obfs_type = ?, obfs_password = ?, stats_port = ?, xray_json = ?, ssh_port = ?, ssh_user = ?,
-		 ssh_password = ?, ssh_key = ?, ssh_install_docker = ?, tls_mode = ?, acme_email = ?,
+		 ssh_password = ?, ssh_key = ?, ssh_host_key = ?, ssh_install_docker = ?, tls_mode = ?, acme_email = ?,
 		 bandwidth_up = ?, bandwidth_down = ?, masquerade_url = ?, acl_json = ?, outbounds_json = ?,
 		 max_online = ?, ranking = ?, active = ?, updated_at = ? WHERE id = ?`,
 		n.Name, n.Flag, n.IP, n.Domain, n.SNI, n.Listen, n.Port, n.PortRange, n.HopInterval,
-		n.ObfsType, n.ObfsPassword, n.StatsPort, marshalJSON(n.Xray), n.SSHPort, n.SSHUser, n.SSHPassword, n.SSHKey,
+		n.ObfsType, n.ObfsPassword, n.StatsPort, marshalJSON(n.Xray), n.SSHPort, n.SSHUser, n.SSHPassword, n.SSHKey, n.SSHHostKey,
 		boolInt(n.SSHInstallDocker), n.TLSMode, n.ACMEEmail, n.BandwidthUp, n.BandwidthDown,
 		n.MasqueradeURL, marshalJSON(n.ACL), marshalJSON(n.Outbounds), n.MaxOnline, n.Ranking,
 		boolInt(n.Active), ts(now()), n.ID)
@@ -252,6 +252,21 @@ func (s *Store) DeleteNode(ctx context.Context, id int64) error {
 func (s *Store) ResetNodeToken(ctx context.Context, id int64, token, hash, prefix string) error {
 	res, err := s.DB.ExecContext(ctx, `UPDATE nodes SET token = ?, token_hash = ?, token_prefix = ?, updated_at = ? WHERE id = ?`,
 		token, hash, prefix, ts(now()), id)
+	if err != nil {
+		return err
+	}
+	cnt, _ := res.RowsAffected()
+	if cnt == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetNodeSSHHostKey pins the SSH host key used for future installations.
+func (s *Store) SetNodeSSHHostKey(ctx context.Context, id int64, hostKey string) error {
+	res, err := s.DB.ExecContext(ctx,
+		`UPDATE nodes SET ssh_host_key = ?, updated_at = ? WHERE id = ?`,
+		strings.TrimSpace(hostKey), ts(now()), id)
 	if err != nil {
 		return err
 	}

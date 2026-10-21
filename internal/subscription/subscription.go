@@ -116,8 +116,16 @@ func defaultInt(v, def int) int {
 	return def
 }
 
+// userInfo returns the URL-escaped userinfo used inside share links.
 func userInfo(u *model.User) string {
 	return url.UserPassword(u.UserID, u.Password).String()
+}
+
+// rawAuth returns the literal value clients must send to Hysteria's auth
+// endpoint. Client config formats (Clash, sing-box, Xray JSON) take this value
+// as-is, so it must not be URL-escaped.
+func rawAuth(u *model.User) string {
+	return u.UserID + ":" + u.Password
 }
 
 func encodeFragment(s string) string {
@@ -267,7 +275,7 @@ type clashConfig struct {
 
 // Clash renders a Mihomo/Clash compatible profile.
 func Clash(u *model.User, nodes []model.Node) (string, error) {
-	auth := userInfo(u)
+	auth := rawAuth(u)
 	l := newLabeler()
 	proxies := []any{}
 	names := []string{}
@@ -374,7 +382,7 @@ func clashGroupWithTest(c clashConfig) map[string]any {
 
 // Singbox renders a sing-box 1.11+ profile with a TUN inbound and a selector.
 func Singbox(u *model.User, nodes []model.Node) (string, error) {
-	auth := userInfo(u)
+	auth := rawAuth(u)
 	l := newLabeler()
 	outbounds := []map[string]any{}
 	tags := []string{}
@@ -539,7 +547,7 @@ func Xray(u *model.User, nodes []model.Node) (string, error) {
 		}
 		for _, e := range Endpoints(n) {
 			tag := l.next(Label(n, e))
-			hy := map[string]any{"version": 2, "auth": userInfo(u)}
+			hy := map[string]any{"version": 2, "auth": rawAuth(u)}
 			if e.PortRange != "" {
 				hop := map[string]any{"port": e.PortRange}
 				if sec := HopSeconds(e.HopInterval); sec > 0 {
@@ -703,7 +711,11 @@ func vlessParts(u *model.User, n model.Node) (label, uri string, ok bool) {
 			q.Set("sni", sni)
 		}
 		q.Set("fp", firstNonEmpty(x.Fingerprint, "chrome"))
-		q.Set("allowInsecure", "1")
+		// Only fall back to skipping verification when the node has no
+		// panel-issued certificate for its domain.
+		if !(strings.EqualFold(n.TLSMode, "managed") && n.Domain != "") {
+			q.Set("allowInsecure", "1")
+		}
 		if len(x.ALPN) > 0 {
 			q.Set("alpn", strings.Join(x.ALPN, ","))
 		}

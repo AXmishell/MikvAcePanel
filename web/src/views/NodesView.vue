@@ -225,7 +225,12 @@
         <div class="field full">
           <label>SSH 私钥</label>
           <textarea v-model="form.sshKey" rows="6" :placeholder="editing && editing.sshKeySet ? '已配置 — 留空保持不变' : '-----BEGIN OPENSSH PRIVATE KEY-----'"></textarea>
-          <span class="hint">面板从服务端发起连接，默认不校验 SSH 主机指纹；请使用专用密钥并限制面板出口 IP。</span>
+          <span class="hint">面板从服务端发起连接，请使用专用密钥并限制面板出口 IP。</span>
+        </div>
+        <div class="field full">
+          <label>SSH 主机公钥（可选）</label>
+          <textarea v-model="form.sshHostKey" rows="3" placeholder="ssh-ed25519 AAAA..."></textarea>
+          <span class="hint">留空时首次连接会自动固定主机密钥；已固定后再次安装会严格校验，如需更换请粘贴新公钥。</span>
         </div>
         <div class="field full">
           <label class="checkbox"><input v-model="form.sshInstallDocker" type="checkbox" /> 如果缺少 Docker 则自动安装</label>
@@ -384,7 +389,7 @@ function emptyForm() {
     tlsMode: 'selfsigned', acmeEmail: '', portRange: '', hopInterval: '30s', obfsType: '',
     obfsPassword: '', bandwidthUp: '', bandwidthDown: '', masqueradeUrl: '',
     type: 'hysteria', maxOnline: 0, ranking: 1, active: true, groupIds: [], aclText: 'direct(all)',
-    outbounds: [], sshPort: 22, sshUser: 'root', sshPassword: '', sshKey: '', sshInstallDocker: false,
+    outbounds: [], sshPort: 22, sshUser: 'root', sshPassword: '', sshKey: '', sshHostKey: '', sshInstallDocker: false,
     xray: { transport: 'tcp', security: 'reality', flow: 'xtls-rprx-vision', fingerprint: 'chrome', alpn: [], realityDest: 'www.cloudflare.com:443', realitySni: [], realityPrivateKey: '', realityPublicKey: '', realityShortIds: [], realitySpiderX: '', wsPath: '/', wsHost: '', grpcServiceName: 'grpc', apiPort: 61000, inboundTag: 'vless-in' },
     xraySniText: '', xrayAlpnText: 'h2,http/1.1', xraySidText: '',
   }
@@ -447,7 +452,7 @@ function openEdit(n) {
     bandwidthUp: n.bandwidthUp || '', bandwidthDown: n.bandwidthDown || '', masqueradeUrl: n.masqueradeUrl || '',
     maxOnline: n.maxOnline || 0, ranking: n.ranking || 1, active: n.active,
     sshPort: n.sshPort || 22, sshUser: n.sshUser || '', sshPassword: '', sshKey: '',
-    sshInstallDocker: !!n.sshInstallDocker,
+    sshHostKey: n.sshHostKey || '', sshInstallDocker: !!n.sshInstallDocker,
     groupIds: (n.groups || []).map((g) => g.id),
     aclText: (n.acl || []).join('\n'),
     outbounds: (n.outbounds || []).map((o) => ({ ...o })),
@@ -541,7 +546,8 @@ async function save() {
       bandwidthUp: form.bandwidthUp, bandwidthDown: form.bandwidthDown, masqueradeUrl: form.masqueradeUrl,
       maxOnline: Number(form.maxOnline) || 0, ranking: Number(form.ranking) || 1, active: form.active,
       sshPort: Number(form.sshPort) || 22, sshUser: form.sshUser,
-      sshPassword: form.sshPassword, sshKey: form.sshKey, sshInstallDocker: form.sshInstallDocker,
+      sshPassword: form.sshPassword, sshKey: form.sshKey, sshHostKey: form.sshHostKey,
+      sshInstallDocker: form.sshInstallDocker,
       groupIds: form.groupIds,
       acl: form.aclText.split('\n').map((s) => s.trim()).filter(Boolean),
       outbounds: form.outbounds.filter((o) => o.name),

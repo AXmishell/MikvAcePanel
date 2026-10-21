@@ -608,9 +608,30 @@ func TestRunSSHInstall(t *testing.T) {
 	}()
 	host, portStr, _ := net.SplitHostPort(ln.Addr().String())
 	port, _ := strconv.Atoi(portStr)
-	res := runSSHInstall(host, port, "root", "pw", "", "echo hi")
+	res, hostKey := runSSHInstall(host, port, "root", "pw", "", "", "echo hi")
 	if !res.OK || !strings.Contains(res.Output, "installed") {
 		t.Fatalf("result = %+v", res)
+	}
+	if hostKey == "" || !strings.HasPrefix(hostKey, "ssh-rsa ") {
+		t.Fatalf("host key not captured: %q", hostKey)
+	}
+	// A pinned key allows the next connection.
+	res, _ = runSSHInstall(host, port, "root", "pw", "", hostKey, "echo hi")
+	if !res.OK {
+		t.Fatalf("pinned install = %+v", res)
+	}
+	// A different key is rejected before the command runs.
+	other, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherPub, err := ssh.NewPublicKey(&other.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, _ = runSSHInstall(host, port, "root", "pw", "", strings.TrimSpace(string(ssh.MarshalAuthorizedKey(otherPub))), "echo hi")
+	if res.OK || !strings.Contains(res.Error, "host key mismatch") {
+		t.Fatalf("mismatched host key accepted: %+v", res)
 	}
 }
 
