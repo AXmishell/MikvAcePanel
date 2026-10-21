@@ -13,6 +13,8 @@
 - **订阅分发**：Clash/Mihomo YAML、sing-box JSON、Shadowrocket Base64、原始 URI 列表、Xray JSON；支持 HAPP 路由头与 providerid。
 - **Hysteria 2 认证**：节点把客户端认证请求转发到 `POST /api/auth`，支持启用/禁用、到期、流量限额、设备数限制（按唯一 IP + 宽限期）。
 - **节点管理**：面板生成 Hysteria 服务端配置，通过 WebSocket 实时下发；支持版本、运行状态、配置 revision、错误回报、启动/停止/重启。
+- **证书统一签发**：面板通过 ACME DNS-01 申请证书，Agent 提交 CSR、安装证书链（私钥不出节点）；节点自签 ACME 只使用 TLS-ALPN，不再占用 80 端口。
+- **两步验证（2FA）**：管理员可使用标准 TOTP 应用登录，提供一次性恢复码；2FA 密钥加密存储，支持自助关闭与恢复码重置。
 - **节点端 Docker 镜像**：单容器内置 Hysteria 2 + Xray + Agent，开箱即用；也支持 `HY2_RUNTIME=docker`，由 Agent 管理同机的代理容器。
 - **SSH 自动安装**：保存 SSH 凭据后可一键远程安装/重启节点容器（可选自动安装 Docker）。
 - **备份恢复**：本地 tar.gz 备份、自动备份保留策略、上传恢复（重启生效）。
@@ -65,8 +67,9 @@ internal/subscription  Clash / sing-box / URI / Xray 生成
 internal/hy2config  Hysteria 服务端 YAML 生成
 internal/logs       日志解析与规则分析
 internal/agent      Agent、运行时、证书、指标、流量轮询
+internal/certmanager 面板侧 ACME 签发、CSR 校验与证书下发
 web/                Vue 3 + Vite 前端
-docs/               API、节点、日志分析文档
+docs/               API、节点、证书签发、2FA、日志分析文档
 ```
 
 ---
@@ -122,7 +125,7 @@ docker compose --profile redis up -d --build
 
 ```bash
 docker pull ghcr.io/axmishell/mikvacepanel:latest        # 面板
-docker pull ghcr.io/axmishell/mikvacepanel-node:latest   # 节点 Agent
+docker pull ghcr.io/axmishell/mikvacepanel-node:main   # 节点 Agent
 ```
 
 标签规则：`main` 分支发布 `main`、`latest`、`sha-<commit>`；`v1.2.3` 标签发布 `1.2.3`、`1.2`、`latest`、`sha-<commit>`。
@@ -162,15 +165,15 @@ docker run -d --name mikvace-node --restart unless-stopped \
   -e NODE_TOKEN="mtn_xxx" \
   -e HY2_RUNTIME=process \
   -v /var/lib/mikvace:/data \
-  mikvacepanel/node:latest
+  ghcr.io/axmishell/mikvacepanel-node:main
 ```
 
-直接使用 GHCR 上的预构建镜像（把上面的 `mikvacepanel/node:latest` 换成 `ghcr.io/axmishell/mikvacepanel-node:latest`）即可，也可以本地构建：
+上面的命令直接使用 GHCR 上的预构建镜像。需要本地构建时，可以构建同名镜像覆盖它：
 
 ```bash
 make docker-node
 # 或
-docker build -f Dockerfile.node -t mikvacepanel/node:latest .
+docker build -f Dockerfile.node -t ghcr.io/axmishell/mikvacepanel-node:main .
 ```
 
 节点环境变量：

@@ -17,13 +17,15 @@ const nodeSelect = `SELECT id, name, type, flag, ip, domain, sni, listen, port, 
 	tls_mode, acme_email, bandwidth_up, bandwidth_down,
 	masquerade_url, acl_json, outbounds_json, max_online, ranking, active, status, token_hash, token, token_prefix,
 	agent_version, os, arch, hy2_version, runtime, last_seen_at, config_revision, applied_revision,
-	config_error, traffic_tx, traffic_rx, online_users, created_at, updated_at FROM nodes`
+	config_error, traffic_tx, traffic_rx, online_users, created_at, updated_at,
+	capabilities_json, cert_fingerprint, cert_not_after FROM nodes`
 
 func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
 	var n model.Node
 	var acl, outbounds, xrayJSON string
 	var active, sshInstallDocker int
 	var last sql.NullString
+	var capsJSON, certAfter sql.NullString
 	var created, updated string
 	err := row.Scan(&n.ID, &n.Name, &n.Type, &n.Flag, &n.IP, &n.Domain, &n.SNI, &n.Listen,
 		&n.Port, &n.PortRange, &n.HopInterval, &n.ObfsType, &n.ObfsPassword, &n.StatsPort, &n.StatsSecret,
@@ -31,7 +33,8 @@ func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
 		&n.TLSMode, &n.ACMEEmail, &n.BandwidthUp, &n.BandwidthDown, &n.MasqueradeURL, &acl, &outbounds,
 		&n.MaxOnline, &n.Ranking, &active, &n.Status, new(string), &n.Token, &n.TokenPrefix, &n.AgentVersion,
 		&n.OS, &n.Arch, &n.Hy2Version, &n.Runtime, &last, &n.ConfigRevision, &n.AppliedRevision,
-		&n.ConfigError, &n.TrafficTx, &n.TrafficRx, &n.OnlineUsers, &created, &updated)
+		&n.ConfigError, &n.TrafficTx, &n.TrafficRx, &n.OnlineUsers, &created, &updated,
+		&capsJSON, &n.CertFingerprint, &certAfter)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -41,6 +44,10 @@ func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
 	n.Active = active == 1
 	n.SSHInstallDocker = sshInstallDocker == 1
 	n.LastSeenAt = nullTime(last)
+	n.CertNotAfter = nullTime(certAfter)
+	if capsJSON.Valid && capsJSON.String != "" {
+		_ = json.Unmarshal([]byte(capsJSON.String), &n.Capabilities)
+	}
 	n.CreatedAt = parseTime(created)
 	n.UpdatedAt = parseTime(updated)
 	n.ACL = unmarshalStrings(acl)

@@ -207,3 +207,17 @@ func TestVLESSURIAndFormats(t *testing.T) {
 		t.Fatalf("xray config = %s", xray)
 	}
 }
+
+func TestEndpointsManagedCertificate(t *testing.T) {
+	_, nodes := fixture()
+	n := nodes[1]
+	n.TLSMode = "managed"
+	eps := Endpoints(n)
+	if len(eps) != 1 || !eps[0].HasCert || eps[0].Insecure {
+		t.Fatalf("managed endpoint = %+v", eps)
+	}
+	link := URI(&model.User{UserID: "u", Password: "p"}, n, eps[0])
+	if !strings.Contains(link, "insecure=0") {
+		t.Fatalf("managed link should verify the certificate: %s", link)
+	}
+}

@@ -55,6 +55,12 @@ async function request(path, options = {}) {
 
 export const api = {
   login: (username, password) => request('/login', { method: 'POST', body: { username, password } }),
+  login2FA: (challenge, code) => request('/login/2fa', { method: 'POST', body: { challenge, code } }),
+  twoFactorStatus: () => request('/2fa'),
+  setupTwoFactor: () => request('/2fa/setup', { method: 'POST' }),
+  enableTwoFactor: (code) => request('/2fa/enable', { method: 'POST', body: { code } }),
+  disableTwoFactor: (password, code) => request('/2fa/disable', { method: 'POST', body: { password, code } }),
+  regenerateRecovery: (password, code) => request('/2fa/recovery', { method: 'POST', body: { password, code } }),
   logout: () => request('/logout', { method: 'POST' }),
   me: () => request('/me'),
   changePassword: (oldPassword, newPassword) =>
@@ -92,6 +98,13 @@ export const api = {
   nodeSSHInstall: (id) => request(`/nodes/${id}/ssh/install`, { method: 'POST' }),
   nodeConfig: (id) => request(`/nodes/${id}/config`),
   nodeInstall: (id) => request(`/nodes/${id}/install`),
+  nodeCert: (id) => request(`/nodes/${id}/cert`),
+  requestNodeCert: (id) => request(`/nodes/${id}/cert/request`, { method: 'POST' }),
+  uploadNodeCert: (id, data) => request(`/nodes/${id}/cert/upload`, { method: 'POST', body: data }),
+  confirmNodeCert: (id) => request(`/nodes/${id}/cert/confirm`, { method: 'POST' }),
+  cancelNodeCert: (id) => request(`/nodes/${id}/cert/cancel`, { method: 'POST' }),
+  certSettings: () => request('/cert/settings'),
+  updateCertSettings: (data) => request('/cert/settings', { method: 'PUT', body: data }),
 
   logs: (query) => request('/logs', { query }),
   logSummary: (query) => request('/logs/summary', { query }),

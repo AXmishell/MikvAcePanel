@@ -12,7 +12,7 @@ set -euo pipefail
 PANEL_URL=""
 NODE_TOKEN=""
 RUNTIME="process"
-IMAGE="${NODE_IMAGE:-mikvacepanel/node:latest}"
+IMAGE="${NODE_IMAGE:-ghcr.io/axmishell/mikvacepanel-node:main}"
 DATA_DIR="${DATA_DIR:-/var/lib/mikvace}"
 CONTAINER="${CONTAINER:-mikvace-node}"
 INSECURE="false"

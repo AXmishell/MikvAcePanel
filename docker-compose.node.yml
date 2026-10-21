@@ -1,6 +1,6 @@
 services:
   node:
-    image: mikvacepanel/node:latest
+    image: ghcr.io/axmishell/mikvacepanel-node:main
     container_name: mikvace-node
     restart: unless-stopped
     logging:

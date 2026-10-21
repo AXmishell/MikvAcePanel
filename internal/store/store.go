@@ -200,6 +200,46 @@ func (s *Store) Migrate(ctx context.Context) error {
 			last_error TEXT NOT NULL DEFAULT '',
 			UNIQUE(node_id, revision)
 		)`,
+		`CREATE TABLE IF NOT EXISTS certificates (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			domains_json TEXT NOT NULL,
+			common_name TEXT NOT NULL DEFAULT '',
+			cert_pem TEXT NOT NULL,
+			key_cipher TEXT NOT NULL DEFAULT '',
+			key_nonce TEXT NOT NULL DEFAULT '',
+			fingerprint TEXT NOT NULL UNIQUE,
+			key_fingerprint TEXT NOT NULL DEFAULT '',
+			issuer TEXT NOT NULL DEFAULT '',
+			not_before TEXT NOT NULL,
+			not_after TEXT NOT NULL,
+			source TEXT NOT NULL DEFAULT 'acme',
+			status TEXT NOT NULL DEFAULT 'valid',
+			auto_renew INTEGER NOT NULL DEFAULT 1,
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS node_certificates (
+			node_id INTEGER PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+			cert_id INTEGER NOT NULL DEFAULT 0,
+			revision INTEGER NOT NULL DEFAULT 0,
+			key_fingerprint TEXT NOT NULL DEFAULT '',
+			applied_fingerprint TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending',
+			last_error TEXT NOT NULL DEFAULT '',
+			requested_at TEXT,
+			applied_at TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS acme_accounts (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			ca_url TEXT NOT NULL,
+			email TEXT NOT NULL DEFAULT '',
+			key_cipher TEXT NOT NULL,
+			key_nonce TEXT NOT NULL,
+			account_url TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			UNIQUE(ca_url, email)
+		)`,
 		`CREATE TABLE IF NOT EXISTS node_metrics (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
@@ -281,6 +321,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(token_hash)`,
 		`CREATE INDEX IF NOT EXISTS idx_node_configs_node ON node_configs(node_id, revision)`,
+		`CREATE INDEX IF NOT EXISTS idx_certificates_fp ON certificates(fingerprint)`,
+		`CREATE INDEX IF NOT EXISTS idx_certificates_not_after ON certificates(not_after)`,
+		`CREATE INDEX IF NOT EXISTS idx_node_certificates_cert ON node_certificates(cert_id)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.DB.ExecContext(ctx, stmt); err != nil {
@@ -297,6 +340,14 @@ func (s *Store) Migrate(ctx context.Context) error {
 		{"nodes", "ssh_password", "TEXT NOT NULL DEFAULT ''"},
 		{"nodes", "ssh_key", "TEXT NOT NULL DEFAULT ''"},
 		{"nodes", "ssh_install_docker", "INTEGER NOT NULL DEFAULT 0"},
+		{"nodes", "capabilities_json", "TEXT NOT NULL DEFAULT '[]'"},
+		{"nodes", "cert_fingerprint", "TEXT NOT NULL DEFAULT ''"},
+		{"nodes", "cert_not_after", "TEXT"},
+		{"admins", "totp_secret", "TEXT NOT NULL DEFAULT ''"},
+		{"admins", "totp_pending", "TEXT NOT NULL DEFAULT ''"},
+		{"admins", "totp_enabled", "INTEGER NOT NULL DEFAULT 0"},
+		{"admins", "totp_recovery", "TEXT NOT NULL DEFAULT '[]'"},
+		{"admins", "totp_pending_recovery", "TEXT NOT NULL DEFAULT '[]'"},
 	}
 	for _, c := range columns {
 		if err := s.ensureColumn(ctx, c.table, c.column, c.ddl); err != nil {

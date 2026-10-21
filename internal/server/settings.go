@@ -32,6 +32,11 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// DNS credentials are write-only and served through /api/cert/settings.
+	if token := strings.TrimSpace(settings["cert_dns_config"]); token != "" {
+		settings["cert_dns_config_set"] = "true"
+	}
+	delete(settings, "cert_dns_config")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"settings": settings,
 		"version":  version.String(),

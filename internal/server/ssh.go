@@ -98,7 +98,7 @@ docker run -d --name mikvace-node --restart unless-stopped \
   -e HY2_RUNTIME=process \
   -e DATA_DIR=/data \
   -v /var/lib/mikvace:/data \
-  mikvacepanel/node:latest
+  ghcr.io/axmishell/mikvacepanel-node:main
 echo "MikvAce node agent started."
 `, dockerCheck, installDocker, shellQuote(pub), shellQuote(n.Token))
 }

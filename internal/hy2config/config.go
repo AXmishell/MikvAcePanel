@@ -46,6 +46,14 @@ type ACMEConfig struct {
 	Domains []string `yaml:"domains"`
 	Email   string   `yaml:"email,omitempty"`
 	Type    string   `yaml:"type,omitempty"`
+	// Dir keeps ACME account data and certificates on the shared data volume.
+	// Without it Hysteria stores them under its working directory, which is
+	// ephemeral when the proxy runs in a sibling container.
+	Dir string `yaml:"dir,omitempty"`
+	// DisableHTTP restricts node-side ACME to the TLS-ALPN challenge so the
+	// node never has to bind port 80. The legacy field is honoured by both old
+	// and current Hysteria releases.
+	DisableHTTP bool `yaml:"disableHTTP,omitempty"`
 }
 
 type AuthConfig struct {
@@ -169,7 +177,14 @@ func Build(n *model.Node, panelURL string) (*ServerConfig, error) {
 		if domain == "" {
 			return nil, fmt.Errorf("ACME TLS requires a domain")
 		}
-		cfg.ACME = &ACMEConfig{Domains: []string{domain}, Email: n.ACMEEmail}
+		cfg.ACME = &ACMEConfig{
+			Domains: []string{domain}, Email: n.ACMEEmail,
+			Dir: "/data/acme", DisableHTTP: true,
+		}
+	case "managed":
+		// The panel issues the certificate and pushes it to the node. The
+		// Hysteria config just points at the files the agent maintains.
+		cfg.TLS = &TLSConfig{Cert: CertPath, Key: KeyPath, SNIGuard: "disable"}
 	default:
 		cfg.TLS = &TLSConfig{Cert: CertPath, Key: KeyPath, SNIGuard: "disable"}
 	}

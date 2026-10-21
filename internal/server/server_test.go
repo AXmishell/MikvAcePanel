@@ -217,7 +217,12 @@ func TestAgentWebsocket(t *testing.T) {
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 
-	// The panel pushes a config on connect.
+	_ = conn.WriteJSON(map[string]any{"type": "hello", "payload": map[string]any{
+		"version": "test", "os": "linux", "arch": "amd64", "hy2Version": "v2.13.0", "runtime": "process",
+		"capabilities": []string{"cert.csr.v1"},
+	}})
+
+	// The panel pushes a config after hello.
 	var gotConfig bool
 	for i := 0; i < 3; i++ {
 		var msg map[string]any
@@ -232,9 +237,6 @@ func TestAgentWebsocket(t *testing.T) {
 	if !gotConfig {
 		t.Fatal("no config push received")
 	}
-	_ = conn.WriteJSON(map[string]any{"type": "hello", "payload": map[string]any{
-		"version": "test", "os": "linux", "arch": "amd64", "hy2Version": "v2.13.0", "runtime": "process",
-	}})
 	_ = conn.WriteJSON(map[string]any{"type": "heartbeat", "payload": map[string]any{
 		"cpuPct": 1.5, "memUsed": 100, "memTotal": 200, "online": 1,
 		"trafficTx": 1000, "trafficRx": 2000, "hy2Running": true,
@@ -447,7 +449,7 @@ func TestSSHInstallScript(t *testing.T) {
 		"PANEL_URL='http://panel.test'",
 		"--network host",
 		"curl -fsSL https://get.docker.com",
-		"mikvacepanel/node:latest",
+		"ghcr.io/axmishell/mikvacepanel-node:main",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)

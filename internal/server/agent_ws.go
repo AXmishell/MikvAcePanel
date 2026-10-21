@@ -11,6 +11,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/axmishell/mikvacepanel/internal/certmanager"
 	"github.com/axmishell/mikvacepanel/internal/logs"
 	"github.com/axmishell/mikvacepanel/internal/model"
 	"github.com/axmishell/mikvacepanel/internal/store"
@@ -28,12 +29,17 @@ type agentMessage struct {
 }
 
 type helloPayload struct {
-	Version     string `json:"version"`
-	OS          string `json:"os"`
-	Arch        string `json:"arch"`
-	Hy2Version  string `json:"hy2Version"`
-	Runtime     string `json:"runtime"`
-	OnlineUsers int    `json:"onlineUsers"`
+	Version      string   `json:"version"`
+	OS           string   `json:"os"`
+	Arch         string   `json:"arch"`
+	Hy2Version   string   `json:"hy2Version"`
+	Runtime      string   `json:"runtime"`
+	OnlineUsers  int      `json:"onlineUsers"`
+	Capabilities []string `json:"capabilities"`
+	Cert         struct {
+		Fingerprint string `json:"fingerprint"`
+		NotAfter    int64  `json:"notAfter"`
+	} `json:"cert"`
 }
 
 type heartbeatPayload struct {
@@ -53,6 +59,7 @@ type heartbeatPayload struct {
 type configAckPayload struct {
 	Revision int64  `json:"revision"`
 	OK       bool   `json:"ok"`
+	Pending  bool   `json:"pending"`
 	Error    string `json:"error"`
 }
 
@@ -132,17 +139,9 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Push the current (or freshly generated) configuration.
-	go func(nodeID int64) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		n, err := s.store.GetNode(ctx, nodeID)
-		if err != nil {
-			return
-		}
-		s.syncNodeConfig(ctx, n, true)
-	}(node.ID)
-
+	// Configuration and certificate pushes start after the agent's hello so
+	// capability negotiation has completed. Pushing managed certificates to an
+	// agent that cannot request them would leave the node unable to start.
 	for {
 		var msg agentMessage
 		if err := ws.ReadJSON(&msg); err != nil {
@@ -163,8 +162,39 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 				Version: h.Version, OS: h.OS, Arch: h.Arch, Hy2Version: h.Hy2Version,
 				Runtime: h.Runtime, OnlineUsers: h.OnlineUsers,
 			})
+			_ = s.store.UpdateNodeCapabilities(r.Context(), node.ID, h.Capabilities)
+			var notAfter *time.Time
+			if h.Cert.NotAfter > 0 {
+				t := time.Unix(h.Cert.NotAfter, 0).UTC()
+				notAfter = &t
+			}
+			_ = s.store.UpdateNodeCertInfo(r.Context(), node.ID, h.Cert.Fingerprint, notAfter)
 			s.log.Info("agent hello", "node", node.Name, "version", h.Version, "os", h.OS,
-				"arch", h.Arch, "hy2", h.Hy2Version, "runtime", h.Runtime)
+				"arch", h.Arch, "hy2", h.Hy2Version, "runtime", h.Runtime,
+				"capabilities", h.Capabilities)
+			go s.pushNodeState(node.ID)
+		case "cert.request":
+			var req certmanager.Request
+			if err := json.Unmarshal(msg.Payload, &req); err != nil {
+				continue
+			}
+			n, err := s.store.GetNode(r.Context(), node.ID)
+			if err != nil {
+				continue
+			}
+			if err := s.certs.HandleRequest(r.Context(), n, req); err != nil {
+				s.hub.SendToNode(node.ID, "cert.error", map[string]any{
+					"requestId": req.RequestID, "error": err.Error(),
+				})
+			}
+		case "cert.ack":
+			var ack struct {
+				Fingerprint string `json:"fingerprint"`
+				OK          bool   `json:"ok"`
+				Error       string `json:"error"`
+			}
+			_ = json.Unmarshal(msg.Payload, &ack)
+			s.certs.Ack(r.Context(), node.ID, ack.Fingerprint, ack.OK, ack.Error)
 		case "heartbeat":
 			s.handleHeartbeat(r.Context(), node.ID, node.Name, msg.Payload)
 		case "logs":
@@ -178,6 +208,8 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 				_ = s.store.MarkConfigApplied(r.Context(), node.ID, ack.Revision)
 				_ = s.store.SetNodeAppliedRevision(r.Context(), node.ID, ack.Revision, "")
 				s.log.Info("config applied", "node", node.Name, "revision", ack.Revision)
+			} else if ack.Pending {
+				s.log.Info("config waiting for certificate", "node", node.Name, "revision", ack.Revision)
 			} else {
 				_ = s.store.SetNodeAppliedRevision(r.Context(), node.ID, ack.Revision, ack.Error)
 				_ = s.store.SetNodeConfigError(r.Context(), node.ID, ack.Error)

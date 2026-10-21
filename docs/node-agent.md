@@ -4,7 +4,7 @@
 
 1. 使用节点 Token 建立到面板的 WebSocket 长连接；
 2. 接收并落盘 Hysteria 2 YAML 或 Xray JSON；
-3. 生成/复用自签名证书（ACME 模式由 Hysteria 自己签发）；
+3. 生成/复用自签名证书；managed 模式向面板提交 CSR 并安装面板签发的证书；
 4. 启动、停止、重启 Hysteria；
 5. 维护端口跳跃 iptables 规则；
 6. 采集 Hysteria 日志并批量上报；
@@ -26,7 +26,7 @@ docker run -d --name mikvace-node --restart unless-stopped \
   -e NODE_TOKEN="mtn_xxx" \
   -e HY2_RUNTIME=process \
   -v /var/lib/mikvace:/data \
-  mikvacepanel/node:latest
+  ghcr.io/axmishell/mikvacepanel-node:main
 ```
 
 或使用 `docker-compose.node.yml`：
@@ -49,7 +49,7 @@ docker run -d --name mikvace-node --restart unless-stopped \
   -e HOST_DATA_DIR=/var/lib/mikvace \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /var/lib/mikvace:/data \
-  mikvacepanel/node:latest
+  ghcr.io/axmishell/mikvacepanel-node:main
 ```
 
 此时 Hysteria 容器使用 `tobyxdd/hysteria:latest`，挂载宿主机 `/var/lib/mikvace` 到 `/data`。Agent 在容器内看到的 `/data` 并不是宿主机路径，因此必须用 `HOST_DATA_DIR` 告诉它宿主机实际路径。
@@ -171,7 +171,8 @@ xray run -c /data/config/config.json
 ## 证书
 
 - `tlsMode=selfsigned`：Agent 生成 ECDSA P-256 证书，10 年有效，包含节点 `domain` 或 `ip` 的 SAN；如果现有证书不含当前主机名或即将过期（7 天内）会重新生成。
-- `tlsMode=acme`：面板生成 `acme.domains` 配置，由 Hysteria 内置 ACME 处理。节点域名必须解析到该节点，443/TCP 和 443/UDP 可用。
+- `tlsMode=managed`：Agent 生成私钥与 CSR，面板通过 ACME DNS-01 签发后通过 WebSocket 下发证书链；私钥不出节点。详见 [certificates.md](certificates.md)。
+- `tlsMode=acme`（旧模式）：面板生成 `acme.domains` 配置，由 Hysteria 内置 ACME 处理。已强制使用 TLS-ALPN（`disableHTTP: true`），**不占用 80 端口**；需要 443/TCP 与 443/UDP 可用，且 ACME 缓存写入 `/data/acme`。
 
 自签名模式下，订阅中会带 `insecure=1`，客户端跳过证书校验。
 

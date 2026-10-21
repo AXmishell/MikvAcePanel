@@ -121,10 +121,37 @@
           <label>TLS 模式</label>
           <select v-model="form.tlsMode">
             <option value="selfsigned">自签名（无需域名）</option>
-            <option value="acme">ACME / Let's Encrypt</option>
+            <option value="managed">面板签发（CSR，推荐）</option>
+            <option value="acme">节点自签 ACME（TLS-ALPN）</option>
           </select>
+          <span class="hint">面板签发使用 DNS-01，证书由面板申请后通过 WebSocket 下发，节点无需开放 80 端口。</span>
         </div>
         <div class="field"><label>ACME 邮箱</label><input v-model="form.acmeEmail" type="email" placeholder="admin@example.com" /></div>
+        <div v-if="form.tlsMode === 'managed'" class="field full">
+          <div class="banner banner-info" style="margin: 0 0 8px">
+            证书由面板统一申请并下发。保存节点后，Agent 会自动生成密钥并发起 CSR。
+          </div>
+          <div v-if="editing" class="flex" style="gap: 8px; flex-wrap: wrap; margin-bottom: 8px">
+            <button class="btn btn-sm" type="button" @click="refreshCert">刷新证书状态</button>
+            <button class="btn btn-sm" type="button" :disabled="!editing.connected" @click="issueCert">立即申请 / 续期</button>
+            <button class="btn btn-sm" type="button" @click="openCertUpload">上传证书</button>
+          </div>
+          <div v-if="certInfo" class="small">
+            <div>状态：<strong>{{ certStatusText(certInfo.status) }}</strong><span v-if="certInfo.certificate" class="dim"> · {{ certInfo.certificate.issuer }}</span></div>
+            <div v-if="certInfo.certificate" class="dim">到期：{{ fmtDate(certInfo.certificate.notAfter) }} · 指纹：<span class="mono">{{ certInfo.certificate.fingerprint.slice(0, 16) }}…</span></div>
+            <div v-if="certInfo.lastError" class="banner banner-danger" style="margin: 8px 0 0">{{ certInfo.lastError }}</div>
+            <div v-if="certInfo.manual" class="banner banner-info" style="margin: 8px 0 0">
+              <div>请在 DNS 中添加以下 TXT 记录，然后点击“验证并继续”：</div>
+              <div v-for="(r, i) in certInfo.manual.records" :key="i" class="mono" style="margin-top: 6px; word-break: break-all">
+                {{ r.name }} = {{ r.value }}
+              </div>
+              <div class="flex" style="gap: 8px; margin-top: 8px">
+                <button class="btn btn-sm btn-primary" type="button" @click="confirmCert">验证并继续</button>
+                <button class="btn btn-sm" type="button" @click="cancelCert">取消</button>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="field"><label>端口跳跃范围</label><input v-model="form.portRange" type="text" placeholder="20000-50000" />
           <span class="hint">Agent 会自动安装 iptables REDIRECT 规则，留空关闭。</span>
         </div>
@@ -260,6 +287,19 @@
       <template #footer><button class="btn" @click="installOpen = false">关闭</button></template>
     </Modal>
 
+    <Modal v-model="certUploadOpen" title="上传节点证书" size="lg">
+      <div class="stack">
+        <div class="banner banner-info">上传的证书与私钥会加密保存在面板，并通过 WebSocket 下发到节点。证书必须匹配节点域名。</div>
+        <div class="field full"><label>证书链 PEM（含中间证书）</label><textarea v-model="certPEMText" rows="7" placeholder="-----BEGIN CERTIFICATE-----"></textarea></div>
+        <div class="field full"><label>私钥 PEM</label><textarea v-model="certKeyText" rows="7" placeholder="-----BEGIN PRIVATE KEY-----"></textarea></div>
+        <div v-if="certUploadError" class="banner banner-danger">{{ certUploadError }}</div>
+      </div>
+      <template #footer>
+        <button class="btn" @click="certUploadOpen = false">取消</button>
+        <button class="btn btn-primary" :disabled="certUploading" @click="uploadCert">{{ certUploading ? '上传中…' : '上传并下发' }}</button>
+      </template>
+    </Modal>
+
     <Modal v-model="sshOpen" title="SSH 自动安装" size="lg">
       <div v-if="sshResult" class="stack">
         <div class="banner" :class="sshResult.ok ? 'banner-info' : 'banner-danger'">
@@ -303,7 +343,7 @@ import { api } from '../api'
 import { notify } from '../store'
 import Modal from '../components/Modal.vue'
 import StatusBadge from '../components/StatusBadge.vue'
-import { copyText, fmtBytes, fmtRelative } from '../format'
+import { copyText, fmtBytes, fmtDate, fmtRelative } from '../format'
 
 const nodes = ref([])
 const groups = ref([])
@@ -328,6 +368,12 @@ const configOpen = ref(false)
 const configInfo = ref(null)
 const deleteOpen = ref(false)
 const deleteTarget = ref(null)
+const certInfo = ref(null)
+const certUploadOpen = ref(false)
+const certPEMText = ref('')
+const certKeyText = ref('')
+const certUploadError = ref('')
+const certUploading = ref(false)
 let timer = null
 
 const onlineCount = computed(() => nodes.value.filter((n) => n.connected).length)
@@ -388,6 +434,7 @@ function openCreate() {
   tab.value = 'basic'
   formError.value = ''
   modalOpen.value = true
+  certInfo.value = null
 }
 function openEdit(n) {
   editing.value = n
@@ -412,7 +459,75 @@ function openEdit(n) {
   tab.value = 'basic'
   formError.value = ''
   modalOpen.value = true
+  certInfo.value = null
+  if (n.tlsMode === 'managed') refreshCert()
 }
+function certStatusText(status) {
+  return ({
+    none: '未申请', pending: '待申请', requesting: '申请中', awaiting_txt: '等待 DNS TXT',
+    validating: '验证中', issued: '已签发', pushing: '下发中', active: '已生效', error: '失败',
+  })[status] || status || '未知'
+}
+async function refreshCert() {
+  if (!editing.value) return
+  try {
+    certInfo.value = await api.nodeCert(editing.value.id)
+  } catch (e) {
+    notify(e.message, 'error')
+  }
+}
+async function issueCert() {
+  if (!editing.value) return
+  try {
+    await api.requestNodeCert(editing.value.id)
+    notify('已通知节点申请证书')
+    setTimeout(refreshCert, 800)
+  } catch (e) {
+    notify(e.message, 'error')
+  }
+}
+async function confirmCert() {
+  if (!editing.value) return
+  try {
+    await api.confirmNodeCert(editing.value.id)
+    notify('已提交 DNS 验证，证书签发中')
+    certInfo.value = await api.nodeCert(editing.value.id)
+  } catch (e) {
+    notify(e.message, 'error')
+  }
+}
+async function cancelCert() {
+  if (!editing.value) return
+  try {
+    await api.cancelNodeCert(editing.value.id)
+    notify('已取消证书申请')
+    await refreshCert()
+  } catch (e) {
+    notify(e.message, 'error')
+  }
+}
+function openCertUpload() {
+  certPEMText.value = ''
+  certKeyText.value = ''
+  certUploadError.value = ''
+  certUploadOpen.value = true
+}
+async function uploadCert() {
+  if (!editing.value) return
+  certUploadError.value = ''
+  certUploading.value = true
+  try {
+    await api.uploadNodeCert(editing.value.id, { certPEM: certPEMText.value, keyPEM: certKeyText.value })
+    notify('证书已上传并下发')
+    certUploadOpen.value = false
+    await refreshCert()
+  } catch (e) {
+    certUploadError.value = e.message
+  } finally {
+    certUploading.value = false
+  }
+}
+
 async function save() {
   formError.value = ''
   saving.value = true

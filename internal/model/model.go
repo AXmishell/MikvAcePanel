@@ -11,6 +11,12 @@ type Admin struct {
 	PasswordHash string     `json:"-"`
 	CreatedAt    time.Time  `json:"createdAt"`
 	LastLoginAt  *time.Time `json:"lastLoginAt,omitempty"`
+
+	TOTPEnabled         bool     `json:"twoFactorEnabled"`
+	TOTPSecret          string   `json:"-"`
+	TOTPPending         string   `json:"-"`
+	TOTPRecovery        []string `json:"-"`
+	TOTPPendingRecovery []string `json:"-"`
 }
 
 // APIKey is a scoped automation credential. The plaintext token is only
@@ -151,6 +157,9 @@ type Node struct {
 	Arch             string       `json:"arch"`
 	Hy2Version       string       `json:"hy2Version"`
 	Runtime          string       `json:"runtime"`
+	Capabilities     []string     `json:"capabilities,omitempty"`
+	CertFingerprint  string       `json:"certFingerprint,omitempty"`
+	CertNotAfter     *time.Time   `json:"certNotAfter,omitempty"`
 	LastSeenAt       *time.Time   `json:"lastSeenAt"`
 	ConfigRevision   int64        `json:"configRevision"`
 	AppliedRevision  int64        `json:"appliedRevision"`

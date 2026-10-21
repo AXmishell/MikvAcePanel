@@ -47,7 +47,7 @@ docker:
 		--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) .
 
 docker-node:
-	docker build -f Dockerfile.node -t mikvacepanel/node:latest \
+	docker build -f Dockerfile.node -t ghcr.io/axmishell/mikvacepanel-node:main \
 		--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) .
 
 clean:

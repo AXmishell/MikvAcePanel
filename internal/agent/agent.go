@@ -52,6 +52,12 @@ type Agent struct {
 	currentRevision int64
 	appliedRevision int64
 	meta            nodeMeta
+
+	certMu          sync.Mutex
+	certRequestedAt time.Time
+	pendingConfig   []byte
+	pendingHost     string
+	pendingManaged  bool
 }
 
 type nodeMeta struct {
@@ -62,6 +68,10 @@ type nodeMeta struct {
 	Host      string `json:"host"`
 	Port      int    `json:"port"`
 	PortRange string `json:"portRange"`
+
+	CertFingerprint string `json:"certFingerprint,omitempty"`
+	CertNotAfter    int64  `json:"certNotAfter,omitempty"`
+	KeyFingerprint  string `json:"keyFingerprint,omitempty"`
 }
 
 type wsMessage struct {
@@ -79,6 +89,7 @@ func New(cfg Config, logger *slog.Logger) (*Agent, error) {
 		pendingStats: map[string]*model.StatsBatch{},
 	}
 	a.loadLocalState()
+	a.loadCertMeta()
 	protocol := a.meta.Protocol
 	if protocol != "" {
 		rt, err := NewRuntime(cfg, protocol, a.enqueueLog)
@@ -120,20 +131,34 @@ func (a *Agent) Run(ctx context.Context) error {
 	defer a.stopAccessTail()
 	go a.logBatcher(ctx)
 	go a.retransmitLoop(ctx)
+	go a.certRetryLoop(ctx)
 	if a.currentConfig != "" && a.runtime != nil {
-		if a.protocol == "xray" {
-			a.xrayStats.Configure(a.currentConfig)
-			a.startAccessTail(a.accessLogPath())
-		} else {
-			a.stats.Configure(a.currentConfig)
-			if a.meta.PortRange != "" {
-				if err := SetupPortHopping(a.meta.Port, a.meta.PortRange); err != nil {
-					a.log.Warn("port hopping setup", "error", err)
-				}
+		blocked := false
+		if strings.EqualFold(a.meta.TLSMode, "managed") {
+			host := a.meta.Host
+			if host == "" {
+				host = a.meta.Domain
+			}
+			if _, err := a.managedCertStatus(host); err != nil {
+				a.log.Warn("waiting for a panel certificate before starting", "error", err)
+				blocked = true
 			}
 		}
-		if err := a.runtime.Start(); err != nil {
-			a.log.Warn("start "+a.protocol+" from local config", "error", err)
+		if !blocked {
+			if a.protocol == "xray" {
+				a.xrayStats.Configure(a.currentConfig)
+				a.startAccessTail(a.accessLogPath())
+			} else {
+				a.stats.Configure(a.currentConfig)
+				if a.meta.PortRange != "" {
+					if err := SetupPortHopping(a.meta.Port, a.meta.PortRange); err != nil {
+						a.log.Warn("port hopping setup", "error", err)
+					}
+				}
+			}
+			if err := a.runtime.Start(); err != nil {
+				a.log.Warn("start "+a.protocol+" from local config", "error", err)
+			}
 		}
 	}
 	backoff := time.Second
@@ -233,6 +258,7 @@ func (a *Agent) session(ctx context.Context) error {
 	})
 	a.sendHello()
 	a.resendPending()
+	a.maybeRequestCert(context.Background(), "reconnect")
 
 	sessionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -253,6 +279,17 @@ func (a *Agent) session(ctx context.Context) error {
 			a.handleConfig(msg.Payload)
 		case "command":
 			a.handleCommand(msg.Payload)
+		case "cert.push":
+			a.handleCertPush(msg.Payload)
+		case "cert.error":
+			var p struct {
+				RequestID string `json:"requestId"`
+				Error     string `json:"error"`
+			}
+			_ = json.Unmarshal(msg.Payload, &p)
+			a.log.Warn("certificate issuance failed", "error", p.Error)
+		case "cert.renew":
+			a.requestCertificate("renew", true)
 		case "log.ack":
 			var p struct {
 				BatchID string `json:"batchId"`
@@ -280,10 +317,19 @@ func (a *Agent) sendHello() {
 	if a.runtime != nil {
 		version, runtimeName = a.runtime.Version(), a.runtime.Name()
 	}
+	a.configMu.Lock()
+	certFP := a.meta.CertFingerprint
+	certAfter := a.meta.CertNotAfter
+	a.configMu.Unlock()
 	a.write("hello", map[string]any{
 		"version": a.cfg.Version, "os": osName(), "arch": archName(),
 		"hy2Version": version, "runtime": runtimeName,
-		"onlineUsers": a.onlineCount(),
+		"onlineUsers":  a.onlineCount(),
+		"capabilities": []string{CapabilityCSR},
+		"cert": map[string]any{
+			"fingerprint": certFP,
+			"notAfter":    certAfter,
+		},
 	})
 }
 
@@ -534,8 +580,25 @@ func (a *Agent) handleConfig(raw json.RawMessage) {
 	if protocol == "" {
 		protocol = "hysteria"
 	}
+	if strings.EqualFold(strings.TrimSpace(msg.TLSMode), "managed") && a.needsManagedCert(protocol, configText) {
+		host := strings.TrimSpace(msg.Host)
+		if host == "" {
+			host = strings.TrimSpace(msg.Domain)
+		}
+		if _, err := a.managedCertStatus(host); err != nil {
+			a.setPendingConfig(raw, host)
+			a.requestCertificate("initial", false)
+			a.write("config.ack", map[string]any{
+				"revision": msg.Revision, "ok": false, "pending": true,
+				"error": "waiting for panel certificate: " + err.Error(),
+			})
+			return
+		}
+	}
+	a.clearPendingConfig()
+	preparedPreview := PrepareConfig(a.cfg, configText)
 	a.configMu.Lock()
-	if a.runtime != nil && msg.Revision == a.appliedRevision && configText == a.currentConfig && a.protocol == protocol && a.runtime.Running() {
+	if a.runtime != nil && msg.Revision == a.appliedRevision && preparedPreview == a.currentConfig && a.protocol == protocol && a.runtime.Running() {
 		a.configMu.Unlock()
 		a.write("config.ack", map[string]any{"revision": msg.Revision, "ok": true})
 		return
@@ -578,7 +641,11 @@ func (a *Agent) applyConfig(revision int64, protocol, configText, tlsMode, domai
 	if err := a.ensureRuntime(protocol); err != nil {
 		return err
 	}
-	if tlsMode != "acme" {
+	if tlsMode == "managed" {
+		if _, err := a.managedCertStatus(host); err != nil {
+			return fmt.Errorf("managed certificate: %w", err)
+		}
+	} else if tlsMode != "acme" {
 		if err := EnsureSelfSignedCert(a.cfg.DataDir, host); err != nil {
 			return fmt.Errorf("certificate: %w", err)
 		}
@@ -612,16 +679,27 @@ func (a *Agent) applyConfig(revision int64, protocol, configText, tlsMode, domai
 		return fmt.Errorf("%s exited after applying the configuration", protocol)
 	}
 	a.configMu.Lock()
+	certFP, certAfter, keyFP := a.meta.CertFingerprint, a.meta.CertNotAfter, a.meta.KeyFingerprint
+	if fp, after, kfp, err := a.certFileMeta(); err == nil {
+		certFP, certAfter, keyFP = fp, after, kfp
+	}
 	a.currentConfig = prepared
 	a.currentRevision = revision
 	a.appliedRevision = revision
-	a.meta = nodeMeta{Revision: revision, Protocol: protocol, TLSMode: tlsMode, Domain: domain, Host: host, Port: port, PortRange: portRange}
+	a.meta = nodeMeta{
+		Revision: revision, Protocol: protocol, TLSMode: tlsMode, Domain: domain, Host: host,
+		Port: port, PortRange: portRange,
+		CertFingerprint: certFP, CertNotAfter: certAfter, KeyFingerprint: keyFP,
+	}
 	a.configMu.Unlock()
 	a.saveLocalState()
 	if protocol == "xray" {
 		a.startAccessTail(a.accessLogPath())
 	} else {
 		a.stopAccessTail()
+	}
+	if tlsMode == "managed" {
+		a.maybeRequestCert(context.Background(), "apply")
 	}
 	a.sendHello()
 	return nil

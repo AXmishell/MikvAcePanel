@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/axmishell/mikvacepanel/internal/certmanager"
 	"github.com/axmishell/mikvacepanel/internal/hy2config"
 	"github.com/axmishell/mikvacepanel/internal/model"
 	"github.com/axmishell/mikvacepanel/internal/store"
@@ -339,7 +340,7 @@ func (s *Server) installCommand(n *model.Node, runtime string) string {
   --network host --cap-add NET_ADMIN \
   -e PANEL_URL=%q -e NODE_TOKEN=%q -e HY2_RUNTIME=%s%s \
   -v /var/lib/mikvace:/data \
-  mikvacepanel/node:latest`, pub, n.Token, runtime, extra)
+  ghcr.io/axmishell/mikvacepanel-node:main`, pub, n.Token, runtime, extra)
 }
 
 func (s *Server) installCompose(n *model.Node) string {
@@ -350,7 +351,7 @@ func (s *Server) installCompose(n *model.Node) string {
 	}
 	return fmt.Sprintf(`services:
   node:
-    image: mikvacepanel/node:latest
+    image: ghcr.io/axmishell/mikvacepanel-node:main
     container_name: mikvace-node
     restart: unless-stopped
     network_mode: host
@@ -391,12 +392,12 @@ func (s *Server) nodeFromPayload(p *nodePayload, existing *model.Node) (*model.N
 	if tlsMode == "" {
 		tlsMode = "selfsigned"
 	}
-	if tlsMode != "selfsigned" && tlsMode != "acme" {
-		return nil, fmt.Errorf("tlsMode must be selfsigned or acme")
+	if tlsMode != "selfsigned" && tlsMode != "acme" && tlsMode != "managed" {
+		return nil, fmt.Errorf("tlsMode must be selfsigned, acme or managed")
 	}
 	domain := strings.TrimSpace(p.Domain)
-	if tlsMode == "acme" && domain == "" {
-		return nil, fmt.Errorf("ACME mode requires a domain")
+	if (tlsMode == "acme" || tlsMode == "managed") && domain == "" {
+		return nil, fmt.Errorf("ACME or panel-issued certificates require a domain")
 	}
 	portRange := strings.TrimSpace(p.PortRange)
 	if portRange != "" {
@@ -484,8 +485,8 @@ func (s *Server) nodeFromPayload(p *nodePayload, existing *model.Node) (*model.N
 			return nil, err
 		}
 		if n.Xray.Security == "tls" && n.TLSMode == "acme" {
-			// Xray has no built-in ACME in this panel; the agent's self-signed
-			// certificate is used for VLESS TLS.
+			// Xray has no built-in ACME in this panel; node-side ACME is not
+			// available, but panel-issued managed certificates are.
 			n.TLSMode = "selfsigned"
 		}
 		if n.Port == 0 {
@@ -549,6 +550,11 @@ func (s *Server) syncNodeConfig(ctx context.Context, n *model.Node, force bool) 
 		_ = s.store.SetNodeConfigError(ctx, n.ID, err.Error())
 		s.store.AddEvent(ctx, "node.config_error", n.ID, "error", "配置生成失败："+err.Error())
 		return &model.NodeConfig{NodeID: n.ID, Revision: n.ConfigRevision, LastError: err.Error()}, false
+	}
+	if strings.EqualFold(n.TLSMode, "managed") && s.hub.Connected(n.ID) && !hasCapability(n.Capabilities, certmanager.CapabilityCSR) {
+		msg := "node agent does not support panel-issued certificates; upgrade the agent first"
+		_ = s.store.SetNodeConfigError(ctx, n.ID, msg)
+		return &model.NodeConfig{NodeID: n.ID, Revision: n.ConfigRevision, LastError: msg}, false
 	}
 	cfg, created, err := s.store.SaveNodeConfig(ctx, n.ID, yamlText, hash)
 	if err != nil {

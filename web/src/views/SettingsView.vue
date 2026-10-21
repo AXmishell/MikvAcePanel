@@ -15,6 +15,7 @@
       <button class="tab" :class="{ active: tab === 'subscription' }" @click="tab = 'subscription'">订阅页面</button>
       <button class="tab" :class="{ active: tab === 'analysis' }" @click="tab = 'analysis'">日志分析</button>
       <button class="tab" :class="{ active: tab === 'security' }" @click="tab = 'security'">安全</button>
+      <button class="tab" :class="{ active: tab === 'certs' }" @click="tab = 'certs'; loadCertSettings()">证书签发</button>
       <button class="tab" :class="{ active: tab === 'backups' }" @click="tab = 'backups'">备份</button>
     </div>
 
@@ -156,6 +157,59 @@
       <section v-show="tab === 'security'" class="card section-gap">
         <div class="card-header">
           <div>
+            <div class="card-title">两步验证（TOTP）</div>
+            <div class="card-sub">使用验证器应用保护面板登录；启用后会生成一次性恢复码。</div>
+          </div>
+          <div class="spacer"></div>
+          <span class="badge" :class="twoFA.enabled ? 'badge-ok' : 'badge-muted'">{{ twoFA.enabled ? '已启用' : '未启用' }}</span>
+        </div>
+        <div class="card-body">
+          <div v-if="twoFA.error" class="banner banner-danger">{{ twoFA.error }}</div>
+          <template v-if="twoFA.enabled">
+            <div class="banner banner-info">已启用，剩余恢复码 {{ twoFA.recoveryRemaining }} 个。关闭或重置需要当前密码和动态验证码/恢复码。</div>
+            <div class="form-grid" style="max-width: 640px">
+              <div class="field"><label>当前密码</label><input v-model="twoFA.password" type="password" autocomplete="current-password" /></div>
+              <div class="field"><label>动态验证码 / 恢复码</label><input v-model="twoFA.code" autocomplete="one-time-code" placeholder="6 位验证码" /></div>
+            </div>
+            <div class="flex" style="gap: 8px">
+              <button class="btn" :disabled="twoFA.busy" @click="regenerateRecovery">重新生成恢复码</button>
+              <button class="btn btn-danger" :disabled="twoFA.busy" @click="disable2FA">关闭 2FA</button>
+            </div>
+            <div v-if="twoFA.newCodes" class="banner banner-warn" style="margin-top: 12px">
+              <div>请立即保存新的恢复码（只显示一次）：</div>
+              <div class="mono" style="margin-top: 6px; word-break: break-all">{{ twoFA.newCodes.join('  ') }}</div>
+              <button class="btn btn-sm" type="button" style="margin-top: 8px" @click="copyCodes(twoFA.newCodes)">复制</button>
+            </div>
+          </template>
+          <template v-else>
+            <template v-if="!twoFA.setup">
+              <p class="small dim">支持 Google Authenticator、1Password、Bitwarden 等标准 TOTP 应用。</p>
+              <button class="btn btn-primary" :disabled="twoFA.busy" @click="start2FA">开始启用 2FA</button>
+            </template>
+            <template v-else>
+              <div class="flex" style="gap: 20px; flex-wrap: wrap">
+                <img :src="twoFA.setup.qr" alt="2FA QR" style="width: 220px; height: 220px; border-radius: 12px; background: #fff; padding: 8px" />
+                <div style="flex: 1; min-width: 260px">
+                  <div class="small dim">扫码，或手动输入密钥：</div>
+                  <div class="mono" style="word-break: break-all; margin: 6px 0">{{ twoFA.setup.secret }}</div>
+                  <div class="small dim">恢复码（只显示一次，请离线保存）：</div>
+                  <div class="mono small" style="margin: 6px 0; word-break: break-all">{{ twoFA.setup.recoveryCodes.join('  ') }}</div>
+                  <button class="btn btn-sm" type="button" @click="copyCodes(twoFA.setup.recoveryCodes)">复制恢复码</button>
+                </div>
+              </div>
+              <div class="field" style="max-width: 320px; margin-top: 14px">
+                <label>输入验证器生成的 6 位验证码</label>
+                <input v-model="twoFA.code" inputmode="numeric" autocomplete="one-time-code" />
+              </div>
+              <button class="btn btn-primary" :disabled="twoFA.busy" @click="enable2FA">确认启用</button>
+            </template>
+          </template>
+        </div>
+      </section>
+
+      <section v-show="tab === 'security'" class="card section-gap">
+        <div class="card-header">
+          <div>
             <div class="card-title">API 密钥</div>
             <div class="card-sub">用于自动化与 REST API 的作用域凭据</div>
           </div>
@@ -186,6 +240,55 @@
               <tr v-if="!apiKeys.length"><td colspan="6"><div class="empty">暂无 API 密钥。</div></td></tr>
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <section v-show="tab === 'certs'" class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">节点证书签发</div>
+            <div class="card-sub">面板通过 ACME DNS-01 申请证书，再通过 Agent 控制通道下发；节点私钥不上传到面板（CSR 模式）。</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="field">
+              <label>ACME 目录</label>
+              <select v-model="certForm.ca">
+                <option value="https://acme-v02.api.letsencrypt.org/directory">Let's Encrypt</option>
+                <option value="https://acme-staging-v02.api.letsencrypt.org/directory">Let's Encrypt Staging（测试）</option>
+              </select>
+            </div>
+            <div class="field"><label>ACME 邮箱</label><input v-model="certForm.email" type="email" placeholder="admin@example.com" /></div>
+            <div class="field">
+              <label>DNS 服务商</label>
+              <select v-model="certForm.provider">
+                <option value="manual">手动 TXT（无 API）</option>
+                <option value="cloudflare">Cloudflare</option>
+                <option value="alidns">阿里云 DNS</option>
+                <option value="dnspod">DNSPod</option>
+              </select>
+            </div>
+            <div class="field"><label>提前续期天数</label><input v-model.number="certForm.renewDays" type="number" min="1" max="90" /></div>
+            <template v-if="certForm.provider === 'cloudflare'">
+              <div class="field full"><label>Cloudflare API Token</label><input v-model="certForm.apiToken" type="password" :placeholder="certForm.dnsConfigured ? '已配置 — 留空保持不变' : 'Zone.DNS 编辑权限 Token'" /></div>
+            </template>
+            <template v-else-if="certForm.provider === 'alidns'">
+              <div class="field"><label>AccessKey ID</label><input v-model="certForm.accessKeyId" type="text" :placeholder="certForm.dnsConfigured ? '已配置 — 留空保持不变' : 'LTAI…'" /></div>
+              <div class="field"><label>AccessKey Secret</label><input v-model="certForm.accessKeySecret" type="password" :placeholder="certForm.dnsConfigured ? '已配置 — 留空保持不变' : ''" /></div>
+            </template>
+            <template v-else-if="certForm.provider === 'dnspod'">
+              <div class="field full"><label>DNSPod Login Token</label><input v-model="certForm.loginToken" type="password" :placeholder="certForm.dnsConfigured ? '已配置 — 留空保持不变' : 'API Token'" /></div>
+            </template>
+            <div v-else class="field full">
+              <span class="hint">手动模式下，申请证书时面板会显示需要添加的 <span class="mono">_acme-challenge</span> TXT 记录，添加后点击“验证并继续”。</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer" style="border-radius: 0 0 16px 16px">
+          <button class="btn" :disabled="certSaving" @click="clearCertCredentials">清除 DNS 凭据</button>
+          <div class="spacer"></div>
+          <button class="btn btn-primary" :disabled="certSaving" @click="saveCertSettings">保存证书设置</button>
         </div>
       </section>
 
@@ -297,6 +400,9 @@ const newToken = ref('')
 const backups = ref([])
 const backupBusy = ref(false)
 const restoreMessage = ref('')
+const twoFA = reactive({ enabled: false, recoveryRemaining: 0, password: '', code: '', busy: false, setup: null, newCodes: null, error: '' })
+const certForm = reactive({ ca: 'https://acme-v02.api.letsencrypt.org/directory', email: '', provider: 'manual', renewDays: 30, apiToken: '', accessKeyId: '', accessKeySecret: '', loginToken: '', dnsConfigured: false })
+const certSaving = ref(false)
 
 function syncPreview() {
   const pub = (form.public_url || '').replace(/\/+$/, '')
@@ -427,6 +533,131 @@ async function deleteKey(k) {
     notify(e.message, 'error')
   }
 }
+async function load2FA() {
+  try {
+    const r = await api.twoFactorStatus()
+    twoFA.enabled = !!r.enabled
+    twoFA.recoveryRemaining = r.recoveryRemaining || 0
+  } catch (e) {
+    // Ignore; the security tab shows the error when an action is attempted.
+  }
+}
+async function start2FA() {
+  twoFA.error = ''
+  twoFA.busy = true
+  try {
+    twoFA.setup = await api.setupTwoFactor()
+    twoFA.code = ''
+  } catch (e) {
+    twoFA.error = e.message
+  } finally {
+    twoFA.busy = false
+  }
+}
+async function enable2FA() {
+  twoFA.error = ''
+  twoFA.busy = true
+  try {
+    await api.enableTwoFactor(twoFA.code)
+    twoFA.enabled = true
+    twoFA.setup = null
+    twoFA.code = ''
+    notify('两步验证已启用')
+    await load2FA()
+  } catch (e) {
+    twoFA.error = e.message
+  } finally {
+    twoFA.busy = false
+  }
+}
+async function disable2FA() {
+  if (!confirm('关闭两步验证？之后仅使用密码即可登录。')) return
+  twoFA.error = ''
+  twoFA.busy = true
+  try {
+    await api.disableTwoFactor(twoFA.password, twoFA.code)
+    twoFA.enabled = false
+    twoFA.password = ''
+    twoFA.code = ''
+    notify('两步验证已关闭')
+    await load2FA()
+  } catch (e) {
+    twoFA.error = e.message
+  } finally {
+    twoFA.busy = false
+  }
+}
+async function regenerateRecovery() {
+  twoFA.error = ''
+  twoFA.busy = true
+  try {
+    const r = await api.regenerateRecovery(twoFA.password, twoFA.code)
+    twoFA.newCodes = r.recoveryCodes || []
+    twoFA.password = ''
+    twoFA.code = ''
+    notify('恢复码已重新生成')
+    await load2FA()
+  } catch (e) {
+    twoFA.error = e.message
+  } finally {
+    twoFA.busy = false
+  }
+}
+function copyCodes(codes) {
+  copyText(codes.join('\n'))
+  notify('恢复码已复制')
+}
+async function loadCertSettings() {
+  try {
+    const r = await api.certSettings()
+    certForm.ca = r.ca || certForm.ca
+    certForm.email = r.email || ''
+    certForm.provider = r.provider || 'manual'
+    certForm.renewDays = r.renewDays || 30
+    certForm.dnsConfigured = !!r.dnsConfigured
+  } catch (e) {
+    notify(e.message, 'error')
+  }
+}
+async function saveCertSettings() {
+  certSaving.value = true
+  try {
+    const payload = { ca: certForm.ca, email: certForm.email, provider: certForm.provider, renewDays: Number(certForm.renewDays) || 30 }
+    const dns = {}
+    if (certForm.provider === 'cloudflare' && certForm.apiToken) dns.apiToken = certForm.apiToken
+    if (certForm.provider === 'alidns') {
+      if (certForm.accessKeyId) dns.accessKeyId = certForm.accessKeyId
+      if (certForm.accessKeySecret) dns.accessKeySecret = certForm.accessKeySecret
+    }
+    if (certForm.provider === 'dnspod' && certForm.loginToken) dns.loginToken = certForm.loginToken
+    if (certForm.provider === 'manual') payload.dnsConfig = {}
+    else if (Object.keys(dns).length) payload.dnsConfig = dns
+    await api.updateCertSettings(payload)
+    certForm.apiToken = ''
+    certForm.accessKeyId = ''
+    certForm.accessKeySecret = ''
+    certForm.loginToken = ''
+    notify('证书设置已保存')
+    await loadCertSettings()
+  } catch (e) {
+    notify(e.message, 'error')
+  } finally {
+    certSaving.value = false
+  }
+}
+async function clearCertCredentials() {
+  if (!confirm('清除已保存的 DNS 服务商凭据？')) return
+  certSaving.value = true
+  try {
+    await api.updateCertSettings({ ca: certForm.ca, email: certForm.email, provider: certForm.provider, renewDays: Number(certForm.renewDays) || 30, dnsConfig: {} })
+    certForm.dnsConfigured = false
+    notify('DNS 凭据已清除')
+  } catch (e) {
+    notify(e.message, 'error')
+  } finally {
+    certSaving.value = false
+  }
+}
 async function load() {
   try {
     const res = await api.settings()
@@ -435,6 +666,8 @@ async function load() {
     Object.assign(form, res.settings)
     form.log_ingest_enabled = form.log_ingest_enabled === 'true' || form.log_ingest_enabled === true
     syncPreview()
+    loadCertSettings()
+    load2FA()
   } catch (e) {
     error.value = e.message
   }

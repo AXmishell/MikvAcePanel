@@ -82,7 +82,7 @@ func Endpoints(n model.Node) []Endpoint {
 	if sni == "" {
 		sni = strings.TrimSpace(n.SNI)
 	}
-	hasCert := strings.EqualFold(n.TLSMode, "acme") && n.Domain != ""
+	hasCert := (strings.EqualFold(n.TLSMode, "acme") || strings.EqualFold(n.TLSMode, "managed")) && n.Domain != ""
 	base := Endpoint{
 		Label: "TLS", Host: host, Port: defaultInt(n.Port, 443),
 		SNI: sni, HasCert: hasCert, Insecure: !hasCert,
@@ -293,7 +293,7 @@ func Clash(u *model.User, nodes []model.Node) (string, error) {
 			case "tls":
 				p.TLS = true
 				p.Servername = firstNonEmpty(firstOf(n.Xray.RealitySNI), n.Domain, nodeHost(n))
-				p.SkipCertVerify = true
+				p.SkipCertVerify = !(strings.EqualFold(n.TLSMode, "managed") && n.Domain != "")
 				p.ClientFingerprint = firstNonEmpty(n.Xray.Fingerprint, "chrome")
 				p.ALPN = n.Xray.ALPN
 				if n.Xray.Transport == "tcp" && n.Xray.Flow != "" {
@@ -392,7 +392,7 @@ func Singbox(u *model.User, nodes []model.Node) (string, error) {
 				}
 			case "tls":
 				tls["server_name"] = firstNonEmpty(firstOf(n.Xray.RealitySNI), n.Domain, nodeHost(n))
-				tls["insecure"] = true
+				tls["insecure"] = !(strings.EqualFold(n.TLSMode, "managed") && n.Domain != "")
 				if len(n.Xray.ALPN) > 0 {
 					tls["alpn"] = n.Xray.ALPN
 				}
@@ -515,7 +515,7 @@ func Xray(u *model.User, nodes []model.Node) (string, error) {
 				stream["security"] = "tls"
 				stream["tlsSettings"] = map[string]any{
 					"serverName":    firstNonEmpty(firstOf(n.Xray.RealitySNI), n.Domain, nodeHost(n)),
-					"allowInsecure": true,
+					"allowInsecure": !(strings.EqualFold(n.TLSMode, "managed") && n.Domain != ""),
 				}
 			}
 			switch n.Xray.Transport {

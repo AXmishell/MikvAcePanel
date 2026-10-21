@@ -83,6 +83,17 @@ func (s *Server) CreateBackup(ctx context.Context) (*BackupInfo, error) {
 			_, writeErr = tw.Write(metaBytes)
 		}
 	}
+	if writeErr == nil {
+		keyPath := filepath.Join(s.cfg.DataDir, "cert.key")
+		if b, err := os.ReadFile(keyPath); err == nil {
+			writeErr = tw.WriteHeader(&tar.Header{
+				Name: "cert.key", Mode: 0o600, Size: int64(len(b)), ModTime: nowT, Typeflag: tar.TypeReg,
+			})
+			if writeErr == nil {
+				_, writeErr = tw.Write(b)
+			}
+		}
+	}
 	if err := tw.Close(); writeErr == nil {
 		writeErr = err
 	}
@@ -288,6 +299,11 @@ func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid backup database: "+err.Error())
 		return
 	}
+	if err := extractNamedFile(tmpTar, "cert.key", filepath.Join(s.cfg.DataDir, "cert.key.restore"), 0o600); err == nil {
+		// staged encryption key for the restored database
+	} else {
+		_ = os.Remove(filepath.Join(s.cfg.DataDir, "cert.key.restore"))
+	}
 	s.store.AddEvent(r.Context(), "backup.restore_staged", 0, "warning", "已上传恢复文件，等待面板重启")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "restartRequired": true,
@@ -336,6 +352,47 @@ func extractDatabase(tarPath, dest string) error {
 		return nil
 	}
 	return fmt.Errorf("archive does not contain panel.db")
+}
+
+// extractNamedFile copies one regular file out of a tar.gz archive.
+func extractNamedFile(tarPath, name, dest string, mode os.FileMode) error {
+	f, err := os.Open(tarPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if hdr.Typeflag != tar.TypeReg || (hdr.Name != name && !strings.HasSuffix(hdr.Name, "/"+name)) {
+			continue
+		}
+		if hdr.Size > 1<<20 {
+			return fmt.Errorf("file %s in archive is too large", name)
+		}
+		out, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.CopyN(out, tr, hdr.Size)
+		closeErr := out.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	}
+	return fmt.Errorf("archive does not contain %s", name)
 }
 
 // MaybeAutoBackup creates a backup when the configured interval has elapsed.

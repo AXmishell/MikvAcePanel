@@ -12,12 +12,15 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
     -ldflags "-s -w -X github.com/axmishell/mikvacepanel/internal/version.Version=${VERSION} -X github.com/axmishell/mikvacepanel/internal/version.Commit=${COMMIT} -X github.com/axmishell/mikvacepanel/internal/version.BuildDate=${BUILD_DATE}" \
     -o /out/mikvace-node ./cmd/node
 
-# The official Hysteria image already contains bash, iptables, nftables and
-# CA certificates, which the agent needs for port hopping and TLS.
-FROM tobyxdd/hysteria:latest
-RUN apk add --no-cache docker-cli
-COPY --from=ghcr.io/xtls/xray-core:latest /usr/local/bin/xray /usr/local/bin/xray
+# Alpine is the runtime base because the agent needs iptables for port
+# hopping and docker-cli for the sibling-container runtime. Pull the proxy
+# binaries from their official images rather than relying on their (possibly
+# distroless) userland.
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates iptables tzdata docker-cli
 COPY --from=build /out/mikvace-node /usr/local/bin/mikvace-node
+COPY --from=tobyxdd/hysteria:latest /usr/local/bin/hysteria /usr/local/bin/hysteria
+COPY --from=ghcr.io/xtls/xray-core:latest /usr/local/bin/xray /usr/local/bin/xray
 ENV DATA_DIR=/data \
     HY2_RUNTIME=process \
     HYSTERIA_BIN=/usr/local/bin/hysteria \

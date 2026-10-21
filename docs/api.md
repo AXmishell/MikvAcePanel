@@ -7,6 +7,12 @@ Base URL：`https://panel.example.com/api`
 ```
 POST /api/login  {"username":"admin","password":"..."}
 => {"token":"...","expiresAt":"...","admin":{"id":1,"username":"admin"}}
+
+# 已启用 2FA 时不会直接返回 token：
+=> {"twoFactorRequired":true,"challenge":"...","expiresAt":"..."}
+
+POST /api/login/2fa  {"challenge":"...","code":"123456"}
+=> {"token":"...","expiresAt":"...","admin":{...}}
 Authorization: Bearer <token>
 ```
 
@@ -125,6 +131,11 @@ HAPP/Incy 请求还会把 routing 指令前置到 URI 订阅正文。
 | --- | --- | --- |
 | GET | `/api/me` | 当前管理员、版本、默认密码警告 |
 | POST | `/api/change-password` | `{oldPassword,newPassword}` |
+| GET | `/api/2fa` | 2FA 状态与剩余恢复码数量 |
+| POST | `/api/2fa/setup` | 生成 TOTP 密钥、二维码与恢复码（尚未启用） |
+| POST | `/api/2fa/enable` | `{code}` 确认启用 |
+| POST | `/api/2fa/disable` | `{password, code}` 关闭 2FA |
+| POST | `/api/2fa/recovery` | `{password, code}` 重新生成恢复码 |
 
 ### 用户
 
@@ -191,6 +202,13 @@ HAPP/Incy 请求还会把 routing 指令前置到 URI 订阅正文。
 | GET | `/api/nodes/:id/config` | 最新 YAML、revision、hash、appliedAt |
 | GET | `/api/nodes/:id/install` | Token、Docker 命令、安装脚本、compose |
 | POST | `/api/nodes/:id/ssh/install` | 通过 SSH 执行节点安装脚本，返回输出 |
+| GET | `/api/nodes/:id/cert` | 证书状态、指纹、有效期、手动 TXT 记录 |
+| POST | `/api/nodes/:id/cert/request` | 通知 Agent 重新提交 CSR（立即续期） |
+| POST | `/api/nodes/:id/cert/upload` | 上传证书链与私钥（需 `tlsMode=managed`） |
+| POST | `/api/nodes/:id/cert/confirm` | 手动 TXT 已添加，继续签发 |
+| POST | `/api/nodes/:id/cert/cancel` | 取消进行中的签发 |
+| GET | `/api/certs` | 所有节点的证书状态汇总 |
+| GET/PUT | `/api/cert/settings` | ACME CA、邮箱、DNS 服务商与凭据 |
 | POST | `/api/sync` | 同步所有节点 |
 
 节点请求字段见 [node-agent.md](node-agent.md)。
@@ -310,7 +328,9 @@ Authorization: Bearer <node token>
 | `heartbeat` | `cpuPct, memUsed, memTotal, diskUsed, diskTotal, load1, uptimeSec, online, trafficTx, trafficRx, hy2Running` |
 | `stats` | `batchId, users {userId:{tx,rx}}, online {userId:count}, trafficTx, trafficRx` |
 | `logs` | `batchId, entries [{ts,level,message,raw}]` |
-| `config.ack` | `revision, ok, error` |
+| `config.ack` | `revision, ok, pending, error` |
+| `cert.request` | `requestId, reason, domains, csrPEM, keyFingerprint` |
+| `cert.ack` | `requestId, revision, ok, fingerprint, error` |
 | `command.ack` | `id, action, ok, output` |
 | `pong` | `{ts}` |
 
@@ -321,6 +341,9 @@ Authorization: Bearer <node token>
 | type | payload |
 | --- | --- |
 | `config` | `revision, yaml, tlsMode, domain, host, port, portRange` |
+| `cert.push` | `requestId, revision, domains, notBefore, notAfter, fingerprint, certPEM, keyPEM` |
+| `cert.error` | `requestId, error` |
+| `cert.renew` | `reason` |
 | `command` | `id, action: start/stop/restart` |
 | `log.ack` | `batchId` |
 | `stats.ack` | `batchId` |

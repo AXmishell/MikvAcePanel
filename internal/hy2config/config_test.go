@@ -44,8 +44,26 @@ func TestRenderACME(t *testing.T) {
 	if strings.Contains(text, "tls:") || !strings.Contains(text, "acme:") || !strings.Contains(text, "node.example.com") {
 		t.Fatalf("unexpected acme config:\n%s", text)
 	}
+	// Node-side ACME must not bind port 80 and must persist its cache.
+	if !strings.Contains(text, "disableHTTP: true") || !strings.Contains(text, "dir: /data/acme") {
+		t.Fatalf("acme config must use TLS-ALPN only and a persistent dir:\n%s", text)
+	}
 	if _, _, err := Render(&model.Node{TLSMode: "acme"}, "https://panel"); err == nil {
 		t.Fatal("expected error for acme without domain")
+	}
+}
+
+func TestRenderManaged(t *testing.T) {
+	n := &model.Node{ID: 2, Domain: "node.example.com", Port: 443, TLSMode: "managed", StatsPort: 9999}
+	text, _, err := Render(n, "https://panel.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "tls:") || !strings.Contains(text, "/data/certs/cert.pem") {
+		t.Fatalf("managed config must reference the panel-managed files:\n%s", text)
+	}
+	if strings.Contains(text, "acme:") {
+		t.Fatalf("managed config must not contain acme:\n%s", text)
 	}
 }
 

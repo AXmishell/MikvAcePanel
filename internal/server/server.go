@@ -29,6 +29,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/axmishell/mikvacepanel/internal/certcrypto"
+	"github.com/axmishell/mikvacepanel/internal/certmanager"
 	"github.com/axmishell/mikvacepanel/internal/logs"
 	"github.com/axmishell/mikvacepanel/internal/model"
 	"github.com/axmishell/mikvacepanel/internal/rediscache"
@@ -39,19 +41,23 @@ import (
 
 // Server is the HTTP panel application.
 type Server struct {
-	cfg      Config
-	store    *store.Store
-	hub      *Hub
-	analyzer *logs.Analyzer
-	log      *slog.Logger
-	secret   []byte
-	started  time.Time
-	mux      http.Handler
-	redis    *rediscache.Client
-	sessions *sessionStore
+	cfg       Config
+	store     *store.Store
+	hub       *Hub
+	analyzer  *logs.Analyzer
+	certs     *certmanager.Manager
+	log       *slog.Logger
+	secret    []byte
+	secretKey []byte
+	started   time.Time
+	mux       http.Handler
+	redis     *rediscache.Client
+	sessions  *sessionStore
 
-	loginMu    sync.Mutex
-	loginTries map[string][]time.Time
+	loginMu        sync.Mutex
+	loginTries     map[string][]time.Time
+	twoFactorTries map[string]int
+	challengeUsed  map[string]time.Time
 
 	apiKeyMu   sync.Mutex
 	apiKeyRate map[int64][]time.Time
@@ -68,7 +74,9 @@ func New(cfg Config, st *store.Store, logger *slog.Logger) (*Server, error) {
 	s := &Server{
 		cfg: cfg, store: st, log: logger, secret: secret,
 		started: time.Now().UTC(), loginTries: map[string][]time.Time{},
-		apiKeyRate: map[int64][]time.Time{},
+		apiKeyRate:     map[int64][]time.Time{},
+		twoFactorTries: map[string]int{},
+		challengeUsed:  map[string]time.Time{},
 	}
 	redisClient, err := rediscache.Open(context.Background(), cfg.RedisURL, cfg.RedisPrefix, logger)
 	if err != nil {
@@ -83,6 +91,14 @@ func New(cfg Config, st *store.Store, logger *slog.Logger) (*Server, error) {
 	s.sessions = newSessionStore(redisClient, cfg.SessionTTL, logger)
 	s.hub = NewHub(st, logger)
 	s.analyzer = logs.New(st)
+	certKey, err := certcrypto.LoadKey(cfg.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("certificate encryption key: %w", err)
+	}
+	s.secretKey = certKey
+	s.certs = certmanager.New(st, logger, certKey, func(nodeID int64, msgType string, payload any) bool {
+		return s.hub.SendToNode(nodeID, msgType, payload)
+	})
 	if err := s.bootstrap(context.Background()); err != nil {
 		return nil, err
 	}
@@ -95,6 +111,9 @@ func (s *Server) Handler() http.Handler { return s.mux }
 
 // Close releases optional external resources such as the Redis pool.
 func (s *Server) Close() {
+	if s.certs != nil {
+		s.certs.Close()
+	}
 	if s.redis != nil {
 		_ = s.redis.Close()
 	}
@@ -167,6 +186,7 @@ func (s *Server) routes() http.Handler {
 
 	r.Get("/api/health", s.handleHealth)
 	r.Post("/api/login", s.handleLogin)
+	r.Post("/api/login/2fa", s.handleLogin2FA)
 	r.Post("/api/auth", s.handleHy2Auth)
 	r.Get("/api/files/info/{token}", s.handleSubInfo)
 	r.Get("/api/files/{token}", s.handleSubscription)
@@ -179,6 +199,11 @@ func (s *Server) routes() http.Handler {
 		pr.Get("/api/me", s.handleMe)
 		pr.Post("/api/logout", s.handleLogout)
 		pr.Post("/api/change-password", s.handleChangePassword)
+		pr.Get("/api/2fa", s.handleTwoFactorStatus)
+		pr.Post("/api/2fa/setup", s.handleTwoFactorSetup)
+		pr.Post("/api/2fa/enable", s.handleTwoFactorEnable)
+		pr.Post("/api/2fa/disable", s.handleTwoFactorDisable)
+		pr.Post("/api/2fa/recovery", s.handleTwoFactorRecovery)
 
 		pr.Get("/api/dashboard", s.handleDashboard)
 		pr.Get("/api/events", s.handleEvents)
@@ -212,6 +237,14 @@ func (s *Server) routes() http.Handler {
 		pr.Post("/api/nodes/{id}/ssh/install", s.handleNodeSSHInstall)
 		pr.Get("/api/nodes/{id}/config", s.handleNodeConfig)
 		pr.Get("/api/nodes/{id}/install", s.handleNodeInstall)
+		pr.Get("/api/nodes/{id}/cert", s.handleGetNodeCert)
+		pr.Post("/api/nodes/{id}/cert/request", s.handleRequestNodeCert)
+		pr.Post("/api/nodes/{id}/cert/upload", s.handleUploadNodeCert)
+		pr.Post("/api/nodes/{id}/cert/confirm", s.handleConfirmNodeCert)
+		pr.Post("/api/nodes/{id}/cert/cancel", s.handleCancelNodeCert)
+		pr.Get("/api/certs", s.handleListNodeCerts)
+		pr.Get("/api/cert/settings", s.handleGetCertSettings)
+		pr.Put("/api/cert/settings", s.handleUpdateCertSettings)
 
 		pr.Get("/api/logs", s.handleLogs)
 		pr.Get("/api/logs/summary", s.handleLogSummary)
@@ -431,6 +464,7 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 type adminClaims struct {
 	AdminID  int64  `json:"aid"`
 	Username string `json:"username"`
+	Purpose  string `json:"purpose,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -498,6 +532,10 @@ func (s *Server) adminAuth(next http.Handler) http.Handler {
 			return s.secret, nil
 		})
 		if err != nil || !tok.Valid {
+			writeError(w, http.StatusUnauthorized, "invalid or expired session")
+			return
+		}
+		if claims.Purpose != "" {
 			writeError(w, http.StatusUnauthorized, "invalid or expired session")
 			return
 		}
@@ -682,6 +720,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
+	if admin.TOTPEnabled {
+		challenge, expires, err := s.issueTOTPChallenge(admin)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not create challenge")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"twoFactorRequired": true,
+			"challenge":         challenge,
+			"expiresAt":         expires,
+		})
+		return
+	}
 	token, expires, err := s.issueToken(admin)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create session")
@@ -713,7 +764,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	warning, _ := s.store.GetSetting(r.Context(), "bootstrap_warning")
 	writeJSON(w, http.StatusOK, map[string]any{
-		"admin":   map[string]any{"id": admin.ID, "username": admin.Username, "lastLoginAt": admin.LastLoginAt},
+		"admin":   map[string]any{"id": admin.ID, "username": admin.Username, "lastLoginAt": admin.LastLoginAt, "twoFactorEnabled": admin.TOTPEnabled},
 		"warning": warning, "version": version.String(),
 	})
 }

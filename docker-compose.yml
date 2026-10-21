@@ -25,6 +25,7 @@ services:
       REDIS_URL: "${REDIS_URL:-}"
       REDIS_PREFIX: "${REDIS_PREFIX:-mikvace:}"
       REDIS_REQUIRED: "${REDIS_REQUIRED:-false}"
+      CERT_ENC_KEY: "${CERT_ENC_KEY:-}"
     volumes:
       - panel-data:/data
 

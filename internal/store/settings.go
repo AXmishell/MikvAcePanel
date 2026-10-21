@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -27,14 +28,18 @@ func (s *Store) EnsureAdmin(ctx context.Context, username, passwordHash string) 
 // GetAdminByUsername loads an administrator by login name.
 func (s *Store) GetAdminByUsername(ctx context.Context, username string) (*model.Admin, error) {
 	row := s.DB.QueryRowContext(ctx,
-		`SELECT id, username, password_hash, created_at, last_login_at FROM admins WHERE username = ?`, username)
+		`SELECT id, username, password_hash, created_at, last_login_at,
+			totp_secret, totp_pending, totp_enabled, totp_recovery, totp_pending_recovery
+		 FROM admins WHERE username = ?`, username)
 	return scanAdmin(row)
 }
 
 // GetAdminByID loads an administrator by numeric id.
 func (s *Store) GetAdminByID(ctx context.Context, id int64) (*model.Admin, error) {
 	row := s.DB.QueryRowContext(ctx,
-		`SELECT id, username, password_hash, created_at, last_login_at FROM admins WHERE id = ?`, id)
+		`SELECT id, username, password_hash, created_at, last_login_at,
+			totp_secret, totp_pending, totp_enabled, totp_recovery, totp_pending_recovery
+		 FROM admins WHERE id = ?`, id)
 	return scanAdmin(row)
 }
 
@@ -42,7 +47,10 @@ func scanAdmin(row *sql.Row) (*model.Admin, error) {
 	var a model.Admin
 	var created string
 	var last sql.NullString
-	err := row.Scan(&a.ID, &a.Username, &a.PasswordHash, &created, &last)
+	var recovery, pendingRecovery string
+	var totpEnabled int
+	err := row.Scan(&a.ID, &a.Username, &a.PasswordHash, &created, &last,
+		&a.TOTPSecret, &a.TOTPPending, &totpEnabled, &recovery, &pendingRecovery)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -51,7 +59,45 @@ func scanAdmin(row *sql.Row) (*model.Admin, error) {
 	}
 	a.CreatedAt = parseTime(created)
 	a.LastLoginAt = nullTime(last)
+	a.TOTPEnabled = totpEnabled == 1
+	_ = json.Unmarshal([]byte(recovery), &a.TOTPRecovery)
+	_ = json.Unmarshal([]byte(pendingRecovery), &a.TOTPPendingRecovery)
 	return &a, nil
+}
+
+// SetAdminTOTPPending stores an encrypted secret and recovery hashes until the
+// administrator confirms the first code.
+func (s *Store) SetAdminTOTPPending(ctx context.Context, id int64, secretCipher string, recovery []string) error {
+	b, _ := json.Marshal(recovery)
+	_, err := s.DB.ExecContext(ctx, `UPDATE admins SET totp_pending = ?, totp_pending_recovery = ? WHERE id = ?`,
+		secretCipher, string(b), id)
+	return err
+}
+
+// EnableAdminTOTP promotes the pending secret to the active one.
+func (s *Store) EnableAdminTOTP(ctx context.Context, id int64, secretCipher string, recovery []string) error {
+	b, _ := json.Marshal(recovery)
+	_, err := s.DB.ExecContext(ctx, `UPDATE admins
+		SET totp_secret = ?, totp_recovery = ?, totp_enabled = 1,
+			totp_pending = '', totp_pending_recovery = '[]'
+		WHERE id = ?`, secretCipher, string(b), id)
+	return err
+}
+
+// DisableAdminTOTP removes all TOTP material.
+func (s *Store) DisableAdminTOTP(ctx context.Context, id int64) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE admins
+		SET totp_secret = '', totp_recovery = '[]', totp_enabled = 0,
+			totp_pending = '', totp_pending_recovery = '[]'
+		WHERE id = ?`, id)
+	return err
+}
+
+// SetAdminTOTPRecovery replaces the recovery-code hashes.
+func (s *Store) SetAdminTOTPRecovery(ctx context.Context, id int64, recovery []string) error {
+	b, _ := json.Marshal(recovery)
+	_, err := s.DB.ExecContext(ctx, `UPDATE admins SET totp_recovery = ? WHERE id = ?`, string(b), id)
+	return err
 }
 
 // TouchAdminLogin records a successful login timestamp.
