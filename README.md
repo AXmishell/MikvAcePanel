@@ -93,6 +93,17 @@ docker compose up -d --build
 2. 设置环境变量 `PANEL_PUBLIC_URL=https://panel.example.com`，或在面板 **Settings → General** 中修改。
 3. 不要使用默认密码，并为 `JWT_SECRET` 配置随机值。
 
+### 预构建镜像（GHCR）
+
+推送到 `main` 或打 `v*.*.*` 标签时，GitHub Actions 会自动构建并发布面板与节点镜像到 GHCR，支持 `linux/amd64` 和 `linux/arm64`（工作流见 `.github/workflows/docker.yml`）。
+
+```bash
+docker pull ghcr.io/axmishell/mikvacepanel:latest        # 面板
+docker pull ghcr.io/axmishell/mikvacepanel-node:latest   # 节点 Agent
+```
+
+标签规则：`main` 分支发布 `main`、`latest`、`sha-<commit>`；`v1.2.3` 标签发布 `1.2.3`、`1.2`、`latest`、`sha-<commit>`。
+
 ### 本地开发
 
 ```bash
@@ -131,7 +142,7 @@ docker run -d --name mikvace-node --restart unless-stopped \
   mikvacepanel/node:latest
 ```
 
-需要先构建节点镜像：
+直接使用 GHCR 上的预构建镜像（把上面的 `mikvacepanel/node:latest` 换成 `ghcr.io/axmishell/mikvacepanel-node:latest`）即可，也可以本地构建：
 
 ```bash
 make docker-node
