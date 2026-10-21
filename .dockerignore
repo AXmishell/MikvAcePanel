@@ -1,0 +1,11 @@
+.git
+.github
+bin
+data
+web/node_modules
+web/dist
+*.log
+.env
+docker.env
+README*.md
+docs

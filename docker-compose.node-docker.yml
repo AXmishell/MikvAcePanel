@@ -1,0 +1,25 @@
+services:
+  node:
+    image: mikvacepanel/node:latest
+    container_name: mikvace-node
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    environment:
+      PANEL_URL: "${PANEL_URL:?set PANEL_URL to your panel base URL}"
+      NODE_TOKEN: "${NODE_TOKEN:?set NODE_TOKEN from the panel}"
+      HY2_RUNTIME: "docker"
+      DATA_DIR: "/data"
+      # Host path of the data volume, because the agent starts a sibling
+      # Hysteria container and must reference the host path, not its own /data.
+      HOST_DATA_DIR: "${NODE_DATA_DIR:-/var/lib/mikvace}"
+      HY2_IMAGE: "${HY2_IMAGE:-tobyxdd/hysteria:latest}"
+    volumes:
+      - "${NODE_DATA_DIR:-/var/lib/mikvace}:/data"
+      - /var/run/docker.sock:/var/run/docker.sock

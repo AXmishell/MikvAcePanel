@@ -1,0 +1,50 @@
+import { createRouter, createWebHistory } from 'vue-router'
+import { auth } from './store'
+
+const routes = [
+  {
+    path: '/login',
+    name: 'login',
+    component: () => import('./views/LoginView.vue'),
+    meta: { public: true, title: '登录' },
+  },
+  {
+    path: '/',
+    component: () => import('./components/AppLayout.vue'),
+    children: [
+      { path: '', redirect: '/dashboard' },
+      { path: 'dashboard', name: 'dashboard', component: () => import('./views/DashboardView.vue'), meta: { title: '仪表盘' } },
+      { path: 'users', name: 'users', component: () => import('./views/UsersView.vue'), meta: { title: '用户' } },
+      { path: 'nodes', name: 'nodes', component: () => import('./views/NodesView.vue'), meta: { title: '节点' } },
+      { path: 'groups', name: 'groups', component: () => import('./views/GroupsView.vue'), meta: { title: 'Groups' } },
+      { path: 'logs', name: 'logs', component: () => import('./views/LogsView.vue'), meta: { title: '日志分析' } },
+      { path: 'settings', name: 'settings', component: () => import('./views/SettingsView.vue'), meta: { title: '设置' } },
+    ],
+  },
+  { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('./views/NotFoundView.vue'), meta: { public: true } },
+]
+
+const router = createRouter({
+  history: createWebHistory('/panel/'),
+  routes,
+  scrollBehavior() {
+    return { top: 0 }
+  },
+})
+
+router.beforeEach((to) => {
+  if (to.meta.public) {
+    if (to.name === 'login' && auth.token) return { name: 'dashboard' }
+    return true
+  }
+  if (!auth.token) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
+  return true
+})
+
+router.afterEach((to) => {
+  document.title = (to.meta.title ? to.meta.title + ' · ' : '') + 'MikvAce Panel'
+})
+
+export default router

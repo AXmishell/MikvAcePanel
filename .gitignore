@@ -1,0 +1,25 @@
+# build output
+bin/
+*.exe
+*.test
+
+# runtime data
+data/
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# frontend deps (dist is committed so `go build` works without npm)
+web/node_modules/
+web/.vite/
+
+# environment
+.env
+docker.env
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

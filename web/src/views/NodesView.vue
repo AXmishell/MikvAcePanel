@@ -1,0 +1,568 @@
+<template>
+  <div>
+    <div class="toolbar">
+      <div>
+        <div class="page-title">节点</div>
+        <div class="dim small">{{ onlineCount }}/{{ nodes.length }} 个 Agent 已连接 · 通过 WebSocket 下发配置</div>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn btn-sm" :disabled="loading" @click="load"><RefreshCw :size="14" :class="{ spin: loading }" /> 刷新</button>
+      <button class="btn btn-sm" :disabled="syncingAll || !nodes.length" @click="syncAll"><RefreshCw :size="14" :class="{ spin: syncingAll }" /> 全部同步</button>
+      <button class="btn btn-primary btn-sm" @click="openCreate"><Plus :size="14" /> 添加节点</button>
+    </div>
+
+    <div v-if="error" class="banner banner-danger">{{ error }}</div>
+
+    <div v-if="!nodes.length && !loading" class="card">
+      <div class="empty" style="padding: 60px 20px">
+        <Server :size="34" />
+        <div style="font-size: 14px; color: var(--text); margin-bottom: 6px">尚未配置节点</div>
+        <div>添加 Hysteria 2 或 Xray 节点并运行生成的 Docker 命令。</div>
+        <button class="btn btn-primary" style="margin-top: 16px" @click="openCreate"><Plus :size="14" /> 添加第一个节点</button>
+      </div>
+    </div>
+
+    <div class="node-grid">
+      <article v-for="n in nodes" :key="n.id" class="card node-card">
+        <div class="node-head">
+          <div class="node-flag">{{ n.flag || '🌐' }}</div>
+          <div style="min-width: 0; flex: 1">
+            <div class="node-name truncate">{{ n.name }}</div>
+            <div class="node-host truncate">{{ n.domain || n.ip || 'no address' }}:{{ n.port }}</div>
+          </div>
+          <div class="flex" style="gap: 6px">
+            <span class="badge badge-info">{{ n.type === 'xray' ? 'VLESS' : 'Hy2' }}</span>
+            <StatusBadge :status="n.status" />
+          </div>
+        </div>
+
+        <div v-if="n.configError" class="banner banner-danger" style="margin: 0; font-size: 11px">{{ n.configError }}</div>
+
+        <div class="node-metrics">
+          <div class="metric"><div class="k">在线</div><div class="v">{{ n.onlineUsers || 0 }}<span v-if="n.maxOnline" class="dim" style="font-size: 10px"> / {{ n.maxOnline }}</span></div></div>
+          <div class="metric"><div class="k">流量</div><div class="v" style="font-size: 11px">{{ fmtBytes((n.trafficTx || 0) + (n.trafficRx || 0)) }}</div></div>
+          <div class="metric"><div class="k">配置版本</div><div class="v">{{ n.appliedRevision || 0 }}<span class="dim" style="font-size: 10px"> / {{ n.configRevision || 0 }}</span></div></div>
+        </div>
+
+        <div v-if="n.metrics" class="node-metrics">
+          <div class="metric"><div class="k">CPU</div><div class="v">{{ (n.metrics.cpuPct || 0).toFixed(1) }}%</div><div class="progress" style="margin-top: 5px"><i :style="{ width: Math.min(100, n.metrics.cpuPct || 0) + '%' }"></i></div></div>
+          <div class="metric"><div class="k">内存</div><div class="v">{{ memPct(n) }}%</div><div class="progress" style="margin-top: 5px"><i :style="{ width: memPct(n) + '%' }"></i></div></div>
+          <div class="metric"><div class="k">磁盘</div><div class="v">{{ diskPct(n) }}%</div><div class="progress" style="margin-top: 5px"><i :style="{ width: diskPct(n) + '%' }"></i></div></div>
+        </div>
+
+        <div class="small dim">
+          <div class="flex" style="justify-content: space-between; gap: 8px">
+            <span>{{ n.type === 'xray' ? 'Xray' : 'Hysteria' }} {{ n.hy2Version || 'unknown' }}</span>
+            <span>{{ n.lastSeenAt ? fmtRelative(n.lastSeenAt) : '从未连接' }}</span>
+          </div>
+          <div v-if="n.groups?.length" class="chip-list" style="margin-top: 7px">
+            <span v-for="g in n.groups" :key="g.id" class="badge badge-muted">{{ g.name }}</span>
+          </div>
+        </div>
+
+        <div class="node-actions">
+          <button class="btn btn-sm" @click="openInstall(n)"><Terminal :size="13" /> 安装</button>
+          <button class="btn btn-sm" :disabled="!n.sshUser || sshBusy === n.id" @click="sshSetup(n)"><Zap :size="13" /> 自动安装</button>
+          <router-link class="btn btn-sm" :to="'/logs?nodeId=' + n.id"><ScrollText :size="13" /> 日志</router-link>
+          <button class="btn btn-sm" @click="openConfig(n)"><FileCode2 :size="13" /> 配置</button>
+          <button class="btn btn-sm" @click="sync(n)"><RefreshCw :size="13" /> 同步</button>
+          <button class="btn btn-sm" :disabled="!n.connected" @click="command(n, 'restart')"><RotateCcw :size="13" /> 重启</button>
+          <button class="btn btn-sm" :disabled="!n.connected" @click="command(n, 'stop')"><Square :size="13" /> 停止</button>
+          <button class="btn btn-sm" @click="openEdit(n)"><Pencil :size="13" /> 编辑</button>
+          <button class="icon-btn danger" title="删除节点" @click="askDelete(n)"><Trash2 :size="15" /></button>
+        </div>
+      </article>
+    </div>
+
+    <Modal v-model="modalOpen" :title="editing ? '编辑节点' : '新建节点'" size="lg">
+      <div v-if="formError" class="banner banner-danger">{{ formError }}</div>
+      <div class="tabs">
+        <button class="tab" :class="{ active: tab === 'basic' }" @click="tab = 'basic'">连接</button>
+        <button class="tab" :class="{ active: tab === 'tls' }" @click="tab = 'tls'">TLS 与传输</button>
+        <button class="tab" :class="{ active: tab === 'ssh' }" @click="tab = 'ssh'">SSH 自动安装</button>
+        <button v-if="form.type === 'hysteria'" class="tab" :class="{ active: tab === 'advanced' }" @click="tab = 'advanced'">ACL 与高级</button>
+      </div>
+
+      <div v-show="tab === 'basic'" class="form-grid">
+        <div class="field full">
+          <label>节点类型</label>
+          <select v-model="form.type" :disabled="!!editing">
+            <option value="hysteria">Hysteria 2（QUIC / UDP）</option>
+            <option value="xray">Xray VLESS（TCP / REALITY）</option>
+          </select>
+          <span v-if="editing" class="hint">已有节点的协议不可修改。</span>
+        </div>
+        <div class="field"><label>名称</label><input v-model="form.name" type="text" placeholder="Tokyo Edge" /></div>
+        <div class="field"><label>国旗 Emoji</label><input v-model="form.flag" type="text" placeholder="🇯🇵" maxlength="8" /></div>
+        <div class="field"><label>公网 IP / 主机名</label><input v-model="form.ip" type="text" placeholder="203.0.113.10" /></div>
+        <div class="field"><label>域名（ACME）</label><input v-model="form.domain" type="text" placeholder="jp1.example.com" /></div>
+        <div class="field"><label>自定义 SNI（仅自签名）</label><input v-model="form.sni" type="text" placeholder="www.bing.com" /></div>
+        <div class="field"><label>监听地址</label><input v-model="form.listen" type="text" placeholder=":443（默认）" /></div>
+        <div class="field"><label>端口</label><input v-model.number="form.port" type="number" min="1" max="65535" placeholder="443" /></div>
+        <div v-if="form.type === 'hysteria'" class="field"><label>统计端口</label><input v-model.number="form.statsPort" type="number" min="1" max="65535" placeholder="9999" /></div>
+        <div class="field"><label>最大在线用户数</label><input v-model.number="form.maxOnline" type="number" min="0" placeholder="0 = 不限制" /></div>
+        <div class="field"><label>排序权重</label><input v-model.number="form.ranking" type="number" min="0" step="0.1" placeholder="1.0" />
+          <span class="hint">权重越高，订阅中越靠前。</span>
+        </div>
+        <div class="field full">
+          <label class="checkbox"><input v-model="form.active" type="checkbox" /> 启用 — 加入订阅并允许 Agent 连接</label>
+        </div>
+        <div class="field full">
+          <label>服务器组</label>
+          <div class="chip-list">
+            <button v-for="g in groups" :key="g.id" type="button" class="chip" :class="{ on: form.groupIds.includes(g.id) }" @click="toggleId(form.groupIds, g.id)">{{ g.name }}</button>
+            <span v-if="!groups.length" class="dim small">暂无分组 — 该节点将公开。</span>
+          </div>
+        </div>
+      </div>
+
+      <div v-show="tab === 'tls' && form.type === 'hysteria'" class="form-grid">
+        <div class="field">
+          <label>TLS 模式</label>
+          <select v-model="form.tlsMode">
+            <option value="selfsigned">自签名（无需域名）</option>
+            <option value="acme">ACME / Let's Encrypt</option>
+          </select>
+        </div>
+        <div class="field"><label>ACME 邮箱</label><input v-model="form.acmeEmail" type="email" placeholder="admin@example.com" /></div>
+        <div class="field"><label>端口跳跃范围</label><input v-model="form.portRange" type="text" placeholder="20000-50000" />
+          <span class="hint">Agent 会自动安装 iptables REDIRECT 规则，留空关闭。</span>
+        </div>
+        <div class="field"><label>跳跃间隔</label><input v-model="form.hopInterval" type="text" placeholder="30s" /></div>
+        <div class="field">
+          <label>混淆</label>
+          <select v-model="form.obfsType">
+            <option value="">已禁用</option>
+            <option value="salamander">Salamander</option>
+            <option value="gecko">Gecko（Hysteria 2.9+）</option>
+          </select>
+        </div>
+        <div class="field"><label>混淆密码</label><input v-model="form.obfsPassword" type="text" placeholder="启用时必填" /></div>
+        <div class="field"><label>上行带宽</label><input v-model="form.bandwidthUp" type="text" placeholder="1 gbps" /></div>
+        <div class="field"><label>下行带宽</label><input v-model="form.bandwidthDown" type="text" placeholder="1 gbps" /></div>
+        <div class="field full"><label>伪装代理 URL</label><input v-model="form.masqueradeUrl" type="url" placeholder="https://www.bing.com" />
+          <span class="hint">访问 Hysteria 端口的 HTTP 请求会反代到该站点。</span>
+        </div>
+      </div>
+
+
+
+      <div v-show="tab === 'tls' && form.type === 'xray'" class="form-grid">
+        <div class="field">
+          <label>传输方式</label>
+          <select v-model="form.xray.transport">
+            <option value="tcp">TCP（RAW）— REALITY 推荐</option>
+            <option value="ws">WebSocket</option>
+            <option value="grpc">gRPC</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>安全</label>
+          <select v-model="form.xray.security">
+            <option value="reality">REALITY（无需域名）</option>
+            <option value="tls">TLS（自签名 / 域名）</option>
+            <option value="none">无加密（不推荐）</option>
+          </select>
+        </div>
+        <div class="field"><label>Flow</label><input v-model="form.xray.flow" type="text" placeholder="xtls-rprx-vision" /></div>
+        <div class="field"><label>uTLS 指纹</label><input v-model="form.xray.fingerprint" type="text" placeholder="chrome" /></div>
+        <div class="field"><label>API 端口</label><input v-model.number="form.xray.apiPort" type="number" min="1" max="65535" placeholder="61000" /></div>
+        <div class="field"><label>入站标签</label><input v-model="form.xray.inboundTag" type="text" placeholder="vless-in" /></div>
+        <template v-if="form.xray.security === 'reality' || form.xray.security === 'tls'">
+          <div class="field"><label>REALITY 目标 / TLS SNI 来源</label><input v-model="form.xray.realityDest" type="text" placeholder="www.cloudflare.com:443" /></div>
+          <div class="field"><label>服务器名称（逗号分隔）</label><input v-model="form.xraySniText" type="text" placeholder="www.cloudflare.com" /></div>
+          <div class="field"><label>ALPN（逗号分隔）</label><input v-model="form.xrayAlpnText" type="text" placeholder="h2,http/1.1" /></div>
+          <div class="field"><label>SpiderX</label><input v-model="form.xray.realitySpiderX" type="text" placeholder="/" /></div>
+        </template>
+        <template v-if="form.xray.security === 'reality'">
+          <div class="field full"><label>REALITY 私钥</label><input v-model="form.xray.realityPrivateKey" type="text" placeholder="留空时自动生成" /></div>
+          <div class="field full"><label>REALITY 公钥</label><input v-model="form.xray.realityPublicKey" type="text" placeholder="留空时自动生成" /></div>
+          <div class="field full"><label>Short ID（逗号分隔）</label><input v-model="form.xraySidText" type="text" placeholder="随机 8 位十六进制" /></div>
+        </template>
+        <template v-if="form.xray.transport === 'ws'">
+          <div class="field"><label>WebSocket 路径</label><input v-model="form.xray.wsPath" type="text" placeholder="/" /></div>
+          <div class="field"><label>WebSocket Host</label><input v-model="form.xray.wsHost" type="text" placeholder="cdn.example.com" /></div>
+        </template>
+        <template v-if="form.xray.transport === 'grpc'">
+          <div class="field full"><label>gRPC 服务名</label><input v-model="form.xray.grpcServiceName" type="text" placeholder="grpc" /></div>
+        </template>
+        <div class="field full"><span class="hint">留空时由面板生成 REALITY 密钥；TLS 使用节点 Agent 管理的自签名证书。</span></div>
+      </div>
+      <div v-show="tab === 'ssh'" class="form-grid">
+        <div class="field"><label>SSH 端口</label><input v-model.number="form.sshPort" type="number" min="1" max="65535" placeholder="22" /></div>
+        <div class="field"><label>SSH 用户</label><input v-model="form.sshUser" type="text" placeholder="root" /></div>
+        <div class="field full">
+          <label>SSH 密码</label>
+          <input v-model="form.sshPassword" type="password" autocomplete="new-password" :placeholder="editing && editing.sshPasswordSet ? '已配置 — 留空保持不变' : '使用密钥时可留空'" />
+        </div>
+        <div class="field full">
+          <label>SSH 私钥</label>
+          <textarea v-model="form.sshKey" rows="6" :placeholder="editing && editing.sshKeySet ? '已配置 — 留空保持不变' : '-----BEGIN OPENSSH PRIVATE KEY-----'"></textarea>
+          <span class="hint">面板从服务端发起连接，默认不校验 SSH 主机指纹；请使用专用密钥并限制面板出口 IP。</span>
+        </div>
+        <div class="field full">
+          <label class="checkbox"><input v-model="form.sshInstallDocker" type="checkbox" /> 如果缺少 Docker 则自动安装</label>
+        </div>
+      </div>
+      <div v-show="tab === 'advanced'" class="form-grid">
+        <div v-if="form.type === 'hysteria'" class="field full">
+          <label>ACL 规则（每行一条）</label>
+          <textarea v-model="form.aclText" rows="7" placeholder="reject(geoip:private)&#10;reject(suffix:doubleclick.net)&#10;direct(all)"></textarea>
+        </div>
+        <div v-if="form.type === 'hysteria'" class="field full">
+          <label>自定义出站</label>
+          <div v-for="(o, i) in form.outbounds" :key="i" class="outbound-row">
+            <input v-model="o.name" type="text" placeholder="名称" style="max-width: 130px" />
+            <select v-model="o.type" style="max-width: 110px"><option value="socks5">socks5</option><option value="http">http</option><option value="direct">direct</option></select>
+            <input v-model="o.addr" type="text" placeholder="1.2.3.4:1080 或 http URL" />
+            <input v-model="o.username" type="text" placeholder="用户名" style="max-width: 110px" />
+            <input v-model="o.password" type="text" placeholder="密码" style="max-width: 110px" />
+            <button class="icon-btn danger" type="button" @click="form.outbounds.splice(i, 1)"><X :size="15" /></button>
+          </div>
+          <button class="btn btn-sm" type="button" style="align-self: flex-start" @click="form.outbounds.push({ name: '', type: 'socks5', addr: '', username: '', password: '' })"><Plus :size="13" /> 添加出站</button>
+          <span class="hint">可在 ACL 规则中通过名称引用这些出站。</span>
+        </div>
+      </div>
+
+      <template #footer>
+        <button class="btn" @click="modalOpen = false">取消</button>
+        <button class="btn btn-primary" :disabled="saving" @click="save">{{ saving ? '保存中…' : editing ? '保存节点' : '创建节点' }}</button>
+      </template>
+    </Modal>
+
+    <Modal v-model="installOpen" title="安装节点 Agent" size="lg">
+      <div v-if="installError" class="banner banner-danger">{{ installError }}</div>
+      <div v-if="install" class="stack">
+        <div class="banner banner-info">在 VPS 上执行以下任一命令，Agent 将连接到 <span class="mono">{{ install.publicUrl }}</span>。</div>
+        <div>
+          <div class="flex" style="margin-bottom: 7px"><strong class="small">Docker（进程模式，推荐）</strong><div class="spacer"></div><button class="btn btn-sm" @click="copy(install.installCommand)"><Copy :size="13" /> 复制</button></div>
+          <pre class="code">{{ install.installCommand }}</pre>
+        </div>
+        <div>
+          <div class="flex" style="margin-bottom: 7px"><strong class="small">Docker（管理独立代理容器）</strong><div class="spacer"></div><button class="btn btn-sm" @click="copy(install.dockerCommand)"><Copy :size="13" /> 复制</button></div>
+          <pre class="code">{{ install.dockerCommand }}</pre>
+        </div>
+        <div>
+          <div class="flex" style="margin-bottom: 7px"><strong class="small">一键安装脚本</strong><div class="spacer"></div><button class="btn btn-sm" @click="copy(install.installScript)"><Copy :size="13" /> 复制</button></div>
+          <pre class="code">{{ install.installScript }}</pre>
+        </div>
+        <details>
+          <summary class="small dim" style="cursor: pointer">docker-compose.yml</summary>
+          <pre class="code" style="margin-top: 8px">{{ install.compose }}</pre>
+        </details>
+        <div class="flex">
+          <span class="dim small">令牌: <span class="mono">{{ install.token }}</span></span>
+          <div class="spacer"></div>
+          <button class="btn btn-danger btn-sm" @click="resetToken">重置令牌</button>
+        </div>
+      </div>
+      <div v-else class="empty">正在加载安装信息…</div>
+      <template #footer><button class="btn" @click="installOpen = false">关闭</button></template>
+    </Modal>
+
+    <Modal v-model="sshOpen" title="SSH 自动安装" size="lg">
+      <div v-if="sshResult" class="stack">
+        <div class="banner" :class="sshResult.ok ? 'banner-info' : 'banner-danger'">
+          {{ sshResult.ok ? '安装脚本执行成功。' : (sshResult.error || '安装脚本执行失败。') }}
+        </div>
+        <pre class="code">{{ sshResult.output || '无输出。' }}</pre>
+        <details v-if="sshResult.command"><summary class="dim small" style="cursor:pointer">安装命令</summary><pre class="code">{{ sshResult.command }}</pre></details>
+      </div>
+      <div v-else class="empty">正在通过 SSH 连接…</div>
+      <template #footer><button class="btn" @click="sshOpen = false">关闭</button></template>
+    </Modal>
+
+    <Modal v-model="configOpen" :title="configInfo?.protocol === 'xray' ? '生成的 Xray 配置' : '生成的 Hysteria 配置'" size="lg">
+      <div v-if="configInfo">
+        <div class="flex small dim" style="margin-bottom: 9px">
+          <span>配置版本 {{ configInfo.revision }}</span><span>·</span><span>{{ configInfo.hash ? configInfo.hash.slice(0, 16) + '…' : '' }}</span>
+          <div class="spacer"></div>
+          <button class="btn btn-sm" @click="copy(configInfo.yaml)"><Copy :size="13" /> 复制配置</button>
+        </div>
+        <pre class="code">{{ configInfo.yaml || '# 尚未生成配置' }}</pre>
+      </div>
+      <template #footer><button class="btn" @click="configOpen = false">关闭</button></template>
+    </Modal>
+
+    <Modal v-model="deleteOpen" title="删除节点" size="sm">
+      <p>删除 <strong>{{ deleteTarget?.name }}</strong>? Agent 将被断开，面板中的配置数据也会删除。</p>
+      <template #footer>
+        <button class="btn" @click="deleteOpen = false">取消</button>
+        <button class="btn btn-danger" @click="confirmDelete">删除节点</button>
+      </template>
+    </Modal>
+  </div>
+</template>
+
+<script setup>
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import {
+  Copy, FileCode2, Pencil, Plus, RefreshCw, RotateCcw, ScrollText, Server, Square, Terminal, Trash2, X, Zap,
+} from 'lucide-vue-next'
+import { api } from '../api'
+import { notify } from '../store'
+import Modal from '../components/Modal.vue'
+import StatusBadge from '../components/StatusBadge.vue'
+import { copyText, fmtBytes, fmtRelative } from '../format'
+
+const nodes = ref([])
+const groups = ref([])
+const loading = ref(false)
+const syncingAll = ref(false)
+const error = ref('')
+
+const modalOpen = ref(false)
+const tab = ref('basic')
+const editing = ref(null)
+const saving = ref(false)
+const formError = ref('')
+const form = reactive(emptyForm())
+
+const sshBusy = ref(0)
+const sshOpen = ref(false)
+const sshResult = ref(null)
+const installOpen = ref(false)
+const install = ref(null)
+const installError = ref('')
+const configOpen = ref(false)
+const configInfo = ref(null)
+const deleteOpen = ref(false)
+const deleteTarget = ref(null)
+let timer = null
+
+const onlineCount = computed(() => nodes.value.filter((n) => n.connected).length)
+
+function emptyForm() {
+  return {
+    name: '', flag: '', ip: '', domain: '', sni: '', listen: '', port: 443, statsPort: 9999,
+    tlsMode: 'selfsigned', acmeEmail: '', portRange: '', hopInterval: '30s', obfsType: '',
+    obfsPassword: '', bandwidthUp: '', bandwidthDown: '', masqueradeUrl: '',
+    type: 'hysteria', maxOnline: 0, ranking: 1, active: true, groupIds: [], aclText: 'direct(all)',
+    outbounds: [], sshPort: 22, sshUser: 'root', sshPassword: '', sshKey: '', sshInstallDocker: false,
+    xray: { transport: 'tcp', security: 'reality', flow: 'xtls-rprx-vision', fingerprint: 'chrome', alpn: [], realityDest: 'www.cloudflare.com:443', realitySni: [], realityPrivateKey: '', realityPublicKey: '', realityShortIds: [], realitySpiderX: '', wsPath: '/', wsHost: '', grpcServiceName: 'grpc', apiPort: 61000, inboundTag: 'vless-in' },
+    xraySniText: '', xrayAlpnText: 'h2,http/1.1', xraySidText: '',
+  }
+}
+function resetForm() { Object.assign(form, emptyForm()) }
+function splitList(v) { return String(v || '').split(',').map((s) => s.trim()).filter(Boolean) }
+watch(() => form.type, (t) => { if (t === 'xray' && tab.value === 'advanced') tab.value = 'tls' })
+function toggleId(list, id) {
+  const i = list.indexOf(id)
+  if (i >= 0) list.splice(i, 1)
+  else list.push(id)
+}
+function memPct(n) {
+  const m = n.metrics
+  if (!m || !m.memTotal) return 0
+  return Math.min(100, Math.round((m.memUsed / m.memTotal) * 100))
+}
+function diskPct(n) {
+  const m = n.metrics
+  if (!m || !m.diskTotal) return 0
+  return Math.min(100, Math.round((m.diskUsed / m.diskTotal) * 100))
+}
+
+async function load() {
+  loading.value = true
+  error.value = ''
+  try {
+    const res = await api.nodes()
+    nodes.value = res.items
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    loading.value = false
+  }
+}
+async function loadGroups() {
+  try {
+    groups.value = (await api.groups()).items
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+function openCreate() {
+  editing.value = null
+  resetForm()
+  tab.value = 'basic'
+  formError.value = ''
+  modalOpen.value = true
+}
+function openEdit(n) {
+  editing.value = n
+  Object.assign(form, {
+    type: n.type || 'hysteria',
+    name: n.name, flag: n.flag || '', ip: n.ip || '', domain: n.domain || '', sni: n.sni || '',
+    listen: n.listen || '', port: n.port || 443, statsPort: n.statsPort || 9999,
+    tlsMode: n.tlsMode || 'selfsigned', acmeEmail: n.acmeEmail || '', portRange: n.portRange || '',
+    hopInterval: n.hopInterval || '', obfsType: n.obfsType || '', obfsPassword: n.obfsPassword || '',
+    bandwidthUp: n.bandwidthUp || '', bandwidthDown: n.bandwidthDown || '', masqueradeUrl: n.masqueradeUrl || '',
+    maxOnline: n.maxOnline || 0, ranking: n.ranking || 1, active: n.active,
+    sshPort: n.sshPort || 22, sshUser: n.sshUser || '', sshPassword: '', sshKey: '',
+    sshInstallDocker: !!n.sshInstallDocker,
+    groupIds: (n.groups || []).map((g) => g.id),
+    aclText: (n.acl || []).join('\n'),
+    outbounds: (n.outbounds || []).map((o) => ({ ...o })),
+    xray: { ...emptyForm().xray, ...(n.xray || {}) },
+    xraySniText: (n.xray?.realitySni || []).join(','),
+    xrayAlpnText: (n.xray?.alpn || []).join(','),
+    xraySidText: (n.xray?.realityShortIds || []).join(','),
+  })
+  tab.value = 'basic'
+  formError.value = ''
+  modalOpen.value = true
+}
+async function save() {
+  formError.value = ''
+  saving.value = true
+  try {
+    const payload = {
+      type: form.type,
+      name: form.name, flag: form.flag, ip: form.ip, domain: form.domain, sni: form.sni,
+      listen: form.listen, port: Number(form.port) || 443, statsPort: Number(form.statsPort) || 9999,
+      tlsMode: form.tlsMode, acmeEmail: form.acmeEmail, portRange: form.portRange,
+      hopInterval: form.hopInterval, obfsType: form.obfsType, obfsPassword: form.obfsPassword,
+      bandwidthUp: form.bandwidthUp, bandwidthDown: form.bandwidthDown, masqueradeUrl: form.masqueradeUrl,
+      maxOnline: Number(form.maxOnline) || 0, ranking: Number(form.ranking) || 1, active: form.active,
+      sshPort: Number(form.sshPort) || 22, sshUser: form.sshUser,
+      sshPassword: form.sshPassword, sshKey: form.sshKey, sshInstallDocker: form.sshInstallDocker,
+      groupIds: form.groupIds,
+      acl: form.aclText.split('\n').map((s) => s.trim()).filter(Boolean),
+      outbounds: form.outbounds.filter((o) => o.name),
+      xray: {
+        ...form.xray,
+        realitySni: splitList(form.xraySniText),
+        alpn: splitList(form.xrayAlpnText),
+        realityShortIds: splitList(form.xraySidText),
+      },
+    }
+    let res
+    if (editing.value) {
+      res = await api.updateNode(editing.value.id, payload)
+      notify('节点已更新')
+      modalOpen.value = false
+      await load()
+    } else {
+      res = await api.createNode(payload)
+      notify('节点已创建 — 请安装 Agent 以连接')
+      modalOpen.value = false
+      await load()
+      const created = res.node || res
+      if (created?.id) openInstall(created)
+    }
+  } catch (e) {
+    formError.value = e.message
+  } finally {
+    saving.value = false
+  }
+}
+
+async function sshSetup(n) {
+  if (!confirm(`Run the node installer over SSH on ${n.domain || n.ip}?`)) return
+  sshBusy.value = n.id
+  sshResult.value = null
+  sshOpen.value = true
+  try {
+    sshResult.value = await api.nodeSSHInstall(n.id)
+    notify('SSH 自动安装完成')
+  } catch (e) {
+    sshResult.value = { ok: false, error: e.message, output: e.data?.output || '' }
+    notify(e.message, 'error')
+  } finally {
+    sshBusy.value = 0
+  }
+}
+async function syncAll() {
+  syncingAll.value = true
+  try {
+    const res = await api.syncAll()
+    notify(`已同步 ${res.nodes} 个节点，推送 ${res.pushed} 份配置`)
+    load()
+  } catch (e) {
+    notify(e.message, 'error')
+  } finally {
+    syncingAll.value = false
+  }
+}
+async function sync(n) {
+  try {
+    const res = await api.syncNode(n.id)
+    notify(res.pushed ? `配置版本 ${res.revision} 已推送到 Agent` : `配置版本 ${res.revision} 已保存（Agent 离线）`)
+    load()
+  } catch (e) {
+    notify(e.message, 'error')
+  }
+}
+async function command(n, action) {
+  try {
+    await api.nodeCommand(n.id, action)
+    notify(`Command "${action}" sent`)
+  } catch (e) {
+    notify(e.message, 'error')
+  }
+}
+async function openInstall(n) {
+  install.value = null
+  installError.value = ''
+  installOpen.value = true
+  try {
+    const data = await api.nodeInstall(n.id)
+    install.value = { ...data, nodeId: n.id, nodeName: n.name }
+  } catch (e) {
+    installError.value = e.message
+  }
+}
+async function resetToken() {
+  if (!confirm('Resetting the token disconnects the current agent until it is reconfigured. Continue?')) return
+  try {
+    const res = await api.resetNodeToken(install.value.nodeId)
+    install.value = { ...install.value, token: res.token, installCommand: res.installCommand, dockerCommand: res.dockerCommand }
+    notify('New token generated')
+    load()
+  } catch (e) {
+    notify(e.message, 'error')
+  }
+}
+async function openConfig(n) {
+  configInfo.value = null
+  configOpen.value = true
+  try {
+    configInfo.value = await api.nodeConfig(n.id)
+  } catch (e) {
+    notify(e.message, 'error')
+  }
+}
+function askDelete(n) {
+  deleteTarget.value = n
+  deleteOpen.value = true
+}
+async function confirmDelete() {
+  try {
+    await api.deleteNode(deleteTarget.value.id)
+    deleteOpen.value = false
+    notify('节点已删除')
+    load()
+  } catch (e) {
+    notify(e.message, 'error')
+  }
+}
+async function copy(text) {
+  await copyText(text)
+  notify('已复制到剪贴板')
+}
+
+onMounted(() => {
+  loadGroups()
+  load()
+  timer = setInterval(load, 20000)
+})
+onBeforeUnmount(() => clearInterval(timer))
+</script>
+
+<style scoped>
+.stack { display: flex; flex-direction: column; gap: 16px; }
+.outbound-row { display: flex; gap: 7px; align-items: center; margin-bottom: 7px; flex-wrap: wrap; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>

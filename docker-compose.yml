@@ -1,0 +1,29 @@
+services:
+  panel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mikvacepanel/panel:latest
+    container_name: mikvace-panel
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "${PANEL_PORT:-8080}:8080"
+    environment:
+      ADDR: ":8080"
+      DATA_DIR: "/data"
+      PANEL_PUBLIC_URL: "${PANEL_PUBLIC_URL:-http://localhost:8080}"
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin123}"
+      JWT_SECRET: "${JWT_SECRET:-}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    volumes:
+      - panel-data:/data
+
+volumes:
+  panel-data:
