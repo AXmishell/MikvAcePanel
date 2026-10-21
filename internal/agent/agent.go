@@ -352,11 +352,15 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 		case <-ticker.C:
 			sys := a.sampler.Sample(a.cfg.DataDir)
 			tx, rx := a.trafficTotals()
+			hy2Running := false
+			if a.runtime != nil {
+				hy2Running = a.runtime.Running()
+			}
 			a.write("heartbeat", map[string]any{
 				"cpuPct": sys.CPUPct, "memUsed": sys.MemUsed, "memTotal": sys.MemTotal,
 				"diskUsed": sys.DiskUsed, "diskTotal": sys.DiskTotal, "load1": sys.Load1,
 				"uptimeSec": sys.UptimeSec, "online": a.onlineCount(),
-				"trafficTx": tx, "trafficRx": rx, "hy2Running": a.runtime.Running(),
+				"trafficTx": tx, "trafficRx": rx, "hy2Running": hy2Running,
 			})
 		}
 	}

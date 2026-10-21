@@ -1,7 +1,10 @@
 package server
 
 import (
+	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -198,7 +201,7 @@ func (s *Server) renderSubPage(w http.ResponseWriter, r *http.Request, user *mod
 		ClashURL:   subURL + "?format=clash",
 		SingboxURL: subURL + "?format=singbox",
 		URIURL:     subURL + "?format=uri",
-		QRData:     qrDataURI(subURL),
+		QRData:     s.qrDataURI(r.Context(), subURL),
 		Year:       time.Now().Year(),
 	}
 	if user.ExpireAt != nil {
@@ -325,9 +328,17 @@ func publicBaseURL(r *http.Request, configured string) string {
 	return scheme + "://" + host
 }
 
-func qrDataURI(content string) string {
+func (s *Server) qrDataURI(ctx context.Context, content string) string {
 	if v, ok := qrCache.Load(content); ok {
 		return v.(string)
+	}
+	sum := sha256.Sum256([]byte(content))
+	cacheKey := "qr:" + hex.EncodeToString(sum[:])
+	if s.redis != nil {
+		if v, ok, err := s.redis.Get(ctx, cacheKey); err == nil && ok {
+			qrCache.Store(content, v)
+			return v
+		}
 	}
 	png, err := qrcode.Encode(content, qrcode.Medium, 260)
 	if err != nil {
@@ -335,6 +346,11 @@ func qrDataURI(content string) string {
 	}
 	uri := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
 	qrCache.Store(content, uri)
+	if s.redis != nil {
+		if err := s.redis.Set(ctx, cacheKey, uri, 24*time.Hour); err != nil && s.log != nil {
+			s.log.Debug("could not cache qr code in redis", "error", err)
+		}
+	}
 	return uri
 }
 

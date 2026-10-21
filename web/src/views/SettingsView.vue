@@ -48,6 +48,33 @@
         </div>
       </section>
 
+      <section v-show="tab === 'general'" class="card section-gap">
+        <div class="card-header">
+          <div>
+            <div class="card-title">主题外观</div>
+            <div class="card-sub">主题偏好保存在当前浏览器，不会影响其他管理员。</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="theme-options">
+            <button
+              v-for="t in themeOptions"
+              :key="t.value"
+              type="button"
+              class="theme-option"
+              :class="{ on: theme.current === t.value }"
+              @click="setTheme(t.value)"
+            >
+              <span class="theme-swatch" :class="'theme-swatch--' + t.value"></span>
+              <span class="theme-meta">
+                <strong>{{ t.label }}</strong>
+                <small>{{ t.description }}</small>
+              </span>
+            </button>
+          </div>
+        </div>
+      </section>
+
       <section v-show="tab === 'subscription'" class="card">
         <div class="card-header"><div class="card-title">订阅落地页</div></div>
         <div class="card-body">
@@ -246,6 +273,7 @@ import { api } from '../api'
 import { auth, notify } from '../store'
 import Modal from '../components/Modal.vue'
 import { copyText, fmtBytes, fmtDate, fmtRelative } from '../format'
+import { setTheme, theme, themeOptions } from '../theme'
 
 const tab = ref('general')
 const settings = ref(null)
@@ -456,3 +484,20 @@ async function copy(text) {
 }
 onMounted(() => { load(); loadKeys(); loadBackups() })
 </script>
+
+<style scoped>
+.theme-options { display: flex; gap: 12px; flex-wrap: wrap; }
+.theme-option {
+  display: flex; align-items: center; gap: 12px; width: 236px; padding: 12px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2);
+  color: var(--text); text-align: left; transition: 0.16s ease;
+}
+.theme-option:hover { border-color: var(--muted-2); }
+.theme-option.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.theme-swatch { width: 44px; height: 34px; border-radius: 8px; border: 1px solid var(--line); flex: none; }
+.theme-swatch--dark { background: linear-gradient(135deg, #060a12, #1d2b42); }
+.theme-swatch--light { background: linear-gradient(135deg, #ffffff, #e8eef6); }
+.theme-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.theme-meta strong { font-size: 12.5px; }
+.theme-meta small { font-size: 11px; color: var(--muted-2); }
+</style>

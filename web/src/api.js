@@ -55,6 +55,7 @@ async function request(path, options = {}) {
 
 export const api = {
   login: (username, password) => request('/login', { method: 'POST', body: { username, password } }),
+  logout: () => request('/logout', { method: 'POST' }),
   me: () => request('/me'),
   changePassword: (oldPassword, newPassword) =>
     request('/change-password', { method: 'POST', body: { oldPassword, newPassword } }),

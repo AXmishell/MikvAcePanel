@@ -34,6 +34,10 @@
           <div class="page-sub">{{ subtitle }}</div>
         </div>
         <div class="topbar-spacer"></div>
+        <button class="icon-btn" :title="theme.current === 'light' ? '切换为深色主题' : '切换为白色主题'" @click="toggleTheme">
+          <Moon v-if="theme.current === 'light'" :size="17" />
+          <Sun v-else :size="17" />
+        </button>
         <a class="icon-btn" href="/api/health" target="_blank" title="健康检查"><Activity :size="17" /></a>
         <div class="user-chip">
           <div class="avatar">{{ initial }}</div>
@@ -62,9 +66,11 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  Activity, FolderTree, LayoutDashboard, LogOut, Menu, ScrollText, Server, Settings, ShieldCheck, Users,
+  Activity, FolderTree, LayoutDashboard, LogOut, Menu, Moon, ScrollText, Server, Settings, ShieldCheck, Sun, Users,
 } from 'lucide-vue-next'
 import { auth, clearSession } from '../store'
+import { theme, toggleTheme } from '../theme'
+import { api } from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -96,7 +102,12 @@ const initial = computed(() => (auth.admin?.username || 'A').slice(0, 1).toUpper
 function isActive(path) {
   return route.path === path || route.path.startsWith(path + '/')
 }
-function logout() {
+async function logout() {
+  try {
+    await api.logout()
+  } catch {
+    /* the local session is cleared even if the server is unreachable */
+  }
   clearSession()
   router.push('/login')
 }

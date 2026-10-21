@@ -31,6 +31,7 @@ import (
 
 	"github.com/axmishell/mikvacepanel/internal/logs"
 	"github.com/axmishell/mikvacepanel/internal/model"
+	"github.com/axmishell/mikvacepanel/internal/rediscache"
 	"github.com/axmishell/mikvacepanel/internal/store"
 	"github.com/axmishell/mikvacepanel/internal/version"
 	"github.com/axmishell/mikvacepanel/web"
@@ -46,6 +47,8 @@ type Server struct {
 	secret   []byte
 	started  time.Time
 	mux      http.Handler
+	redis    *rediscache.Client
+	sessions *sessionStore
 
 	loginMu    sync.Mutex
 	loginTries map[string][]time.Time
@@ -67,6 +70,17 @@ func New(cfg Config, st *store.Store, logger *slog.Logger) (*Server, error) {
 		started: time.Now().UTC(), loginTries: map[string][]time.Time{},
 		apiKeyRate: map[int64][]time.Time{},
 	}
+	redisClient, err := rediscache.Open(context.Background(), cfg.RedisURL, cfg.RedisPrefix, logger)
+	if err != nil {
+		if cfg.RedisRequired {
+			return nil, fmt.Errorf("redis: %w", err)
+		}
+		logger.Warn("redis unavailable, falling back to in-memory mode", "error", err)
+	} else if redisClient != nil {
+		logger.Info("redis enabled", "prefix", cfg.RedisPrefix)
+	}
+	s.redis = redisClient
+	s.sessions = newSessionStore(redisClient, cfg.SessionTTL, logger)
 	s.hub = NewHub(st, logger)
 	s.analyzer = logs.New(st)
 	if err := s.bootstrap(context.Background()); err != nil {
@@ -78,6 +92,13 @@ func New(cfg Config, st *store.Store, logger *slog.Logger) (*Server, error) {
 
 // Handler returns the root HTTP handler.
 func (s *Server) Handler() http.Handler { return s.mux }
+
+// Close releases optional external resources such as the Redis pool.
+func (s *Server) Close() {
+	if s.redis != nil {
+		_ = s.redis.Close()
+	}
+}
 
 // Store exposes the persistence layer to the scheduler.
 func (s *Server) Store() *store.Store { return s.store }
@@ -156,6 +177,7 @@ func (s *Server) routes() http.Handler {
 	r.Group(func(pr chi.Router) {
 		pr.Use(s.adminAuth)
 		pr.Get("/api/me", s.handleMe)
+		pr.Post("/api/logout", s.handleLogout)
 		pr.Post("/api/change-password", s.handleChangePassword)
 
 		pr.Get("/api/dashboard", s.handleDashboard)
@@ -234,9 +256,22 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusServiceUnavailable
 		ok = false
 	}
+	redisInfo := map[string]any{"enabled": s.redis != nil}
+	if s.redis != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		err := s.redis.Ping(ctx)
+		cancel()
+		redisInfo["ok"] = err == nil
+		if err != nil {
+			if s.cfg.RedisRequired {
+				status = http.StatusServiceUnavailable
+				ok = false
+			}
+		}
+	}
 	writeJSON(w, status, map[string]any{
 		"ok": ok, "version": version.String(), "uptime": int64(time.Since(s.started).Seconds()),
-		"hub": s.hub.Stats(),
+		"hub": s.hub.Stats(), "redis": redisInfo,
 	})
 }
 
@@ -438,7 +473,7 @@ func (s *Server) adminAuth(next http.Handler) http.Handler {
 			if limit <= 0 {
 				limit = 60
 			}
-			remaining, allowed := s.checkAPIKeyRate(key.ID, limit)
+			remaining, allowed := s.checkAPIKeyRate(r.Context(), key.ID, limit)
 			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(limit))
 			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 			if !allowed {
@@ -466,12 +501,41 @@ func (s *Server) adminAuth(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "invalid or expired session")
 			return
 		}
+		sessionExpires := time.Now().Add(s.cfg.SessionTTL)
+		if claims.ExpiresAt != nil {
+			sessionExpires = claims.ExpiresAt.Time
+		}
+		if !s.sessions.Valid(r.Context(), raw, sessionExpires) {
+			writeError(w, http.StatusUnauthorized, "session expired or revoked")
+			return
+		}
 		ctx := context.WithValue(r.Context(), claimsKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-func (s *Server) checkAPIKeyRate(keyID int64, limit int) (int, bool) {
+func (s *Server) logRedisError(msg string, err error) {
+	if errors.Is(err, rediscache.ErrUnavailable) {
+		s.log.Debug(msg, "error", err)
+		return
+	}
+	s.log.Warn(msg, "error", err)
+}
+
+func (s *Server) checkAPIKeyRate(ctx context.Context, keyID int64, limit int) (int, bool) {
+	if s.redis != nil {
+		window := time.Now().Unix() / 60
+		name := fmt.Sprintf("ratelimit:api:%d:%d", keyID, window)
+		n, err := s.redis.Incr(ctx, name, 2*time.Minute)
+		if err == nil {
+			remaining := limit - int(n)
+			if remaining < 0 {
+				remaining = 0
+			}
+			return remaining, n <= int64(limit)
+		}
+		s.logRedisError("redis api key rate limit failed, falling back to memory", err)
+	}
 	s.apiKeyMu.Lock()
 	defer s.apiKeyMu.Unlock()
 	nowT := time.Now()
@@ -555,7 +619,15 @@ func bearerToken(r *http.Request) string {
 	return ""
 }
 
-func (s *Server) loginAllowed(ip string) bool {
+func (s *Server) loginAllowed(ctx context.Context, ip string) bool {
+	if s.redis != nil {
+		window := time.Now().Unix() / 60
+		n, err := s.redis.GetInt(ctx, fmt.Sprintf("ratelimit:login:%s:%d", ip, window))
+		if err == nil {
+			return n < 10
+		}
+		s.logRedisError("redis login rate limit failed, falling back to memory", err)
+	}
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
 	nowT := time.Now()
@@ -570,7 +642,16 @@ func (s *Server) loginAllowed(ip string) bool {
 	return len(kept) < 10
 }
 
-func (s *Server) recordLoginFailure(ip string) {
+func (s *Server) recordLoginFailure(ctx context.Context, ip string) {
+	if s.redis != nil {
+		window := time.Now().Unix() / 60
+		name := fmt.Sprintf("ratelimit:login:%s:%d", ip, window)
+		_, err := s.redis.Incr(ctx, name, 2*time.Minute)
+		if err == nil {
+			return
+		}
+		s.logRedisError("redis login rate limit failed, falling back to memory", err)
+	}
 	s.loginMu.Lock()
 	s.loginTries[ip] = append(s.loginTries[ip], time.Now())
 	s.loginMu.Unlock()
@@ -578,7 +659,7 @@ func (s *Server) recordLoginFailure(ip string) {
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ip := requestIP(r)
-	if !s.loginAllowed(ip) {
+	if !s.loginAllowed(r.Context(), ip) {
 		writeError(w, http.StatusTooManyRequests, "too many login attempts, try again later")
 		return
 	}
@@ -592,12 +673,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	admin, err := s.store.GetAdminByUsername(r.Context(), strings.TrimSpace(req.Username))
 	if err != nil {
-		s.recordLoginFailure(ip)
+		s.recordLoginFailure(r.Context(), ip)
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(admin.PasswordHash), []byte(req.Password)) != nil {
-		s.recordLoginFailure(ip)
+		s.recordLoginFailure(r.Context(), ip)
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
@@ -606,6 +687,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create session")
 		return
 	}
+	s.sessions.Add(r.Context(), token, expires)
 	_ = s.store.TouchAdminLogin(r.Context(), admin.ID)
 	warning, _ := s.store.GetSetting(r.Context(), "bootstrap_warning")
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -613,6 +695,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"admin":   map[string]any{"id": admin.ID, "username": admin.Username},
 		"warning": warning,
 	})
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if raw := bearerToken(r); raw != "" {
+		s.sessions.Delete(r.Context(), raw)
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {

@@ -22,8 +22,21 @@ services:
       JWT_SECRET: "${JWT_SECRET:-}"
       CORS_ORIGINS: "${CORS_ORIGINS:-}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
+      REDIS_URL: "${REDIS_URL:-}"
+      REDIS_PREFIX: "${REDIS_PREFIX:-mikvace:}"
+      REDIS_REQUIRED: "${REDIS_REQUIRED:-false}"
     volumes:
       - panel-data:/data
 
+  redis:
+    image: redis:7-alpine
+    container_name: mikvace-redis
+    restart: unless-stopped
+    profiles: ["redis"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+
 volumes:
   panel-data:
+  redis-data:

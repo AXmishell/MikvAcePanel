@@ -20,6 +20,9 @@ type Config struct {
 	CORSOrigins   []string
 	LogLevel      string
 	SessionTTL    time.Duration
+	RedisURL      string
+	RedisPrefix   string
+	RedisRequired bool
 }
 
 // LoadConfig reads environment variables with sensible local-development
@@ -36,6 +39,9 @@ func LoadConfig() Config {
 		AdminPassword: env("ADMIN_PASSWORD", "admin123"),
 		LogLevel:      env("LOG_LEVEL", "info"),
 		SessionTTL:    24 * time.Hour,
+		RedisURL:      env("REDIS_URL", ""),
+		RedisPrefix:   env("REDIS_PREFIX", "mikvace:"),
+		RedisRequired: envBool("REDIS_REQUIRED", false),
 	}
 	if raw := env("CORS_ORIGINS", ""); raw != "" {
 		for _, part := range strings.Split(raw, ",") {
@@ -55,6 +61,20 @@ func LoadConfig() Config {
 func env(key, def string) string {
 	if v, ok := os.LookupEnv(key); ok && strings.TrimSpace(v) != "" {
 		return v
+	}
+	return def
+}
+
+func envBool(key string, def bool) bool {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return def
+	}
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
 	}
 	return def
 }

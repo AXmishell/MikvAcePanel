@@ -46,7 +46,7 @@ func main() {
 		logger.Error("initialize server", "error", err)
 		os.Exit(1)
 	}
-
+	defer app.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go app.Hub().Monitor(ctx)

@@ -93,6 +93,29 @@ docker compose up -d --build
 2. 设置环境变量 `PANEL_PUBLIC_URL=https://panel.example.com`，或在面板 **Settings → General** 中修改。
 3. 不要使用默认密码，并为 `JWT_SECRET` 配置随机值。
 
+### 可选 Redis
+
+面板可以选用 Redis 保存管理员会话、API Key / 登录限流计数和订阅二维码缓存。未配置 `REDIS_URL` 时自动使用原有的内存模式；配置后如果 Redis 暂时不可用，有效 JWT 仍可继续使用，限流会回退到本机内存。
+
+```bash
+REDIS_URL=redis://127.0.0.1:6379/0
+REDIS_PREFIX=mikvace:
+REDIS_REQUIRED=false
+```
+
+- `REDIS_URL`：支持 `redis://`、`rediss://`，格式为 `redis://[:password@]host:port/db`。
+- `REDIS_PREFIX`：所有键的统一前缀，默认 `mikvace:`。
+- `REDIS_REQUIRED`：为 `true` 时 Redis 连接失败会直接拒绝启动；默认 `false`，自动回退内存模式。
+
+使用 Docker Compose 时可通过 profile 一并启动 Redis：
+
+```bash
+# .env 中设置 REDIS_URL=redis://redis:6379/0
+docker compose --profile redis up -d --build
+```
+
+不启用 Redis 时保持 `REDIS_URL` 为空即可。启用 Redis 后，新登录的管理员会话会写入 Redis，旧的无状态 JWT 在 Redis 中不存在时会失效，需要重新登录一次。
+
 ### 预构建镜像（GHCR）
 
 推送到 `main` 或打 `v*.*.*` 标签时，GitHub Actions 会自动构建并发布面板与节点镜像到 GHCR，支持 `linux/amd64` 和 `linux/arm64`（工作流见 `.github/workflows/docker.yml`）。
