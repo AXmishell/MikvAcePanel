@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/axmishell/mikvacepanel/internal/model"
 )
@@ -128,9 +129,10 @@ func Render(n *model.Node, users []model.User) (string, string, error) {
 	if inboundTag == "" {
 		inboundTag = InboundTag
 	}
+	nowT := time.Now().UTC()
 	clients := []map[string]any{}
 	for _, u := range users {
-		if !u.Enabled || u.XrayUUID == "" {
+		if !u.Enabled || u.XrayUUID == "" || u.Expired(nowT) || u.TrafficExceeded() {
 			continue
 		}
 		c := map[string]any{"id": u.XrayUUID, "email": u.UserID, "level": 0}

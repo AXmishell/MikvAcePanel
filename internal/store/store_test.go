@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/axmishell/mikvacepanel/internal/model"
 )
@@ -109,6 +110,60 @@ func TestNodesForUser(t *testing.T) {
 	nodes3, _ := st.NodesForUser(ctx, u3.ID)
 	if len(nodes3) != 1 || nodes3[0].ID != grouped.ID {
 		t.Fatalf("direct assignment got %+v", nodes3)
+	}
+}
+
+func TestUsersForNodeSkipsExpiredAndOverQuota(t *testing.T) {
+	st, ctx := testStore(t)
+	node, err := st.CreateNode(ctx, &model.Node{
+		Name: "xray", Type: "xray", IP: "203.0.113.1", Port: 443, Active: true,
+		StatsPort: 9999, TLSMode: "selfsigned",
+	}, "hash-xray", "prefix", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredAt := time.Now().Add(-time.Hour).UTC()
+	active, err := st.CreateUser(ctx, &model.User{UserID: "active", Password: "pw", Enabled: true}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired, err := st.CreateUser(ctx, &model.User{UserID: "expired", Password: "pw", Enabled: true, ExpireAt: &expiredAt}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	over, err := st.CreateUser(ctx, &model.User{
+		UserID: "over", Password: "pw", Enabled: true, TrafficLimit: 100, TrafficTx: 60, TrafficRx: 50,
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateUser(ctx, &model.User{UserID: "disabled", Password: "pw", Enabled: false}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	users, err := st.UsersForNode(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, u := range users {
+		got[u.UserID] = true
+	}
+	if !got["active"] || got["expired"] || got["over"] || got["disabled"] {
+		t.Fatalf("UsersForNode = %v", got)
+	}
+	if err := st.ResetUserTraffic(ctx, over.ID); err != nil {
+		t.Fatal(err)
+	}
+	users, err = st.UsersForNode(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = map[string]bool{}
+	for _, u := range users {
+		got[u.UserID] = true
+	}
+	if !got["over"] || !got[active.UserID] || got[expired.UserID] || got["disabled"] {
+		t.Fatalf("after reset UsersForNode = %v", got)
 	}
 }
 

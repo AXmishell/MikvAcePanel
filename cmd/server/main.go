@@ -82,7 +82,7 @@ func scheduler(ctx context.Context, app *server.Server, logger *slog.Logger) {
 	// Run once at startup, then every five minutes for expiry checks and once
 	// per hour for log/metric retention.
 	expire := func() {
-		n, err := st.ExpireUsers(ctx)
+		n, err := app.ReconcileAccess(ctx)
 		if err != nil {
 			logger.Warn("expire users", "error", err)
 			return

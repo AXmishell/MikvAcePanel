@@ -444,9 +444,13 @@ func (s *Store) UsersOverQuota(ctx context.Context) ([]model.User, error) {
 }
 
 // UsersForNode returns enabled users that are allowed to use a node according
-// to the same direct/group/public targeting rules as subscriptions.
+// to the same direct/group/public targeting rules as subscriptions. Expired
+// and over-quota accounts are excluded so Xray nodes (which have no external
+// auth hook) stop serving them as soon as the config is reconciled.
 func (s *Store) UsersForNode(ctx context.Context, nodeID int64) ([]model.User, error) {
-	q := userSelect + ` WHERE enabled = 1 AND xray_uuid != '' AND (
+	q := userSelect + ` WHERE enabled = 1 AND xray_uuid != ''
+		AND (expire_at IS NULL OR expire_at = '' OR expire_at > ?)
+		AND (traffic_limit = 0 OR (traffic_tx + traffic_rx) < traffic_limit) AND (
 		EXISTS (SELECT 1 FROM user_nodes un WHERE un.user_id = users.id AND un.node_id = ?)
 		OR (
 			NOT EXISTS (SELECT 1 FROM user_nodes un WHERE un.user_id = users.id)
@@ -460,7 +464,7 @@ func (s *Store) UsersForNode(ctx context.Context, nodeID int64) ([]model.User, e
 			)
 		)
 	) ORDER BY users.id`
-	rows, err := s.DB.QueryContext(ctx, q, nodeID, nodeID, nodeID)
+	rows, err := s.DB.QueryContext(ctx, q, ts(now()), nodeID, nodeID, nodeID)
 	if err != nil {
 		return nil, err
 	}

@@ -320,6 +320,9 @@ func (s *Server) handleResetUserTraffic(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.store.AddEvent(r.Context(), "user.traffic_reset", 0, "info", "已重置用户 "+u.UserID+" 的流量统计")
+	// The user may have been excluded from Xray because of the quota; re-add
+	// them immediately instead of waiting for the next scheduler pass.
+	s.syncXrayNodes(r.Context())
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

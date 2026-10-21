@@ -38,15 +38,29 @@ func (s *Server) handleHy2Auth(w http.ResponseWriter, r *http.Request) {
 	if len(userID) > 128 {
 		userID = userID[:128]
 	}
+	// The address is supplied by the node and ends up in a log row, so bound
+	// it to keep oversized request bodies from bloating the database.
+	addr := strings.TrimSpace(req.Addr)
+	if len(addr) > 128 {
+		addr = addr[:128]
+	}
 	logReject := func(reason string) {
 		if nodeID <= 0 {
+			return
+		}
+		// Never write logs for node ids that do not exist: this endpoint is
+		// unauthenticated, so otherwise anyone could inject arbitrary rows.
+		if exists, err := s.store.NodeExists(ctx, nodeID); err != nil || !exists {
+			return
+		}
+		if !s.allowAuthFailureLog(nodeID) {
 			return
 		}
 		entry := model.LogEntry{
 			NodeID: nodeID, TS: time.Now().UTC(), Level: "WARN", Logger: "panel-auth",
 			Message: "authentication failed: " + reason, Event: "auth_fail",
-			ClientIP: clientIP(req.Addr, req.Addr), UserID: userID,
-			Raw:   "panel auth rejected user " + userID + " from " + req.Addr + ": " + reason,
+			ClientIP: clientIP(addr, r.RemoteAddr), UserID: userID,
+			Raw:   "panel auth rejected user " + userID + " from " + addr + ": " + reason,
 			Error: reason,
 		}
 		_, _ = s.store.InsertLogBatch(ctx, nodeID, "panel-"+store.RandomToken(8), []model.LogEntry{entry})
@@ -109,16 +123,26 @@ func effectiveDeviceLimit(groups []model.Group, maxDevices int) int {
 	return min
 }
 
-func requestIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
-			return first
-		}
+// authFailureLogLimit caps how many rejected authentication rows one node can
+// write per minute. The endpoint is public and Hysteria calls it for every
+// connection attempt, so unbounded inserts are a trivial disk-fill vector.
+const authFailureLogLimit = 120
+
+func (s *Server) allowAuthFailureLog(nodeID int64) bool {
+	window := time.Now().Unix() / 60
+	s.authLogMu.Lock()
+	defer s.authLogMu.Unlock()
+	b := s.authLogWindow[nodeID]
+	if b.window != window {
+		b = authLogBucket{window: window}
 	}
-	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
-		return xri
+	if b.count >= authFailureLogLimit {
+		s.authLogWindow[nodeID] = b
+		return false
 	}
-	return clientIP(r.RemoteAddr, r.RemoteAddr)
+	b.count++
+	s.authLogWindow[nodeID] = b
+	return true
 }
 
 func clientIP(addr, fallback string) string {

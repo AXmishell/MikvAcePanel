@@ -315,6 +315,9 @@ func (s *Server) handleAgentStats(ctx context.Context, nodeID int64, raw json.Ra
 	if batch.Online != nil {
 		s.hub.UpdateNodeOnline(nodeID, batch.Online)
 	}
+	// Xray has no external auth hook, so quota enforcement happens by removing
+	// over-quota users from the generated configuration.
+	s.reconcileQuotaAsync()
 	_ = ac.sendJSON(map[string]any{"type": "stats.ack", "payload": map[string]any{"batchId": batch.BatchID}})
 }
 

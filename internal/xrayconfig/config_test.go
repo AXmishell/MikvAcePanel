@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/axmishell/mikvacepanel/internal/model"
 )
@@ -59,6 +60,28 @@ func TestRenderReality(t *testing.T) {
 	}
 	if !strings.Contains(text, "/data/log/access.log") {
 		t.Fatal("access log path missing")
+	}
+}
+
+func TestRenderSkipsExpiredAndOverQuota(t *testing.T) {
+	n, users := fixture()
+	expiredAt := time.Now().Add(-time.Hour)
+	users = append(users,
+		model.User{UserID: "expired", XrayUUID: "44444444-4444-4444-8444-444444444444", Enabled: true, ExpireAt: &expiredAt},
+		model.User{UserID: "quota", XrayUUID: "55555555-5555-4555-8555-555555555555", Enabled: true, TrafficLimit: 10, TrafficTx: 10},
+	)
+	text, _, err := Render(n, users)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(text), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	main := cfg["inbounds"].([]any)[1].(map[string]any)
+	clients := main["settings"].(map[string]any)["clients"].([]any)
+	if len(clients) != 2 {
+		t.Fatalf("expired/over-quota clients were rendered: %d", len(clients))
 	}
 }
 
