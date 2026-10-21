@@ -225,7 +225,7 @@ docker compose start panel
 1. GitHub 仓库 **Settings → Pages → Build and deployment**；
 2. Source 选择 **GitHub Actions**；
 3. 推送到 `main` 后，工作流会构建 `site/` 并发布；
-4. 默认地址为 `https://<owner>.github.io/MikvAcePanel/`。
+4. 文档地址为 `https://mikvacepanel.gpcn.cc/`（仓库默认的 `github.io` 地址仍可访问）。
 
 工作流会先读取 Pages 配置：如果尚未启用，或 Source 仍是“Deploy from a branch”，构建步骤会跳过并给出提示；启用 **GitHub Actions** 后重新运行 **Docs** 工作流即可。
 
@@ -245,4 +245,15 @@ mkdocs build --strict
 # 输出在 site/
 ```
 
-如果需要自定义域名，在仓库 Pages 设置中填写域名，并在 DNS 添加 CNAME。
+仓库已包含 `docs/CNAME`（`mikvacepanel.gpcn.cc`）。自定义域名还需要：
+
+1. 在仓库 **Settings → Pages → Custom domain** 填入 `mikvacepanel.gpcn.cc` 并保存；
+2. DNS 添加 CNAME：`mikvacepanel` → `axmishell.github.io`；
+3. 等待 DNS 生效后勾选 **Enforce HTTPS**。
+
+验证：
+
+```bash
+dig +short mikvacepanel.gpcn.cc CNAME
+curl -I https://mikvacepanel.gpcn.cc/
+```

@@ -4,7 +4,7 @@
 
 ## 文档
 
-在线文档（GitHub Pages）：**https://axmishell.github.io/MikvAcePanel/**
+在线文档：**https://mikvacepanel.gpcn.cc/**
 
 本地预览与构建：
 
