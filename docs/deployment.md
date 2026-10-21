@@ -21,10 +21,11 @@
 | `DB_PATH` | `<DATA_DIR>/panel.db` | SQLite 路径 |
 | `PANEL_PUBLIC_URL` | `http://localhost:8080` | 对外地址，用于订阅和节点认证回调 |
 | `ADMIN_USERNAME` | `admin` | 首次初始化的管理员用户名 |
-| `ADMIN_PASSWORD` | `admin123` | 首次初始化的管理员密码 |
+| `ADMIN_PASSWORD` | 自动生成 | 首次初始化的管理员密码；未设置时随机生成并在启动日志中打印一次 |
 | `JWT_SECRET` | 自动生成 | JWT/恢复码签名密钥；未设置时写入 `DATA_DIR/jwt.secret` |
 | `CERT_ENC_KEY` | 自动生成 | 证书私钥/DNS 凭据/2FA 密钥的加密密钥；未设置时写入 `DATA_DIR/cert.key` |
 | `CORS_ORIGINS` | 空 | 前端开发时的允许来源，逗号分隔 |
+| `TRUSTED_PROXIES` | 空 | 可信反向代理的 IP/CIDR，逗号分隔；仅这些来源的 `X-Forwarded-For` / `X-Real-IP` 会被采信 |
 | `LOG_LEVEL` | `info` | `debug/info/warn/error` |
 | `REDIS_URL` | 空 | 可选 Redis，例如 `redis://127.0.0.1:6379/0` |
 | `REDIS_PREFIX` | `mikvace:` | Redis key 前缀 |
@@ -62,6 +63,7 @@ volumes:
 - 只监听 `127.0.0.1:8080`，由反向代理对外提供 HTTPS；
 - 如果面板直接暴露，改为 `8080:8080` 并配置防火墙；
 - `panel-data` 必须持久化，否则重启后用户、节点、证书全部丢失。
+- 使用反向代理时设置 `TRUSTED_PROXIES=127.0.0.1`（Docker 网桥场景填代理的容器地址），否则面板会忽略 `X-Forwarded-For`，把所有客户端当成代理 IP，登录限流和审计日志将不准确。
 
 ## HTTPS 反向代理
 

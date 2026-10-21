@@ -18,7 +18,9 @@ services:
       DATA_DIR: "/data"
       PANEL_PUBLIC_URL: "${PANEL_PUBLIC_URL:-http://localhost:8080}"
       ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin123}"
+      # Leave empty to generate a random password on first boot (printed once
+      # in the panel logs). Set a strong value in .env for unattended installs.
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       JWT_SECRET: "${JWT_SECRET:-}"
       CORS_ORIGINS: "${CORS_ORIGINS:-}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"

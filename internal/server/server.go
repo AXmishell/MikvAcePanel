@@ -54,6 +54,8 @@ type Server struct {
 	redis     *rediscache.Client
 	sessions  *sessionStore
 
+	trustedProxies []*net.IPNet
+
 	loginMu        sync.Mutex
 	loginTries     map[string][]time.Time
 	twoFactorTries map[string]int
@@ -62,7 +64,21 @@ type Server struct {
 	apiKeyMu   sync.Mutex
 	apiKeyRate map[int64][]time.Time
 
-	backupMu sync.Mutex
+	authLogMu     sync.Mutex
+	authLogWindow map[int64]authLogBucket
+
+	quotaMu       sync.Mutex
+	quotaBlocked  map[string]bool
+	quotaChecked  time.Time
+	quotaSyncedAt time.Time
+
+	configSyncMu sync.Mutex
+	backupMu     sync.Mutex
+}
+
+type authLogBucket struct {
+	window int64
+	count  int
 }
 
 // New creates a server, bootstraps the administrator and builds the router.
@@ -73,10 +89,14 @@ func New(cfg Config, st *store.Store, logger *slog.Logger) (*Server, error) {
 	}
 	s := &Server{
 		cfg: cfg, store: st, log: logger, secret: secret,
-		started: time.Now().UTC(), loginTries: map[string][]time.Time{},
+		started:        time.Now().UTC(),
+		loginTries:     map[string][]time.Time{},
+		trustedProxies: parseTrustedProxies(cfg.TrustedProxies),
 		apiKeyRate:     map[int64][]time.Time{},
 		twoFactorTries: map[string]int{},
 		challengeUsed:  map[string]time.Time{},
+		authLogWindow:  map[int64]authLogBucket{},
+		quotaBlocked:   map[string]bool{},
 	}
 	redisClient, err := rediscache.Open(context.Background(), cfg.RedisURL, cfg.RedisPrefix, logger)
 	if err != nil {
@@ -141,14 +161,22 @@ func (s *Server) bootstrap(ctx context.Context) error {
 		return err
 	}
 	if created {
-		s.log.Warn("bootstrap administrator created", "username", s.cfg.AdminUsername,
-			"password_source", "ADMIN_PASSWORD environment variable")
+		if s.cfg.AdminPasswordGenerated {
+			// Print the generated password exactly once so the operator can log
+			// in; it is not stored in plaintext anywhere else.
+			s.log.Warn("bootstrap administrator created with a generated password; store it now and change it after login",
+				"username", s.cfg.AdminUsername, "password", s.cfg.AdminPassword)
+		} else {
+			s.log.Warn("bootstrap administrator created", "username", s.cfg.AdminUsername,
+				"password_source", "ADMIN_PASSWORD environment variable")
+		}
 	}
 	if pub, _ := s.store.GetSetting(ctx, "public_url"); strings.TrimSpace(pub) == "" && s.cfg.PublicURL != "" {
 		_ = s.store.SetSetting(ctx, "public_url", strings.TrimRight(s.cfg.PublicURL, "/"))
 	}
-	if created && (s.cfg.AdminPassword == "admin123" || s.cfg.AdminPassword == "change-me-now" || len(s.cfg.AdminPassword) < 12) {
-		_ = s.store.SetSetting(ctx, "bootstrap_warning", "A weak administrator password is in use. Change it in Settings → Security.")
+	if created && (s.cfg.AdminPasswordGenerated || s.cfg.AdminPassword == "admin123" ||
+		s.cfg.AdminPassword == "change-me-now" || len(s.cfg.AdminPassword) < 12) {
+		_ = s.store.SetSetting(ctx, "bootstrap_warning", "The administrator password is weak or was generated automatically. Change it in Settings → Security.")
 	}
 	return nil
 }
@@ -178,7 +206,6 @@ func loadJWTSecret(cfg Config) ([]byte, error) {
 func (s *Server) routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
 	r.Use(s.recoverer)
 	r.Use(s.requestLogger)
 	r.Use(s.securityHeaders)
@@ -377,7 +404,7 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 			logPath = "/api/files/<redacted>"
 		}
 		s.log.Info("http", "method", r.Method, "path", logPath, "status", status,
-			"bytes", sw.bytes, "duration", time.Since(start).Round(time.Millisecond).String(), "ip", r.RemoteAddr)
+			"bytes", sw.bytes, "duration", time.Since(start).Round(time.Millisecond).String(), "ip", s.clientIP(r))
 	})
 }
 
@@ -676,8 +703,33 @@ func (s *Server) loginAllowed(ctx context.Context, ip string) bool {
 			kept = append(kept, t)
 		}
 	}
-	s.loginTries[ip] = kept
+	if len(kept) == 0 {
+		delete(s.loginTries, ip)
+	} else {
+		s.loginTries[ip] = kept
+	}
+	s.pruneLoginTriesLocked(nowT)
 	return len(kept) < 10
+}
+
+// pruneLoginTriesLocked keeps the fallback limiter from growing without bound.
+// Callers must hold loginMu.
+func (s *Server) pruneLoginTriesLocked(nowT time.Time) {
+	if len(s.loginTries) <= 1024 {
+		return
+	}
+	for key, tries := range s.loginTries {
+		fresh := false
+		for _, t := range tries {
+			if nowT.Sub(t) < time.Minute {
+				fresh = true
+				break
+			}
+		}
+		if !fresh {
+			delete(s.loginTries, key)
+		}
+	}
 }
 
 func (s *Server) recordLoginFailure(ctx context.Context, ip string) {
@@ -696,7 +748,7 @@ func (s *Server) recordLoginFailure(ctx context.Context, ip string) {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	ip := requestIP(r)
+	ip := s.clientIP(r)
 	if !s.loginAllowed(r.Context(), ip) {
 		writeError(w, http.StatusTooManyRequests, "too many login attempts, try again later")
 		return

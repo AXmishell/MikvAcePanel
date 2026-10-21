@@ -131,7 +131,7 @@ func (s *Server) verifySecondFactor(ctx context.Context, admin *model.Admin, cod
 }
 
 func (s *Server) handleLogin2FA(w http.ResponseWriter, r *http.Request) {
-	ip := requestIP(r)
+	ip := s.clientIP(r)
 	if !s.loginAllowed(r.Context(), ip) {
 		writeError(w, http.StatusTooManyRequests, "too many login attempts, try again later")
 		return

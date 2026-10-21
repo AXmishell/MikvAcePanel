@@ -101,7 +101,7 @@ docker compose up -d --build
 管理员账号来自 `.env`：
 
 - 用户名：`ADMIN_USERNAME`（示例 `admin`）
-- 密码：`ADMIN_PASSWORD`（`.env.example` 中为 `change-me-now`；未创建 `.env` 时 docker compose 回退为 `admin/admin123`）
+- 密码：`ADMIN_PASSWORD`。未设置时会自动生成一个随机密码，并在首次启动的容器日志中打印一次。
 
 首次登录后请到 **Settings → Security** 修改密码。
 
@@ -109,7 +109,8 @@ docker compose up -d --build
 
 1. 用 Nginx / Caddy 提供 HTTPS 反向代理到 `127.0.0.1:8080`。
 2. 设置环境变量 `PANEL_PUBLIC_URL=https://panel.example.com`，或在面板 **Settings → General** 中修改。
-3. 不要使用默认密码，并为 `JWT_SECRET` 配置随机值。
+3. 设置强 `ADMIN_PASSWORD`，并为 `JWT_SECRET` 配置随机值。
+4. 如果面板位于反向代理之后，用 `TRUSTED_PROXIES` 声明代理地址，否则登录限流会把所有客户端视为同一个 IP。
 
 ### 可选 Redis
 
