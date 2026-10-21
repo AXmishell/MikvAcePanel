@@ -349,11 +349,17 @@ async function restoreBackup(ev) {
   const file = ev.target.files?.[0]
   ev.target.value = ''
   if (!file) return
-  if (!confirm('用该备份替换面板数据库？必须重启面板后才会生效。')) return
+  if (!confirm('用该备份替换面板数据库？支持 MikvAce 与 CELERITY 备份，必须重启面板后才会生效。')) return
   try {
     const res = await api.restoreBackup(file)
-    restoreMessage.value = res.message || '重启面板后恢复生效。'
-    notify('备份校验通过 — 重启面板后生效')
+    const warnings = Array.isArray(res.warnings) ? res.warnings : []
+    restoreMessage.value = [res.message || '重启面板后恢复生效。', ...warnings].join(' ')
+    if (res.source === 'celerity') {
+      const s = res.summary || {}
+      notify(`CELERITY 备份已导入：${s.users || 0} 用户 / ${s.nodes || 0} 节点 / ${s.groups || 0} 分组 / ${s.apiKeys || 0} API 密钥 — 重启面板后生效`)
+    } else {
+      notify('备份校验通过 — 重启面板后生效')
+    }
   } catch (e) {
     notify(e.message, 'error')
   }

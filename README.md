@@ -276,6 +276,10 @@ Agent 会把 Hysteria 的 stdout/stderr 按 2 秒 / 100 行聚合，带 batch id
 - **立即备份**：生成 `data/backups/mikvace-*.tar.gz`（SQLite `VACUUM INTO` 一致性快照 + 元数据）。
 - **自动备份**：默认每 24 小时一次，保留最近 7 份，可在页面调整。
 - **恢复**：上传 `.tar.gz` 后服务端会校验数据库结构并暂存为 `panel.db.restore`，**重启面板**后替换当前数据库；原库会保留为 `panel.db.pre-restore-*`。
+- **CELERITY 备份导入**：可直接上传 CELERITY-panel 的 `celerity-backup-*.tar.gz`（mongodump 格式）。服务端会解析 BSON 并转换为 MikvAce SQLite，导入用户、分组、Hysteria/Xray 节点、管理员、API 密钥、流量、到期时间及订阅页面设置。
+  - 不支持的类型（`virtual`、`cdn`、Xray `xhttp`）和诊断探针用户会跳过并给出提示。
+  - CELERITY 的 SSH 凭据和 2FA 使用其 `ENCRYPTION_KEY` 加密，无法迁移，需要重新填写/启用。
+  - CELERITY 节点令牌不能复用，导入后会生成新的 MikvAce Agent 令牌，需要在节点上重新安装 Agent。
 
 ## 命令行客户端
 

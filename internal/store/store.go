@@ -76,6 +76,8 @@ func applyPendingRestore(path string) error {
 	}
 	_ = os.Remove(path + "-wal")
 	_ = os.Remove(path + "-shm")
+	_ = os.Remove(pending + "-wal")
+	_ = os.Remove(pending + "-shm")
 	return os.Rename(pending, path)
 }
 
@@ -436,7 +438,7 @@ func (s *Store) Ping(ctx context.Context) error { return s.DB.PingContext(ctx) }
 // ValidateDatabase opens a SQLite file and checks that the core panel tables
 // exist. It is used before accepting an uploaded backup.
 func ValidateDatabase(path string) error {
-	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(2000)")
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&immutable=1&_pragma=busy_timeout(2000)")
 	if err != nil {
 		return err
 	}

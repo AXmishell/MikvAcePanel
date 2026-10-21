@@ -207,6 +207,8 @@ HAPP/Incy 请求还会把 routing 指令前置到 URI 订阅正文。
 
 备份为 `tar.gz`，包含一致性快照 `panel.db` 和 `meta.json`。恢复文件会先校验 SQLite 表结构，再暂存为 `panel.db.restore`，下次启动时替换当前数据库。
 
+恢复接口也兼容 CELERITY-panel 的 mongodump 备份（`celerity-backup-*.tar.gz`）。识别到 `hyusers.bson.gz`、`hynodes.bson.gz`、`servergroups.bson.gz` 等集合后，会转换为新的 SQLite 数据库并返回 `source: "celerity"` 以及 `summary`（用户/节点/分组/管理员数量）和 `warnings`。导入同样需要重启面板生效。
+
 ### 日志
 
 | Method | Path | 说明 |

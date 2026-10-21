@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/axmishell/mikvacepanel/internal/celerity"
 	"github.com/axmishell/mikvacepanel/internal/store"
 	"github.com/axmishell/mikvacepanel/internal/version"
 )
@@ -235,6 +236,48 @@ func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	staged := s.cfg.DBPath + ".restore"
 	_ = os.Remove(staged)
+	_ = os.Remove(staged + "-wal")
+	_ = os.Remove(staged + "-shm")
+
+	isCelerity, detectErr := celerity.IsBackup(tmpTar)
+	if detectErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid backup archive: "+detectErr.Error())
+		return
+	}
+	if isCelerity {
+		var opts celerity.Options
+		if c := claimsFrom(r); c != nil {
+			if admin, err := s.store.GetAdminByID(r.Context(), c.AdminID); err == nil {
+				opts.FallbackAdminUsername = admin.Username
+				opts.FallbackAdminPasswordHash = admin.PasswordHash
+			}
+		}
+		summary, err := celerity.BuildDatabase(r.Context(), tmpTar, staged, opts)
+		if err != nil {
+			_ = os.Remove(staged)
+			_ = os.Remove(staged + "-wal")
+			_ = os.Remove(staged + "-shm")
+			writeError(w, http.StatusBadRequest, "invalid CELERITY backup: "+err.Error())
+			return
+		}
+		if err := store.ValidateDatabase(staged); err != nil {
+			_ = os.Remove(staged)
+			writeError(w, http.StatusBadRequest, "invalid imported database: "+err.Error())
+			return
+		}
+		_ = os.Chmod(staged, 0o600)
+		s.store.AddEvent(r.Context(), "backup.restore_staged", 0, "warning",
+			fmt.Sprintf("已导入 CELERITY 备份：%d 用户 / %d 节点 / %d 分组 / %d API 密钥，等待面板重启",
+				summary.Users, summary.Nodes, summary.Groups, summary.APIKeys))
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "restartRequired": true, "source": "celerity",
+			"summary":  summary,
+			"warnings": summary.Warnings,
+			"message": fmt.Sprintf("CELERITY backup imported: %d users, %d nodes, %d groups, %d API keys. Restart the panel to apply it.",
+				summary.Users, summary.Nodes, summary.Groups, summary.APIKeys),
+		})
+		return
+	}
 	if err := extractDatabase(tmpTar, staged); err != nil {
 		_ = os.Remove(staged)
 		writeError(w, http.StatusBadRequest, err.Error())

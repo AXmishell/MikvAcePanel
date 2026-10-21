@@ -1,7 +1,9 @@
 package server
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -21,6 +23,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/axmishell/mikvacepanel/internal/model"
@@ -605,5 +609,129 @@ func TestRunSSHInstall(t *testing.T) {
 	res := runSSHInstall(host, port, "root", "pw", "", "echo hi")
 	if !res.OK || !strings.Contains(res.Output, "installed") {
 		t.Fatalf("result = %+v", res)
+	}
+}
+
+func buildCelerityTestArchive(t *testing.T) []byte {
+	t.Helper()
+	gid := primitive.NewObjectID()
+	nid := primitive.NewObjectID()
+	now := time.Now().UTC()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	write := func(name string, docs []bson.M) {
+		var raw bytes.Buffer
+		for _, doc := range docs {
+			b, err := bson.Marshal(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw.Write(b)
+		}
+		var z bytes.Buffer
+		zw := gzip.NewWriter(&z)
+		if _, err := zw.Write(raw.Bytes()); err != nil {
+			t.Fatal(err)
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := tw.WriteHeader(&tar.Header{
+			Name: "celerity-backup-test/hysteria/" + name + ".bson.gz",
+			Mode: 0o600, Size: int64(z.Len()), ModTime: now, Typeflag: tar.TypeReg,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(z.Bytes()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("servergroups", []bson.M{{"_id": gid, "name": "Imported"}})
+	write("hynodes", []bson.M{{
+		"_id": nid, "type": "hysteria", "name": "imported-node", "ip": "203.0.113.10",
+		"port": 8443, "groups": []primitive.ObjectID{gid}, "active": true,
+	}})
+	write("hyusers", []bson.M{{
+		"_id": primitive.NewObjectID(), "userId": "imported-user", "password": "secret123",
+		"enabled": true, "groups": []primitive.ObjectID{gid},
+	}})
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestRestoreCelerityBackup(t *testing.T) {
+	env := newTestEnv(t)
+	archive := buildCelerityTestArchive(t)
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("file", "celerity-backup-20260101-000000.tar.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write(archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest("POST", env.srv.URL+"/api/backups/restore", &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+env.token)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("restore %d: %s", resp.StatusCode, b)
+	}
+	var out struct {
+		OK      bool   `json:"ok"`
+		Source  string `json:"source"`
+		Summary struct {
+			Users  int `json:"users"`
+			Nodes  int `json:"nodes"`
+			Groups int `json:"groups"`
+		} `json:"summary"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.OK || out.Source != "celerity" || out.Summary.Users != 1 || out.Summary.Nodes != 1 || out.Summary.Groups != 1 {
+		t.Fatalf("unexpected response: %+v", out)
+	}
+
+	staged := env.app.cfg.DBPath + ".restore"
+	defer func() {
+		_ = os.Remove(staged)
+		_ = os.Remove(staged + "-wal")
+		_ = os.Remove(staged + "-shm")
+	}()
+	if err := store.ValidateDatabase(staged); err != nil {
+		t.Fatal(err)
+	}
+	imported, err := store.Open(staged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer imported.Close()
+	u, err := imported.GetUserByUserID(context.Background(), "imported-user")
+	if err != nil || !u.Enabled {
+		t.Fatalf("imported user = %+v, %v", u, err)
+	}
+	nodes, err := imported.ListNodes(context.Background())
+	if err != nil || len(nodes) != 1 || nodes[0].Name != "imported-node" {
+		t.Fatalf("imported nodes = %+v, %v", nodes, err)
 	}
 }
