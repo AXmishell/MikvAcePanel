@@ -1,0 +1,58 @@
+/* Slightly wider content for configuration tables and command examples. */
+.md-grid {
+  max-width: 76rem;
+}
+
+.md-typeset table:not([class]) {
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.md-typeset pre > code {
+  tab-size: 2;
+}
+
+.md-typeset .hero {
+  margin: 1.2rem 0 2rem;
+  padding: 2.2rem 1.6rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 1rem;
+  background:
+    radial-gradient(60rem 20rem at 10% -30%, color-mix(in srgb, var(--md-primary-fg-color) 18%, transparent), transparent),
+    var(--md-code-bg-color);
+}
+
+.md-typeset .hero h1 {
+  margin: 0 0 .4rem;
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: -.02em;
+}
+
+.md-typeset .hero p {
+  margin: 0;
+  color: var(--md-default-fg-color--light);
+}
+
+.md-typeset .badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem;
+  margin-top: 1.1rem;
+}
+
+.md-typeset .badge-row code {
+  border-radius: 99rem;
+  padding: .2rem .7rem;
+  font-size: .72rem;
+}
+
+@media screen and (max-width: 44.984375em) {
+  .md-typeset .hero {
+    padding: 1.4rem 1rem;
+  }
+  .md-typeset .hero h1 {
+    font-size: 1.5rem;
+  }
+}

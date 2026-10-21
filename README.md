@@ -2,6 +2,21 @@
 
 一个面向 **Hysteria 2** 和 **Xray VLESS / REALITY** 的自托管代理管理面板。整体思路参考 [CELERITY-panel](https://github.com/ClickDevTech/CELERITY-panel)，后端使用 Go，前端使用 Vue 3 单页应用，节点端支持 Docker 镜像，通过 WebSocket 连接服务端并接受配置下发，同时把代理核心日志上报到服务端做规则化分析。
 
+## 文档
+
+在线文档（GitHub Pages）：**https://axmishell.github.io/MikvAcePanel/**
+
+本地预览与构建：
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements-docs.txt
+mkdocs serve          # http://127.0.0.1:8000
+mkdocs build --strict # 输出 site/
+```
+
+文档源文件位于 `docs/`，导航与主题配置见 `mkdocs.yml`；推送到 `main` 后由 `.github/workflows/docs.yml` 自动发布到 GitHub Pages。
+
 > 订阅接口与 CELERITY 保持同一套约定：`GET /api/files/:token`、`GET /api/files/info/:token`，按 User-Agent 自动返回 Clash / sing-box / Shadowrocket / URI 列表，并携带 `Profile-Title`、`Subscription-Userinfo` 等标准响应头。
 
 ---
@@ -128,7 +143,7 @@ docker pull ghcr.io/axmishell/mikvacepanel:latest        # 面板
 docker pull ghcr.io/axmishell/mikvacepanel-node:main   # 节点 Agent
 ```
 
-标签规则：`main` 分支发布 `main`、`latest`、`sha-<commit>`；`v1.2.3` 标签发布 `1.2.3`、`1.2`、`latest`、`sha-<commit>`。
+标签规则：`main` 分支发布 `main`、`sha-<commit>`；`v1.2.3` 标签发布 `1.2.3`、`1.2`、`latest`、`sha-<commit>`。
 
 ### 本地开发
 

@@ -1,0 +1,101 @@
+site_name: MikvAce Panel
+site_description: 面向 Hysteria 2 与 Xray VLESS 的自托管代理管理面板
+site_url: https://axmishell.github.io/MikvAcePanel/
+repo_url: https://github.com/AXmishell/MikvAcePanel
+repo_name: AXmishell/MikvAcePanel
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; MikvAce Panel · MIT License
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  language: zh
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
+  font: false
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: cyan
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: 切换为浅色
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: cyan
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: 切换为深色
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - search.share
+    - toc.follow
+    - content.code.copy
+    - content.code.select
+    - content.action.edit
+    - content.tooltips
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+plugins:
+  - search:
+      lang:
+        - zh
+        - en
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/AXmishell/MikvAcePanel
+      name: GitHub
+  generator: false
+
+extra_css:
+  - assets/extra.css
+
+nav:
+  - 首页: index.md
+  - 快速开始: getting-started.md
+  - 部署指南: deployment.md
+  - 使用手册:
+      - 面板功能: panel.md
+      - 订阅与客户端: subscriptions.md
+      - 节点 Agent: node-agent.md
+      - 证书签发: certificates.md
+      - 两步验证: 2fa.md
+  - 参考:
+      - API: api.md
+      - 日志分析: log-analysis.md
+      - 架构与安全: architecture.md
+  - 常见问题: faq.md

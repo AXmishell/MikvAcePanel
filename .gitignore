@@ -3,6 +3,9 @@ bin/
 *.exe
 *.test
 
+# documentation build
+site/
+
 # runtime data
 data/
 *.db

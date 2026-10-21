@@ -2,17 +2,41 @@
 
 Base URL：`https://panel.example.com/api`
 
-管理端接口使用 JWT：
+管理端接口使用 JWT。
 
+### 登录
+
+```http
+POST /api/login
+Content-Type: application/json
+
+{"username":"admin","password":"..."}
 ```
-POST /api/login  {"username":"admin","password":"..."}
-=> {"token":"...","expiresAt":"...","admin":{"id":1,"username":"admin"}}
 
-# 已启用 2FA 时不会直接返回 token：
-=> {"twoFactorRequired":true,"challenge":"...","expiresAt":"..."}
+未启用 2FA：
 
-POST /api/login/2fa  {"challenge":"...","code":"123456"}
-=> {"token":"...","expiresAt":"...","admin":{...}}
+```json
+{"token":"...","expiresAt":"...","admin":{"id":1,"username":"admin"}}
+```
+
+已启用 2FA 时不会直接返回 token：
+
+```json
+{"twoFactorRequired":true,"challenge":"...","expiresAt":"..."}
+```
+
+第二步：
+
+```http
+POST /api/login/2fa
+Content-Type: application/json
+
+{"challenge":"...","code":"123456"}
+```
+
+成功后返回与普通登录相同的 token。后续请求携带：
+
+```http
 Authorization: Bearer <token>
 ```
 

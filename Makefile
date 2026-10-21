@@ -8,7 +8,7 @@ LDFLAGS := -s -w \
 	-X github.com/axmishell/mikvacepanel/internal/version.Commit=$(COMMIT) \
 	-X github.com/axmishell/mikvacepanel/internal/version.BuildDate=$(BUILD_DATE)
 
-.PHONY: all web server node client build test fmt vet clean docker docker-node dev
+.PHONY: all web server node client build test fmt vet clean docker docker-node dev docs docs-serve
 
 all: build
 
@@ -41,6 +41,12 @@ vet:
 
 dev:
 	go run ./cmd/server -addr :8080 -data ./data
+
+docs:
+	mkdocs build --strict
+
+docs-serve:
+	mkdocs serve
 
 docker:
 	docker build -t mikvacepanel/panel:latest \
