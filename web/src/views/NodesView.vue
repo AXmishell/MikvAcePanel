@@ -65,7 +65,7 @@
         <div class="node-actions">
           <button class="btn btn-sm" @click="openInstall(n)"><Terminal :size="13" /> 安装</button>
           <button class="btn btn-sm" :disabled="!n.sshUser || sshBusy === n.id" @click="sshSetup(n)"><Zap :size="13" /> 自动安装</button>
-          <router-link class="btn btn-sm" :to="'/logs?nodeId=' + n.id"><ScrollText :size="13" /> 日志</router-link>
+          <router-link class="btn btn-sm" :to="adminPath('logs') + '?nodeId=' + n.id"><ScrollText :size="13" /> 日志</router-link>
           <button class="btn btn-sm" @click="openConfig(n)"><FileCode2 :size="13" /> 配置</button>
           <button class="btn btn-sm" @click="sync(n)"><RefreshCw :size="13" /> 同步</button>
           <button class="btn btn-sm" :disabled="!n.connected" @click="command(n, 'restart')"><RotateCcw :size="13" /> 重启</button>
@@ -583,7 +583,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   Copy, FileCode2, Pencil, Plus, RefreshCw, RotateCcw, ScrollText, Server, Square, Terminal, Trash2, X, Zap,
 } from 'lucide-vue-next'
-import { api } from '../api'
+import { adminPath, api } from '../api'
 import { notify } from '../store'
 import Modal from '../components/Modal.vue'
 import Select from '../components/Select.vue'

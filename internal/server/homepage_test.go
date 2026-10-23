@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -48,8 +49,9 @@ func TestHomepageServesSPAInsteadOfRedirecting(t *testing.T) {
 		t.Fatalf("root content type = %q", ct)
 	}
 
-	// The administrator console and the user portal remain SPA routes.
-	for _, path := range []string{"/dashboard", "/portal", "/portal/login"} {
+	// The administrator console and the user portal are SPA routes under
+	// their own prefixes.
+	for _, path := range []string{"/admin/login", "/admin/dashboard", "/user", "/user/login"} {
 		r, err := client.Get(ts.URL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -66,7 +68,36 @@ func TestHomepageServesSPAInsteadOfRedirecting(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.Body.Close()
-	if r.StatusCode != http.StatusFound || r.Header.Get("Location") != "/dashboard" {
+	if r.StatusCode != http.StatusFound || r.Header.Get("Location") != "/admin/dashboard" {
 		t.Fatalf("/panel = %d %q", r.StatusCode, r.Header.Get("Location"))
+	}
+
+	// Enabling the security entrance hides /admin and requires the secret
+	// segment for both the SPA shell and the login API.
+	if err := st.SetSetting(context.Background(), "admin_security_enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting(context.Background(), "admin_security_path", "secret-entry"); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/admin", "/admin/login", "/admin/wrong-entry/login"} {
+		resp, err := client.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s with security entrance = %d, want 404", path, resp.StatusCode)
+		}
+	}
+	for _, path := range []string{"/admin/secret-entry", "/admin/secret-entry/login", "/admin/secret-entry/dashboard"} {
+		resp, err := client.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s with valid entrance = %d, want 200", path, resp.StatusCode)
+		}
 	}
 }

@@ -34,10 +34,6 @@ jobs:
             dockerfile: Dockerfile.node
             suffix: '-node'
             title: MikvAcePanel Node Agent
-          - image: api
-            dockerfile: Dockerfile.api
-            suffix: '-api'
-            title: MikvAcePanel API
     steps:
       - name: Checkout
         uses: actions/checkout@v4

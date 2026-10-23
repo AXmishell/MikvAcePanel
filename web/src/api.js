@@ -3,6 +3,45 @@
 export const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '')
 const BASE = API_BASE
 
+const ENTRY_KEY = 'mikvace_admin_entry'
+
+export function getAdminEntry() {
+  return localStorage.getItem(ENTRY_KEY) || ''
+}
+
+export function setAdminEntry(entry) {
+  const value = String(entry || '').trim()
+  if (value) localStorage.setItem(ENTRY_KEY, value)
+  else localStorage.removeItem(ENTRY_KEY)
+}
+
+// The public probe tells the SPA whether the optional security entrance is
+// enabled. The entrance itself is never returned by the API. Always ask the
+// server so a change made in another tab cannot leave the guard with a stale
+// answer.
+let adminConfigPromise = null
+export async function fetchAdminConfig(force = false) {
+  if (!force && adminConfigPromise) return adminConfigPromise
+  adminConfigPromise = fetch(BASE + '/admin/config', { headers: { Accept: 'application/json' } })
+    .then((res) => (res.ok ? res.json() : { securityEntryEnabled: false }))
+    .finally(() => {
+      adminConfigPromise = null
+    })
+  return adminConfigPromise
+}
+export function resetAdminConfig() {
+  adminConfigPromise = null
+}
+
+// Build an administrator URL that keeps the current security entrance.
+export function adminPath(subpath = '') {
+  const entry = getAdminEntry()
+  const base = entry ? `/admin/${entry}` : '/admin'
+  if (!subpath) return base
+  return base + '/' + String(subpath).replace(/^\/+/, '')
+}
+
+
 let unauthorizedHandler = null
 let portalUnauthorizedHandler = null
 export function setUnauthorizedHandler(fn) {
@@ -19,7 +58,7 @@ function portalToken() {
   return localStorage.getItem('mikvace_portal_token') || ''
 }
 
-async function send(path, options = {}, bearer = '', onUnauthorized = null) {
+async function send(path, options = {}, bearer = '', onUnauthorized = null, adminRequest = false) {
   const { method = 'GET', body, query } = options
   let url = BASE + path
   if (query) {
@@ -33,6 +72,10 @@ async function send(path, options = {}, bearer = '', onUnauthorized = null) {
   const headers = { Accept: 'application/json' }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (bearer) headers.Authorization = 'Bearer ' + bearer
+  if (adminRequest) {
+    const entry = getAdminEntry()
+    if (entry) headers['X-Admin-Entry'] = entry
+  }
   let res
   try {
     res = await fetch(url, {
@@ -63,11 +106,18 @@ async function send(path, options = {}, bearer = '', onUnauthorized = null) {
 }
 
 function request(path, options = {}) {
-  return send(path, options, token(), unauthorizedHandler)
+  return send(path, options, token(), unauthorizedHandler, true)
 }
 
 function portalRequest(path, options = {}) {
   return send(path, options, portalToken(), portalUnauthorizedHandler)
+}
+
+function adminHeaders(extra = {}) {
+  const headers = { ...extra }
+  const entry = getAdminEntry()
+  if (entry) headers['X-Admin-Entry'] = entry
+  return headers
 }
 
 export const api = {
@@ -134,7 +184,7 @@ export const api = {
       if (v !== undefined && v !== null && v !== '') params.set(k, v)
     })
     const res = await fetch(`${BASE}/logs/export?${params.toString()}`, {
-      headers: { Authorization: 'Bearer ' + token() },
+      headers: adminHeaders({ Authorization: 'Bearer ' + token() }),
     })
     if (res.status === 401 && unauthorizedHandler) unauthorizedHandler()
     if (!res.ok) {
@@ -162,7 +212,7 @@ export const api = {
   deleteBackup: (name) => request(`/backups/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   async downloadBackup(name) {
     const res = await fetch(`${BASE}/backups/${encodeURIComponent(name)}`, {
-      headers: { Authorization: 'Bearer ' + token() },
+      headers: adminHeaders({ Authorization: 'Bearer ' + token() }),
     })
     if (!res.ok) throw new Error('Download failed (' + res.status + ')')
     return res.blob()
@@ -172,7 +222,7 @@ export const api = {
     fd.append('file', file)
     const res = await fetch(`${BASE}/backups/restore`, {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + token() },
+      headers: adminHeaders({ Authorization: 'Bearer ' + token() }),
       body: fd,
     })
     const data = await res.json().catch(() => ({}))
@@ -199,6 +249,5 @@ export const portalApi = {
     portalRequest('/portal/password', { method: 'POST', body: { oldPassword, newPassword } }),
   changeConnectionPassword: (currentPassword, newPassword) =>
     portalRequest('/portal/connection-password', { method: 'POST', body: { currentPassword, newPassword } }),
-  resetDevices: () => portalRequest('/portal/devices/reset', { method: 'POST' }),
   resetSubscription: () => portalRequest('/portal/subscription/reset', { method: 'POST' }),
 }

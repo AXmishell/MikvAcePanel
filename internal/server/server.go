@@ -212,8 +212,9 @@ func (s *Server) routes() http.Handler {
 	r.Use(s.cors)
 
 	r.Get("/api/health", s.handleHealth)
-	r.Post("/api/login", s.handleLogin)
-	r.Post("/api/login/2fa", s.handleLogin2FA)
+	r.Get("/api/admin/config", s.handleAdminConfig)
+	r.With(s.requireAdminEntry).Post("/api/login", s.handleLogin)
+	r.With(s.requireAdminEntry).Post("/api/login/2fa", s.handleLogin2FA)
 	r.Post("/api/auth", s.handleHy2Auth)
 	r.Get("/api/files/info/{token}", s.handleSubInfo)
 	r.Get("/api/files/{token}", s.handleSubscription)
@@ -234,7 +235,6 @@ func (s *Server) routes() http.Handler {
 			pr.Get("/me", s.handlePortalMe)
 			pr.Post("/password", s.handlePortalChangePassword)
 			pr.Post("/connection-password", s.handlePortalChangeConnectionPassword)
-			pr.Post("/devices/reset", s.handlePortalResetDevices)
 			pr.Post("/subscription/reset", s.handlePortalResetSubscription)
 		})
 	})
@@ -315,13 +315,16 @@ func (s *Server) routes() http.Handler {
 	})
 
 	if s.cfg.ServeWeb {
-		// The SPA lives at the site root: /login, /dashboard, /users, ...
+		// The SPA lives at the site root. The administrator console is under
+		// /admin and the user portal under /user; `/` is a public landing page.
 		// Keep the legacy /panel prefix working with a redirect that preserves
-		// deep links (for example /panel/users -> /users).
+		// deep links (for example /panel/users -> /admin/users).
 		redirectPanel := func(w http.ResponseWriter, r *http.Request) {
 			target := strings.TrimPrefix(r.URL.Path, "/panel")
 			if target == "" || target == "/" {
-				target = "/dashboard"
+				target = "/admin/dashboard"
+			} else {
+				target = "/admin" + target
 			}
 			if r.URL.RawQuery != "" {
 				target += "?" + r.URL.RawQuery
@@ -333,6 +336,8 @@ func (s *Server) routes() http.Handler {
 		r.Get("/", s.serveSPA)
 		r.Get("/panel", redirectPanel)
 		r.Get("/panel/*", redirectPanel)
+		r.Get("/admin", s.serveAdminSPA)
+		r.Get("/admin/*", s.serveAdminSPA)
 		r.Get("/assets/*", s.serveSPA)
 		r.Get("/favicon.ico", s.serveSPA)
 		r.NotFound(s.serveSPA)
@@ -352,7 +357,9 @@ func (s *Server) registerAPIOnlyRoutes(r chi.Router) {
 		}
 		target := strings.TrimPrefix(r.URL.Path, "/panel")
 		if target == "" || target == "/" {
-			target = "/dashboard"
+			target = "/admin/dashboard"
+		} else {
+			target = "/admin" + target
 		}
 		if r.URL.RawQuery != "" {
 			target += "?" + r.URL.RawQuery
@@ -596,6 +603,10 @@ func (s *Server) adminAuth(next http.Handler) http.Handler {
 		raw := bearerToken(r)
 		if raw == "" {
 			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		if !strings.HasPrefix(raw, "ck_") && !s.adminEntryAllowed(r) {
+			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
 		if strings.HasPrefix(raw, "ck_") {

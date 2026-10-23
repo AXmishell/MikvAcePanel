@@ -9,7 +9,7 @@
       <button class="btn btn-sm" :disabled="loading" @click="load">
         <RefreshCw :size="14" :class="{ spin: loading }" /> 刷新
       </button>
-      <router-link to="/nodes" class="btn btn-primary btn-sm"><Plus :size="14" /> 添加节点</router-link>
+      <router-link :to="adminPath('nodes')" class="btn btn-primary btn-sm"><Plus :size="14" /> 添加节点</router-link>
     </div>
 
     <div v-if="error" class="banner banner-danger">{{ error }}</div>
@@ -41,7 +41,7 @@
         <div class="card-header">
           <div class="card-title">节点</div>
           <div class="spacer"></div>
-          <router-link to="/nodes" class="small">管理 →</router-link>
+          <router-link :to="adminPath('nodes')" class="small">管理 →</router-link>
         </div>
         <div class="card-body" style="padding-top: 8px">
           <div v-if="!nodes.length" class="empty">暂无节点。</div>
@@ -68,7 +68,7 @@
         <div class="card-header">
           <div class="card-title">安全与健康发现</div>
           <div class="spacer"></div>
-          <router-link to="/logs" class="small">分析日志 →</router-link>
+          <router-link :to="adminPath('logs')" class="small">分析日志 →</router-link>
         </div>
         <div class="card-body">
           <div v-if="!findings.length" class="finding info">
@@ -109,7 +109,7 @@
       <div class="card-header">
         <div class="card-title">最近代理日志</div>
         <div class="spacer"></div>
-        <router-link to="/logs" class="small">查看全部 →</router-link>
+        <router-link :to="adminPath('logs')" class="small">查看全部 →</router-link>
       </div>
       <div class="table-wrap">
         <table class="log-table">
@@ -138,7 +138,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ArrowUpDown, Plus, RefreshCw, Server, Users, Wifi } from 'lucide-vue-next'
-import { api } from '../api'
+import { adminPath, api } from '../api'
 import StatCard from '../components/StatCard.vue'
 import LineChart from '../components/LineChart.vue'
 import { eventLabel, fmtBytes, fmtRelative, statusClass, statusLabel } from '../format'

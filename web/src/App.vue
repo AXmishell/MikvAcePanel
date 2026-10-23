@@ -24,9 +24,11 @@ const router = useRouter()
 
 setUnauthorizedHandler(() => {
   clearSession()
-  if (router.currentRoute.value.name !== 'login') {
-    router.push({ name: 'login', query: { redirect: router.currentRoute.value.fullPath } })
-  }
+  const current = router.currentRoute.value
+  // Never pull a portal visitor into the administrator login flow.
+  if (!current.path.startsWith('/admin') || current.name === 'admin-login') return
+  const entry = typeof current.params.entry === 'string' ? current.params.entry : ''
+  router.push({ name: 'admin-login', params: { entry: entry || undefined }, query: { redirect: current.fullPath } })
 })
 
 setPortalUnauthorizedHandler(() => {

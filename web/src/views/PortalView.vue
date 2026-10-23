@@ -134,8 +134,7 @@
 
               <div class="portal-actions">
                 <button v-if="capabilities.password" class="btn btn-sm" @click="openPassword"><KeyRound :size="14" /> 修改密码</button>
-                <button v-if="capabilities.devices" class="btn btn-sm" @click="resetDevices"><Smartphone :size="14" /> 重置设备</button>
-                <button v-if="capabilities.subscription" class="btn btn-sm btn-danger" @click="resetSubscription"><RefreshCw :size="14" /> 重置订阅</button>
+                <button v-if="capabilities.subscription" class="btn btn-sm btn-danger" @click="resetSubscriptionOpen = true"><RefreshCw :size="14" /> 重置订阅</button>
               </div>
 
               <div v-if="devices.items.length" class="portal-devices">
@@ -219,6 +218,24 @@
         </button>
       </template>
     </Modal>
+
+    <ConfirmDialog
+      v-model="resetSubscriptionOpen"
+      eyebrow="Subscription Token"
+      title="重置订阅链接？"
+      message="系统会生成新的订阅 Token，旧链接将立即失效。你需要在每台设备的客户端中重新导入新链接。"
+      confirm-text="重置订阅"
+      busy-text="正在生成新链接…"
+      tone="danger"
+      :icon="RefreshCw"
+      :busy="resetSubscriptionBusy"
+      @confirm="confirmResetSubscription"
+    >
+      <div class="confirm-warning">
+        <ShieldAlert :size="15" />
+        <span>此操作不可撤销，请确认已准备好更新所有客户端。</span>
+      </div>
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -235,6 +252,7 @@ import { theme, toggleTheme } from '../theme'
 import { copyText, fmtBytes, fmtDate, fmtRelative, ratioClass } from '../format'
 import CopyField from '../components/CopyField.vue'
 import Modal from '../components/Modal.vue'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
 
 const router = useRouter()
 
@@ -247,6 +265,9 @@ const passwordMode = ref('login')
 const passwordBusy = ref(false)
 const passwordError = ref('')
 const passwordForm = reactive({ old: '', next: '', confirm: '' })
+
+const resetSubscriptionOpen = ref(false)
+const resetSubscriptionBusy = ref(false)
 
 const user = computed(() => data.value?.user || {})
 const traffic = computed(() => data.value?.traffic || {})
@@ -346,26 +367,18 @@ async function savePassword() {
   }
 }
 
-async function resetDevices() {
-  if (!confirm('清除已登记的设备状态？已连接的客户端不会立即断开，但设备计数会重新开始。')) return
-  try {
-    await portalApi.resetDevices()
-    notify('设备状态已重置')
-    await load()
-  } catch (e) {
-    notify(e.message, 'error')
-  }
-}
-
-async function resetSubscription() {
-  if (!confirm('生成新的订阅链接？旧链接会立即失效，需要在客户端重新导入。')) return
+async function confirmResetSubscription() {
+  resetSubscriptionBusy.value = true
   try {
     const res = await portalApi.resetSubscription()
     if (data.value) data.value.subscription = res
+    resetSubscriptionOpen.value = false
     notify('订阅链接已重置')
     await load()
   } catch (e) {
     notify(e.message, 'error')
+  } finally {
+    resetSubscriptionBusy.value = false
   }
 }
 
@@ -376,7 +389,7 @@ async function logout() {
     /* clear the local session even if the server is unreachable */
   }
   clearPortalSession()
-  router.push('/portal/login')
+  router.push('/user/login')
 }
 
 onMounted(load)

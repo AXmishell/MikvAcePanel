@@ -19,7 +19,8 @@ server:
 	@mkdir -p $(BIN)
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN)/mikvace-server ./cmd/server
 
-# API-only build for a separately hosted frontend (no web/dist required).
+# Optional API-only build for a separately hosted frontend. The default
+# `server`/`build` targets always embed web/dist.
 server-api:
 	@mkdir -p $(BIN)
 	CGO_ENABLED=0 go build -trimpath -tags noweb -ldflags "$(LDFLAGS)" -o $(BIN)/mikvace-server-api ./cmd/server

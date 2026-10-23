@@ -24,7 +24,6 @@
         <Moon v-if="theme.current === 'light'" :size="17" />
         <Sun v-else :size="17" />
       </button>
-      <router-link class="btn btn-sm home-admin" :to="adminTarget">{{ adminLabel }}</router-link>
       <router-link v-if="portalEnabled || portalAuth.token" class="btn btn-sm btn-primary" :to="portalTarget">{{ portalLabel }}</router-link>
     </header>
 
@@ -141,7 +140,7 @@
             {{ portalLabel }} <ArrowRight :size="16" />
           </router-link>
           <a v-if="supportUrl" class="btn btn-lg" :href="supportUrl" target="_blank" rel="noopener">联系支持</a>
-          <router-link v-else class="btn btn-lg" :to="adminTarget">{{ adminLabel }}</router-link>
+          <router-link v-if="portalEnabled || portalAuth.token" class="btn btn-lg" :to="portalTarget">{{ portalLabel }} <ArrowRight :size="16" /></router-link>
         </div>
       </section>
     </main>
@@ -152,7 +151,6 @@
         <a href="#features">能力</a>
         <a href="#start">开始使用</a>
         <router-link v-if="portalEnabled || portalAuth.token" :to="portalTarget">用户中心</router-link>
-        <router-link :to="adminTarget">{{ adminLabel }}</router-link>
       </div>
     </footer>
   </div>
@@ -165,7 +163,7 @@ import {
   Smartphone, Sun, UserRound, Zap,
 } from 'lucide-vue-next'
 import { API_BASE, portalApi } from '../api'
-import { auth, portalAuth } from '../store'
+import { portalAuth } from '../store'
 import { theme, toggleTheme } from '../theme'
 
 const config = ref(null)
@@ -179,10 +177,8 @@ const supportUrl = computed(() => config.value?.supportUrl || '')
 const portalEnabled = computed(() => (config.value ? !!config.value.enabled : true))
 const initial = computed(() => (panelName.value || 'M').slice(0, 1).toUpperCase())
 
-const portalTarget = computed(() => (portalAuth.token ? '/portal' : '/portal/login'))
+const portalTarget = computed(() => (portalAuth.token ? '/user' : '/user/login'))
 const portalLabel = computed(() => (portalAuth.token ? '我的订阅' : '进入用户中心'))
-const adminTarget = computed(() => (auth.token ? '/dashboard' : '/login'))
-const adminLabel = computed(() => (auth.token ? '控制台' : '管理员登录'))
 
 const features = [
   { icon: Zap, title: '双核心加速', desc: 'Hysteria 2 的 QUIC/UDP 与 Xray 的 TCP 入站由同一节点提供，按网络环境选择更合适的连接。' },
@@ -231,8 +227,6 @@ onMounted(async () => {
 .home-nav { display: flex; align-items: center; gap: 20px; margin-left: 20px; }
 .home-nav a { color: var(--muted); font-size: 12.5px; }
 .home-nav a:hover { color: var(--text); }
-.home-admin { color: var(--muted); }
-.home-admin:hover { color: var(--text); }
 
 .home-main { width: 100%; max-width: 1180px; margin: 0 auto; padding: 0 26px 60px; flex: 1; }
 
@@ -367,7 +361,6 @@ onMounted(async () => {
   .home-nav { display: none; }
   .home-main { padding: 0 16px 44px; }
   .home-top { padding: 0 16px; gap: 8px; }
-  .home-admin { display: none; }
   .section-head { flex-direction: column; align-items: flex-start; gap: 10px; }
   .step-grid { grid-template-columns: 1fr; }
   .home-cta { flex-direction: column; align-items: flex-start; }

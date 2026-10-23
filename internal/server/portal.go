@@ -323,7 +323,6 @@ func (s *Server) handlePortalMe(w http.ResponseWriter, r *http.Request) {
 		"nodes":        portalNodes,
 		"capabilities": map[string]bool{
 			"password":     portalBoolSetting(settings, "portal_allow_password_change", true),
-			"devices":      portalBoolSetting(settings, "portal_allow_device_reset", true),
 			"subscription": portalBoolSetting(settings, "portal_allow_sub_reset", false),
 		},
 		"branding": map[string]any{
@@ -418,22 +417,6 @@ func (s *Server) handlePortalChangeConnectionPassword(w http.ResponseWriter, r *
 	}
 	s.syncXrayNodes(r.Context())
 	s.store.AddEvent(r.Context(), "portal.connection_password", 0, "info", "用户 "+user.UserID+" 修改了连接密码")
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func (s *Server) handlePortalResetDevices(w http.ResponseWriter, r *http.Request) {
-	settings, _ := s.store.GetSettings(r.Context())
-	if !portalBoolSetting(settings, "portal_allow_device_reset", true) {
-		writeError(w, http.StatusForbidden, "管理员未开放自助重置设备")
-		return
-	}
-	user, err := s.portalUser(r)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "账号不存在或已删除")
-		return
-	}
-	s.hub.ResetDeviceLimit(user.UserID)
-	s.store.AddEvent(r.Context(), "portal.devices", 0, "info", "用户 "+user.UserID+" 重置了设备状态")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

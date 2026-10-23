@@ -28,5 +28,3 @@ jobs:
         run: npm ci --no-audit --no-fund && npm run build
       - name: Server build
         run: go build ./cmd/...
-      - name: API-only server build
-        run: go build -tags noweb ./cmd/server

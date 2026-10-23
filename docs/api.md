@@ -42,6 +42,22 @@ Authorization: Bearer <token>
 
 未认证返回 `401 {"error":"authentication required"}`。
 
+### 管理员安全入口
+
+安全入口默认关闭。开启后（**设置 → 安全**），`/api/login`、`/api/login/2fa` 以及所有管理员接口都需要额外的请求头：
+
+```http
+X-Admin-Entry: <入口路径>
+```
+
+缺少或校验失败返回 `404 {"error":"not found"}`。`GET /api/admin/config` 是公开探测接口，只返回是否启用（不返回入口路径）：
+
+```json
+{ "securityEntryEnabled": true, "panelName": "MikvAce Panel" }
+```
+
+API Key（`Authorization: Bearer ck_...`）不受安全入口限制。
+
 ---
 
 ## 公共接口
@@ -159,7 +175,6 @@ HAPP/Incy 请求还会把 routing 指令前置到 URI 订阅正文。
 | GET | `/api/portal/me` | Portal JWT | 账号、流量、设备、订阅与节点 |
 | POST | `/api/portal/password` | Portal JWT | `{ "oldPassword": "...", "newPassword": "..." }`，修改登录密码 |
 | POST | `/api/portal/connection-password` | Portal JWT | `{ "currentPassword": "...", "newPassword": "..." }`，修改连接密码 |
-| POST | `/api/portal/devices/reset` | Portal JWT | 清除设备计数 |
 | POST | `/api/portal/subscription/reset` | Portal JWT | 重置订阅 Token（需管理员开放） |
 
 Portal JWT 带有 `purpose=portal`，不能访问管理接口；管理员 JWT 也不能访问 `/api/portal/*`。

@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
 
-# API-only image for deployments where the Vue frontend is hosted separately
-# (for example on a CDN). The embedded frontend is excluded with -tags noweb.
+# Optional API-only image for deployments where the Vue frontend is hosted
+# separately (for example on a CDN). This is NOT published by the default GHCR
+# workflow; the standard Dockerfile embeds web/dist into the server binary.
+# The embedded frontend is excluded here with -tags noweb.
 FROM golang:1.26-alpine AS go-build
 ARG VERSION=dev
 ARG COMMIT=unknown

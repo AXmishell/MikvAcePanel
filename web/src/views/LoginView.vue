@@ -101,10 +101,16 @@ const error = ref('')
 const router = useRouter()
 const route = useRoute()
 
+function adminBase() {
+  const entry = typeof route.params.entry === 'string' ? route.params.entry : ''
+  return entry ? `/admin/${entry}` : '/admin'
+}
+
 function finishLogin(res) {
   setSession(res.token, res.admin, res.warning)
   notify('登录成功')
-  const target = typeof route.query.redirect === 'string' ? route.query.redirect : '/dashboard'
+  const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+  const target = redirect.startsWith('/admin') ? redirect : adminBase() + '/dashboard'
   router.push(target)
 }
 
@@ -133,7 +139,7 @@ async function submit() {
     }
     finishLogin(res)
   } catch (e) {
-    error.value = e.message
+    error.value = e.status === 404 ? '安全入口无效或已变更，请使用最新的管理员入口地址。' : e.message
   } finally {
     loading.value = false
   }

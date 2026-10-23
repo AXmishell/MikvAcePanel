@@ -152,9 +152,9 @@ sudo systemctl enable --now mikvace-panel
 sudo systemctl status mikvace-panel
 ```
 
-## 前后端分离 / CDN
+## 前后端分离 / CDN（可选）
 
-默认发行方式仍是单二进制内嵌前端。需要把 SPA 放到 CDN 或独立域名时：
+默认发行方式是单二进制内嵌前端，无需单独部署 SPA。只有确实需要把前端放到 CDN 或独立域名时才使用本节的可选模式；该模式不会随 GHCR 自动发布镜像。
 
 ```bash
 cd web
@@ -177,7 +177,7 @@ PANEL_PUBLIC_URL=https://api.example.com \
 
 | 变量 | 说明 |
 |------|------|
-| `SERVE_WEB` | `false` 时只提供 API，不再返回内嵌前端（`/dashboard` 等） |
+| `SERVE_WEB` | `false` 时只提供 API，不再返回内嵌前端（`/admin`、`/user` 等） |
 | `FRONTEND_URL` | 前端公网地址，API-only 模式下 `/` 与 `/panel` 跳转使用 |
 | `CORS_ORIGINS` | 允许跨域的前端 Origin，必须精确匹配 |
 | `TRUSTED_PROXIES` | API 反向代理地址，用于客户端 IP 和登录限流 |

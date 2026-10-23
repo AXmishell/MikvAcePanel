@@ -57,7 +57,7 @@
       <main class="content">
         <div v-if="auth.warning" class="banner banner-warn">
           <ShieldCheck :size="16" style="margin-top: 1px" />
-          <div class="spacer">{{ auth.warning }} <router-link to="/settings">打开设置</router-link></div>
+          <div class="spacer">{{ auth.warning }} <router-link :to="navBase + '/settings'">打开设置</router-link></div>
         </div>
         <router-view v-slot="{ Component }">
           <component :is="Component" />
@@ -81,14 +81,18 @@ const route = useRoute()
 const router = useRouter()
 const mobileOpen = ref(false)
 
-const navMain = [
-  { to: '/dashboard', label: '仪表盘', icon: LayoutDashboard },
-  { to: '/users', label: '用户', icon: Users },
-  { to: '/nodes', label: '节点', icon: Server },
-  { to: '/groups', label: '服务器组', icon: FolderTree },
-  { to: '/logs', label: '日志分析', icon: ScrollText },
-]
-const navSystem = [{ to: '/settings', label: '设置', icon: Settings }]
+const navBase = computed(() => {
+  const entry = typeof route.params.entry === 'string' ? route.params.entry : ''
+  return entry ? `/admin/${entry}` : '/admin'
+})
+const navMain = computed(() => [
+  { to: navBase.value + '/dashboard', label: '仪表盘', icon: LayoutDashboard },
+  { to: navBase.value + '/users', label: '用户', icon: Users },
+  { to: navBase.value + '/nodes', label: '节点', icon: Server },
+  { to: navBase.value + '/groups', label: '服务器组', icon: FolderTree },
+  { to: navBase.value + '/logs', label: '日志分析', icon: ScrollText },
+])
+const navSystem = computed(() => [{ to: navBase.value + '/settings', label: '设置', icon: Settings }])
 
 const title = computed(() => route.meta.title || 'MikvAce Panel')
 const subtitle = computed(() => {
@@ -114,7 +118,7 @@ async function logout() {
     /* the local session is cleared even if the server is unreachable */
   }
   clearSession()
-  router.push('/login')
+  router.push(navBase.value + '/login')
 }
 watch(() => route.path, () => (mobileOpen.value = false))
 </script>

@@ -157,9 +157,10 @@ var DefaultSettings = map[string]string{
 	"portal_title":                 "用户中心",
 	"portal_note":                  "",
 	"portal_allow_password_change": "true",
-	"portal_allow_device_reset":    "true",
 	"portal_allow_sub_reset":       "false",
 	"portal_session_hours":         "72",
+	"admin_security_enabled":       "false",
+	"admin_security_path":          "",
 }
 
 // EnsureDefaultSettings inserts missing settings.

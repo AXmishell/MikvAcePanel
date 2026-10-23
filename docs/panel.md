@@ -107,6 +107,7 @@ Agent 将代理核心 stdout/stderr 和 Xray access log 批量上报，面板解
 ### 安全
 
 - 修改管理员密码；
+- 管理员安全入口（默认关闭）：开启后管理端登录地址变为 `/admin/<入口路径>/login`，普通 `/admin` 返回 404，管理 API 也会校验 `X-Admin-Entry`；
 - 两步验证（TOTP）：启用、关闭、重新生成恢复码；
 - API Key：创建、作用域、速率限制、过期时间、启停。
 

@@ -60,7 +60,7 @@
             <p>管理员尚未启用自助用户中心。你仍然可以使用已有的订阅链接，或联系管理员获取帮助。</p>
           </div>
           <a v-if="supportUrl" class="btn btn-soft" :href="supportUrl" target="_blank" rel="noopener">联系支持</a>
-          <div class="login-foot"><router-link to="/login">管理员登录 →</router-link></div>
+          <div class="login-foot"><router-link to="/">返回首页</router-link></div>
         </template>
 
         <template v-else>
@@ -88,7 +88,7 @@
           </form>
 
           <div class="login-foot">
-            <router-link to="/login">管理员登录 →</router-link>
+            <router-link to="/">返回首页</router-link>
           </div>
         </template>
       </div>
@@ -141,9 +141,9 @@ async function submit() {
   try {
     const res = await portalApi.login(userId.value.trim(), password.value)
     setPortalSession(res.token, res.user)
-    const target = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/portal')
+    const target = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/user')
       ? route.query.redirect
-      : '/portal'
+      : '/user'
     router.push(target)
   } catch (e) {
     error.value = e.message

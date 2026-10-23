@@ -70,7 +70,7 @@
                   <button class="icon-btn" title="连接信息" @click="openConnections(u)"><Cable :size="15" /></button>
                   <button class="icon-btn" title="复制订阅链接" @click="copySub(u)"><Copy :size="15" /></button>
                   <button class="icon-btn" title="重置订阅链接" @click="resetSub(u)"><RefreshCw :size="15" /></button>
-                  <button class="icon-btn" title="重置设备" @click="resetDevices(u)"><Smartphone :size="15" /></button>
+                  <button class="icon-btn" title="重置设备" @click="openResetDevices(u)"><Smartphone :size="15" /></button>
                   <button class="icon-btn" title="重置流量统计" @click="resetTraffic(u)"><Gauge :size="15" /></button>
                   <button class="icon-btn danger" title="删除" @click="remove(u)"><Trash2 :size="15" /></button>
                 </div>
@@ -108,7 +108,7 @@
         <div class="field">
           <label>控制台登录密码</label>
           <input v-model="form.loginPassword" type="text" :placeholder="editing ? '留空保持当前登录密码' : '留空则与连接密码相同'" />
-          <span class="hint">用于 /portal 用户中心登录，与连接密码相互独立。</span>
+          <span class="hint">用于 /user 用户中心登录，与连接密码相互独立。</span>
         </div>
         <div class="field full">
           <label>订阅 Token</label>
@@ -241,6 +241,33 @@
         <button class="btn btn-danger" @click="confirmDelete">删除用户</button>
       </template>
     </Modal>
+
+    <ConfirmDialog
+      v-model="devicesOpen"
+      eyebrow="Device Access"
+      title="重置设备状态？"
+      :message="`清除 ${devicesTarget?.username || devicesTarget?.userId || '该用户'} 已登记的在线设备 IP 与计数。已建立连接不会立即断开，客户端重连后会重新登记。`"
+      confirm-text="确认重置"
+      busy-text="正在重置设备…"
+      :icon="Smartphone"
+      :busy="devicesBusy"
+      @confirm="confirmResetDevices"
+    >
+      <div class="confirm-stats">
+        <div class="confirm-stat">
+          <span class="confirm-stat-label">在线设备</span>
+          <strong>{{ devicesTarget?.onlineDevices || 0 }} 台</strong>
+        </div>
+        <div class="confirm-stat">
+          <span class="confirm-stat-label">设备上限</span>
+          <strong>{{ devicesTarget?.maxDevices > 0 ? devicesTarget.maxDevices + ' 台' : '不限' }}</strong>
+        </div>
+        <div class="confirm-stat">
+          <span class="confirm-stat-label">用户 ID</span>
+          <strong class="mono">{{ devicesTarget?.userId || '—' }}</strong>
+        </div>
+      </div>
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -251,6 +278,7 @@ import { api } from '../api'
 import { notify } from '../store'
 import CopyField from '../components/CopyField.vue'
 import Modal from '../components/Modal.vue'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
 import Pagination from '../components/Pagination.vue'
 import Select from '../components/Select.vue'
 import {
@@ -282,6 +310,9 @@ const connections = ref(null)
 const connectionsError = ref('')
 const deleteOpen = ref(false)
 const deleteTarget = ref(null)
+const devicesOpen = ref(false)
+const devicesTarget = ref(null)
+const devicesBusy = ref(false)
 
 const connectionStatusLabel = computed(() => ({
   active: '正常', quota: '流量已用完', expired: '已过期', disabled: '已停用',
@@ -447,13 +478,22 @@ async function resetSub(u) {
     notify(e.message, 'error')
   }
 }
-async function resetDevices(u) {
+function openResetDevices(u) {
+  devicesTarget.value = u
+  devicesOpen.value = true
+}
+async function confirmResetDevices() {
+  if (!devicesTarget.value) return
+  devicesBusy.value = true
   try {
-    await api.resetDevices(u.id)
+    await api.resetDevices(devicesTarget.value.id)
+    devicesOpen.value = false
     notify('Device state cleared')
     load()
   } catch (e) {
     notify(e.message, 'error')
+  } finally {
+    devicesBusy.value = false
   }
 }
 async function resetTraffic(u) {

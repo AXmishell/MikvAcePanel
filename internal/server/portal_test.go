@@ -95,10 +95,11 @@ func TestPortalEndToEnd(t *testing.T) {
 		t.Fatal("login with new password failed")
 	}
 
-	// Device reset is enabled by default; subscription reset is opt-in.
-	if r := env.do(t, "POST", "/api/portal/devices/reset", token, nil); r.StatusCode != http.StatusOK {
+	// Device reset is admin-only; the portal must not expose it. Subscription
+	// reset stays opt-in.
+	if r := env.do(t, "POST", "/api/portal/devices/reset", token, nil); r.StatusCode != http.StatusNotFound {
 		r.Body.Close()
-		t.Fatalf("reset devices = %d", r.StatusCode)
+		t.Fatalf("portal device reset should be removed = %d", r.StatusCode)
 	}
 	if r := env.do(t, "POST", "/api/portal/subscription/reset", token, nil); r.StatusCode != http.StatusForbidden {
 		r.Body.Close()

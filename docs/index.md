@@ -91,7 +91,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-访问 `http://服务器IP:8080/` 查看公开首页，管理员进入 `/dashboard` 登录后：
+访问 `http://服务器IP:8080/` 查看公开首页，管理员进入 `/admin` 登录后：
 
 1. 修改默认密码，建议同时启用两步验证；
 2. 在 **节点** 页面添加节点，复制生成的安装命令；

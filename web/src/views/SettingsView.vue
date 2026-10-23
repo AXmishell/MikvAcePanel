@@ -125,7 +125,7 @@
                 <span class="switch"><input v-model="form.portal_enabled" type="checkbox" /></span>
                 启用用户中心
               </label>
-              <span class="hint">关闭后 /portal 登录会被拒绝，已有的订阅链接不受影响。</span>
+              <span class="hint">关闭后 /user 登录会被拒绝，已有的订阅链接不受影响。</span>
             </div>
             <div class="field"><label>页面标题</label><input v-model="form.portal_title" type="text" placeholder="用户中心" /></div>
             <div class="field"><label>登录有效期（小时）</label><input v-model.number="form.portal_session_hours" type="number" min="1" max="720" />
@@ -141,15 +141,14 @@
               <label>用户可自助操作</label>
               <div class="chip-list">
                 <label class="checkbox"><input v-model="form.portal_allow_password_change" type="checkbox" /> 修改密码</label>
-                <label class="checkbox"><input v-model="form.portal_allow_device_reset" type="checkbox" /> 重置设备</label>
                 <label class="checkbox"><input v-model="form.portal_allow_sub_reset" type="checkbox" /> 重置订阅链接</label>
               </div>
-              <span class="hint">重置订阅链接会让旧链接立即失效，建议只在必要时开放。</span>
+              <span class="hint">重置订阅链接会让旧链接立即失效，建议只在必要时开放。重置设备仅限管理员在用户列表中操作。</span>
             </div>
           </div>
         </div>
         <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
-          <button class="btn btn-primary" :disabled="saving" @click="save(['portal_enabled', 'portal_title', 'portal_note', 'portal_session_hours', 'portal_allow_password_change', 'portal_allow_device_reset', 'portal_allow_sub_reset'])">保存用户中心设置</button>
+          <button class="btn btn-primary" :disabled="saving" @click="save(['portal_enabled', 'portal_title', 'portal_note', 'portal_session_hours', 'portal_allow_password_change', 'portal_allow_sub_reset'])">保存用户中心设置</button>
         </div>
       </section>
 
@@ -191,6 +190,46 @@
         </div>
         <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
           <button class="btn btn-primary" :disabled="pwSaving" @click="changePassword">{{ pwSaving ? '更新中…' : '更新密码' }}</button>
+        </div>
+      </section>
+
+      <section v-show="tab === 'security'" class="card section-gap">
+        <div class="card-header">
+          <div>
+            <div class="card-title">管理员安全入口</div>
+            <div class="card-sub">为 /admin 增加一个可选的秘密路径，默认关闭。开启后访问普通 /admin 地址只会得到 404。</div>
+          </div>
+          <div class="spacer"></div>
+          <span class="badge" :class="form.admin_security_enabled ? 'badge-ok' : 'badge-muted'">
+            {{ form.admin_security_enabled ? '已开启' : '已关闭' }}
+          </span>
+        </div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="field full">
+              <label class="checkbox">
+                <span class="switch"><input v-model="form.admin_security_enabled" type="checkbox" /></span>
+                启用管理员安全入口
+              </label>
+              <span class="hint">关闭时管理员入口为 <span class="mono">/admin</span>；开启后必须使用下方完整地址，登录接口也会校验入口。</span>
+            </div>
+            <div class="field full">
+              <label>入口路径</label>
+              <div class="flex" style="gap: 8px; align-items: center">
+                <input v-model.trim="form.admin_security_path" type="text" class="mono" placeholder="例如 mikvace-8f3a2c" style="max-width: 320px" />
+                <button class="btn btn-sm" type="button" @click="generateSecurityPath">随机生成</button>
+              </div>
+              <span class="hint">4–64 位，仅允许字母、数字、短横线和下划线。修改后旧的入口地址立即失效。</span>
+            </div>
+            <div class="field full">
+              <label>完整入口地址</label>
+              <CopyField :value="adminEntryPreview" prefix="入口" />
+              <span class="hint">请妥善保存该地址。忘记时可在服务器上临时关闭安全入口（settings 表的 admin_security_enabled）。</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
+          <button class="btn btn-primary" :disabled="saving" @click="save(['admin_security_enabled', 'admin_security_path'])">保存安全入口设置</button>
         </div>
       </section>
 
@@ -399,9 +438,10 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Download, Plus, Power, Trash2 } from 'lucide-vue-next'
-import { api } from '../api'
+import { api, resetAdminConfig, setAdminEntry } from '../api'
 import { auth, notify } from '../store'
 import CopyField from '../components/CopyField.vue'
 import Modal from '../components/Modal.vue'
@@ -410,6 +450,8 @@ import { copyText, fmtBytes, fmtDate, fmtRelative } from '../format'
 import { setTheme, theme, themeOptions } from '../theme'
 
 const tab = ref('general')
+const route = useRoute()
+const router = useRouter()
 const settings = ref(null)
 const meta = ref({ version: '', platform: '', dataDir: '' })
 const form = reactive({})
@@ -421,6 +463,11 @@ const pw = reactive({ old: '', next: '', confirm: '' })
 
 const subscriptionPreview = ref('')
 const portalPreview = ref('')
+const adminEntryPreview = computed(() => {
+  const pub = (form.public_url || '').replace(/\/+$/, '') || window.location.origin
+  const p = String(form.admin_security_path || '').trim()
+  return p ? `${pub}/admin/${p}` : `${pub}/admin`
+})
 const apiKeys = ref([])
 const scopes = ref([])
 const keyModal = ref(false)
@@ -455,7 +502,7 @@ const DNS_PROVIDER_OPTIONS = [
 // when loading and stringified when saving.
 const BOOL_KEYS = [
   'log_ingest_enabled', 'portal_enabled', 'portal_allow_password_change',
-  'portal_allow_device_reset', 'portal_allow_sub_reset',
+  'portal_allow_sub_reset', 'admin_security_enabled',
 ]
 
 function applySettings(src) {
@@ -466,7 +513,7 @@ function applySettings(src) {
 function syncPreview() {
   const pub = (form.public_url || '').replace(/\/+$/, '')
   subscriptionPreview.value = pub ? `${pub}/api/files/<token>` : '/api/files/<token>'
-  portalPreview.value = pub ? `${pub}/portal` : '/portal'
+  portalPreview.value = pub ? `${pub}/user` : '/user'
 }
 async function loadBackups() {
   try {
@@ -734,7 +781,25 @@ async function load() {
 function onIngestToggle() {
   form.log_ingest_enabled = !!form.log_ingest_enabled
 }
+function generateSecurityPath() {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
+  const bytes = new Uint8Array(16)
+  crypto.getRandomValues(bytes)
+  form.admin_security_path = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('')
+}
 async function save(keys) {
+  const securityChanged = keys.includes('admin_security_enabled') || keys.includes('admin_security_path')
+  const securityPath = String(form.admin_security_path || '').trim()
+  if (securityChanged) {
+    if (form.admin_security_enabled && !/^[A-Za-z0-9_-]{4,64}$/.test(securityPath)) {
+      notify('入口路径需要 4–64 位，仅允许字母、数字、短横线和下划线', 'error')
+      return
+    }
+    if (form.admin_security_enabled && ['admin', 'api', 'assets', 'panel', 'user', 'login', 'logout', 'dashboard', 'users', 'nodes', 'groups', 'logs', 'settings'].includes(securityPath.toLowerCase())) {
+      notify('该入口路径是保留字，请换一个', 'error')
+      return
+    }
+  }
   saving.value = true
   error.value = ''
   saved.value = ''
@@ -750,6 +815,15 @@ async function save(keys) {
     settings.value = res.settings
     applySettings(res.settings)
     syncPreview()
+    if (securityChanged) {
+      const path = String(form.admin_security_path || '').trim()
+      const enabled = !!form.admin_security_enabled
+      setAdminEntry(enabled ? path : '')
+      resetAdminConfig()
+      if (route.path.startsWith('/admin')) {
+        router.replace((enabled && path ? `/admin/${path}` : '/admin') + '/settings')
+      }
+    }
     saved.value = '设置已保存。'
     notify('设置已保存')
     setTimeout(() => (saved.value = ''), 3000)

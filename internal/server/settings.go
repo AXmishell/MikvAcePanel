@@ -2,10 +2,12 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -25,8 +27,9 @@ var editableSettings = map[string]bool{
 	"alert_error_burst_threshold": true,
 	"backup_enabled":              true, "backup_interval_hours": true, "backup_keep": true,
 	"portal_enabled": true, "portal_title": true, "portal_note": true,
-	"portal_allow_password_change": true, "portal_allow_device_reset": true,
-	"portal_allow_sub_reset": true, "portal_session_hours": true,
+	"portal_allow_password_change": true,
+	"portal_allow_sub_reset":       true, "portal_session_hours": true,
+	"admin_security_enabled": true, "admin_security_path": true,
 }
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
@@ -60,6 +63,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
+	current, _ := s.store.GetSettings(r.Context())
 	values := map[string]string{}
 	for key, rv := range raw {
 		if !editableSettings[key] {
@@ -112,6 +116,26 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if v, ok := values["admin_security_path"]; ok {
+		v = strings.TrimSpace(v)
+		if v != "" && !validAdminSecurityPath(v) {
+			writeError(w, http.StatusBadRequest, "security entry must be 4-64 characters using letters, numbers, - or _")
+			return
+		}
+		values["admin_security_path"] = v
+	}
+	securityEnabled := parseBoolSetting(current["admin_security_enabled"], false)
+	securityPath := strings.TrimSpace(current["admin_security_path"])
+	if v, ok := values["admin_security_enabled"]; ok {
+		securityEnabled = parseBoolSetting(v, false)
+	}
+	if v, ok := values["admin_security_path"]; ok {
+		securityPath = v
+	}
+	if securityEnabled && securityPath == "" {
+		writeError(w, http.StatusBadRequest, "a security entry path is required when the entrance is enabled")
+		return
+	}
 	oldURL, _ := s.store.GetSetting(r.Context(), "public_url")
 	if err := s.store.UpdateSettings(r.Context(), values); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -140,4 +164,87 @@ func (s *Server) syncAllNodes(ctx context.Context) (total, pushed int) {
 		}
 	}
 	return len(nodes), pushed
+}
+
+// The administrator security entrance is an optional secret URL segment
+// (for example /admin/a1b2c3d4/login). It is disabled by default. When it is
+// enabled the admin API also requires the X-Admin-Entry header so guessing
+// /admin alone does not expose a usable login endpoint.
+var adminSecurityPathPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{4,64}$`)
+
+var adminSecurityReservedPaths = map[string]bool{
+	"admin": true, "api": true, "assets": true, "panel": true, "user": true,
+	"login": true, "logout": true, "dashboard": true, "users": true,
+	"nodes": true, "groups": true, "logs": true, "settings": true,
+}
+
+func validAdminSecurityPath(p string) bool {
+	return adminSecurityPathPattern.MatchString(p) && !adminSecurityReservedPaths[strings.ToLower(p)]
+}
+
+func (s *Server) adminSecurityEntry(ctx context.Context) (bool, string) {
+	settings, err := s.store.GetSettings(ctx)
+	if err != nil {
+		return false, ""
+	}
+	if !parseBoolSetting(settings["admin_security_enabled"], false) {
+		return false, ""
+	}
+	p := strings.TrimSpace(settings["admin_security_path"])
+	if p == "" {
+		return false, ""
+	}
+	return true, p
+}
+
+func (s *Server) adminEntryAllowed(r *http.Request) bool {
+	enabled, path := s.adminSecurityEntry(r.Context())
+	if !enabled {
+		return true
+	}
+	got := strings.TrimSpace(r.Header.Get("X-Admin-Entry"))
+	return subtle.ConstantTimeCompare([]byte(got), []byte(path)) == 1
+}
+
+func (s *Server) requireAdminEntry(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.adminEntryAllowed(r) {
+			// Return 404 rather than 401 so a scanner cannot tell whether the
+			// path exists behind a different entrance.
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// adminUIPathAllowed decides whether an /admin SPA route may be served. When
+// the entrance is enabled the first path segment must match the configured
+// secret, so /admin and /admin/login also return 404 at the HTTP layer instead
+// of exposing the login shell.
+func (s *Server) adminUIPathAllowed(r *http.Request) bool {
+	enabled, path := s.adminSecurityEntry(r.Context())
+	if !enabled {
+		return true
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/admin/")
+	segment := strings.SplitN(rest, "/", 2)[0]
+	return subtle.ConstantTimeCompare([]byte(segment), []byte(path)) == 1
+}
+
+func (s *Server) serveAdminSPA(w http.ResponseWriter, r *http.Request) {
+	if !s.adminUIPathAllowed(r) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	s.serveSPA(w, r)
+}
+
+func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
+	enabled, _ := s.adminSecurityEntry(r.Context())
+	settings, _ := s.store.GetSettings(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{
+		"securityEntryEnabled": enabled,
+		"panelName":            firstNonEmpty(settings["panel_name"], "MikvAce Panel"),
+	})
 }

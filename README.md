@@ -27,7 +27,7 @@ mkdocs build --strict # 输出 site/
 - **双核心节点**：同一节点可同时运行 Hysteria 2（QUIC/UDP）与 Xray（TCP），也可只运行其中一个。
 - **Xray 多协议入站**：VLESS / VMess / Trojan / Shadowsocks；TCP / WebSocket / gRPC / XHTTP / mKCP；REALITY / TLS / 无加密；管理员可在新建节点时按协议开关启用，一个节点可配置多个入站。
 - **订阅分发**：Clash/Mihomo YAML、sing-box JSON、Shadowrocket Base64、原始 URI 列表、Xray JSON；支持 HAPP 路由头与 providerid。
-- **终端用户中心**：用户使用 ID + 登录密码进入 `/portal`，查看订阅、流量、到期与设备；登录密码与连接密码相互独立，均可由用户或管理员修改；管理端可直接指定订阅 Token。
+- **终端用户中心**：用户使用 ID + 登录密码进入 `/user`，查看订阅、流量、到期与设备；登录密码与连接密码相互独立，均可由用户或管理员修改；管理端可直接指定订阅 Token。管理员控制台位于 `/admin`，与用户入口完全分离。
 - **Hysteria 2 认证**：节点把客户端认证请求转发到 `POST /api/auth`，支持启用/禁用、到期、流量限额、设备数限制（按唯一 IP + 宽限期）。
 - **节点管理**：面板生成 Hysteria / Xray 服务端配置，通过 WebSocket 实时下发；支持版本、运行状态、配置 revision、错误回报、启动/停止/重启。
 - **证书统一签发**：面板通过 ACME DNS-01 申请证书，Agent 提交 CSR、安装证书链（私钥不出节点）；节点自签 ACME 只使用 TLS-ALPN，不再占用 80 端口。
@@ -99,14 +99,14 @@ cp .env.example .env       # 可选：修改端口/初始密码/公开地址
 docker compose up -d --build
 ```
 
-打开 `http://服务器IP:8080/` 查看公开首页；管理员进入 `/dashboard` 登录控制台（旧地址 `/panel` 会自动跳转到 `/dashboard`）。终端用户入口是 `/portal`。
+打开 `http://服务器IP:8080/` 查看公开首页；管理员进入 `/admin` 登录控制台（旧地址 `/panel` 会自动跳转到 `/admin/dashboard`）。终端用户入口是 `/user`。首页不会暴露管理员入口链接。
 
 管理员账号来自 `.env`：
 
 - 用户名：`ADMIN_USERNAME`（示例 `admin`）
 - 密码：`ADMIN_PASSWORD`。未设置时会自动生成一个随机密码，并在首次启动的容器日志中打印一次。
 
-首次登录后请到 **Settings → Security** 修改密码。
+首次登录后请到 **Settings → Security** 修改密码。同一页面还可以开启 **管理员安全入口**（默认关闭）：开启后 `/admin` 不再可用，必须使用 `/admin/<入口路径>/login` 访问，管理 API 也会校验该入口。
 
 生产环境建议：
 
@@ -140,12 +140,11 @@ docker compose --profile redis up -d --build
 
 ### 预构建镜像（GHCR）
 
-推送到 `main` 或打 `v*.*.*` 标签时，GitHub Actions 会自动构建并发布面板与节点镜像到 GHCR，支持 `linux/amd64` 和 `linux/arm64`（工作流见 `.github/workflows/docker.yml`）。
+推送到 `main` 或打 `v*.*.*` 标签时，GitHub Actions 会自动构建并发布面板与节点镜像到 GHCR，支持 `linux/amd64` 和 `linux/arm64`（工作流见 `.github/workflows/docker.yml`）。面板镜像在构建时先编译 Vue 前端，再把 `web/dist` 嵌入 Go 二进制，因此默认只需要一个容器，不存在单独的 API 镜像。
 
 ```bash
-docker pull ghcr.io/axmishell/mikvacepanel:latest        # 面板
+docker pull ghcr.io/axmishell/mikvacepanel:latest      # 面板（内嵌前端）
 docker pull ghcr.io/axmishell/mikvacepanel-node:main   # 节点 Agent
-docker pull ghcr.io/axmishell/mikvacepanel-api:main    # 纯 API（CDN 分离部署）
 ```
 
 标签规则：`main` 分支发布 `main`、`sha-<commit>`；`v1.2.3` 标签发布 `1.2.3`、`1.2`、`latest`、`sha-<commit>`。
@@ -158,7 +157,7 @@ go run ./cmd/server -addr :8080 -data ./data
 
 # 终端 2：前端（Vite，自动代理 /api 到 8080）
 cd web && npm install && npm run dev
-# 打开 http://localhost:5173/dashboard
+# 打开 http://localhost:5173/admin/login
 ```
 
 构建单二进制：
@@ -168,9 +167,9 @@ make build          # 先构建前端，再编译 server/node/client 到 bin/
 ./bin/mikvace-server -addr :8080 -data ./data
 ```
 
-### 前后端分离 / CDN 部署
+### 前后端分离 / CDN 部署（可选）
 
-面板默认继续使用单二进制内嵌前端。需要把前端放到 CDN 或独立域名时，使用下面的模式。
+默认发行方式是单二进制内嵌前端，**不需要也不建议**单独部署前端。只有确实要把 SPA 放到 CDN 或独立域名时才使用下面的可选模式；该模式不会随 GHCR 自动发布镜像。
 
 **1. 构建前端**
 
@@ -192,9 +191,9 @@ VITE_BASE_PATH=/panel/
 VITE_API_BASE_URL=https://api.example.com/api
 ```
 
-> 面板默认使用根路径（`/login`、`/dashboard` 等）。访问旧的 `/panel` 会被 302 到 `/dashboard`，因此升级后无需修改已收藏的链接。
+> 面板默认使用根路径（`/admin/login`、`/admin/dashboard`、`/user` 等）。访问旧的 `/panel` 会被 302 到 `/admin/dashboard`，因此升级后无需修改已收藏的链接。
 
-**2. 启动纯 API 服务**
+**2. 启动纯 API 服务（可选）**
 
 ```bash
 SERVE_WEB=false \
@@ -205,7 +204,7 @@ PANEL_PUBLIC_URL=https://api.example.com \
 ./bin/mikvace-server-api -addr 127.0.0.1:8080 -data /data
 ```
 
-也可以使用 API-only 镜像：
+如需自行构建 API-only 镜像（非默认发布物）：
 
 ```bash
 docker build -f Dockerfile.api -t mikvacepanel/api:latest .
@@ -223,7 +222,7 @@ API 域名的 Nginx 示例见 [`deploy/nginx-api.conf`](deploy/nginx-api.conf)�
 
 | 变量 | 说明 |
 |------|------|
-| `SERVE_WEB` | `true` 时由 Go 提供内嵌前端（`/login`、`/dashboard` 等）；CDN 部署设为 `false` |
+| `SERVE_WEB` | `true` 时由 Go 提供内嵌前端（`/admin`、`/user` 等）；CDN 部署设为 `false` |
 | `FRONTEND_URL` | 前端公网地址，`SERVE_WEB=false` 时根路径跳转使用 |
 | `CORS_ORIGINS` | 允许跨域访问 API 的前端 Origin，必须精确匹配 |
 | `TRUSTED_PROXIES` | 反向代理 IP/CIDR，用于正确获取客户端 IP 和登录限流 |
