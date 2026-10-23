@@ -126,7 +126,7 @@
           </select>
           <span class="hint">面板签发使用 DNS-01，证书由面板申请后通过 WebSocket 下发；Xray 的 TLS 入站也使用该证书，REALITY 不需要证书。</span>
         </div>
-        <div v-if="hasHysteria" class="field"><label>ACME 邮箱</label><input v-model="form.acmeEmail" type="email" placeholder="admin@example.com" /></div>
+        <div v-if="hasHysteria && form.tlsMode === 'acme'" class="field"><label>ACME 邮箱</label><input v-model="form.acmeEmail" type="email" placeholder="admin@example.com" /></div>
         <div v-if="form.tlsMode === 'managed'" class="field full">
           <div class="banner banner-info" style="margin: 0 0 8px">
             证书由面板统一申请并下发。保存节点后，Agent 会自动生成密钥并发起 CSR。
