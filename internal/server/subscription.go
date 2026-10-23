@@ -187,22 +187,31 @@ func (s *Server) renderSubPage(w http.ResponseWriter, r *http.Request, user *mod
 	subscription.SortNodes(nodes)
 	base := publicBaseURL(r, settings["public_url"])
 	subURL := base + "/api/files/" + user.SubscriptionToken
+	used := user.TrafficUsed()
+	usedPercent := 0
+	if user.TrafficLimit > 0 {
+		usedPercent = int(used * 100 / user.TrafficLimit)
+		if usedPercent > 100 {
+			usedPercent = 100
+		}
+	}
 	data := subPageData{
-		Title:      firstNonEmpty(settings["page_title"], "Connection"),
-		PageNote:   firstNonEmpty(settings["page_note"], "Your personal subscription"),
-		LogoURL:    settings["logo_url"],
-		SupportURL: settings["support_url"],
-		SubURL:     subURL,
-		Username:   firstNonEmpty(user.Username, user.UserID),
-		PanelName:  firstNonEmpty(settings["panel_name"], "MikvAce Panel"),
-		UsedLabel:  formatBytes(user.TrafficUsed()),
-		LimitLabel: formatBytes(user.TrafficLimit),
-		Unlimited:  user.TrafficLimit <= 0,
-		ClashURL:   subURL + "?format=clash",
-		SingboxURL: subURL + "?format=singbox",
-		URIURL:     subURL + "?format=uri",
-		QRData:     s.qrDataURI(r.Context(), subURL),
-		Year:       time.Now().Year(),
+		Title:       firstNonEmpty(settings["page_title"], "Connection"),
+		PageNote:    firstNonEmpty(settings["page_note"], "Your personal subscription"),
+		LogoURL:     settings["logo_url"],
+		SupportURL:  settings["support_url"],
+		SubURL:      subURL,
+		Username:    firstNonEmpty(user.Username, user.UserID),
+		PanelName:   firstNonEmpty(settings["panel_name"], "MikvAce Panel"),
+		UsedLabel:   formatBytes(used),
+		LimitLabel:  formatBytes(user.TrafficLimit),
+		UsedPercent: usedPercent,
+		Unlimited:   user.TrafficLimit <= 0,
+		ClashURL:    subURL + "?format=clash",
+		SingboxURL:  subURL + "?format=singbox",
+		URIURL:      subURL + "?format=uri",
+		QRData:      template.URL(s.qrDataURI(r.Context(), subURL)),
+		Year:        time.Now().Year(),
 	}
 	if user.ExpireAt != nil {
 		data.ExpireLabel = user.ExpireAt.Local().Format("2006-01-02")
@@ -252,9 +261,12 @@ func (s *Server) renderSubPage(w http.ResponseWriter, r *http.Request, user *mod
 }
 
 func (s *Server) renderSubPageError(w http.ResponseWriter, r *http.Request, user *model.User, reason string) {
+	settings, _ := s.store.GetSettings(r.Context())
 	data := subPageData{
 		Title: "订阅不可用", PageNote: reason, Username: user.UserID,
-		Error: reason, Year: time.Now().Year(),
+		PanelName:  firstNonEmpty(settings["panel_name"], "MikvAce Panel"),
+		SupportURL: settings["support_url"],
+		Error:      reason, Year: time.Now().Year(),
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -410,12 +422,13 @@ type subPageData struct {
 	PanelName   string
 	UsedLabel   string
 	LimitLabel  string
+	UsedPercent int
 	Unlimited   bool
 	ExpireLabel string
 	ClashURL    string
 	SingboxURL  string
 	URIURL      string
-	QRData      string
+	QRData      template.URL
 	Locations   []subLocation
 	Buttons     []subButton
 	Error       string
