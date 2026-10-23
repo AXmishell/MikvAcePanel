@@ -8,12 +8,7 @@
       <div class="spacer"></div>
       <div class="flex">
         <input v-model="q" type="search" placeholder="搜索用户、ID 或订阅令牌…" @input="onSearch" />
-        <select v-model="status" style="width: 130px" @change="reload">
-          <option value="">全部状态</option>
-          <option value="active">正常</option>
-          <option value="disabled">已禁用</option>
-          <option value="expired">已过期</option>
-        </select>
+        <Select v-model="status" :options="STATUS_OPTIONS" size="sm" style="width: 130px" @change="reload" />
         <button class="btn btn-primary" @click="openCreate"><Plus :size="15" /> 新建用户</button>
       </div>
     </div>
@@ -72,6 +67,7 @@
                   <button class="icon-btn" :title="u.enabled ? '禁用' : '启用'" @click="toggle(u)">
                     <Power :size="15" />
                   </button>
+                  <button class="icon-btn" title="连接信息" @click="openConnections(u)"><Cable :size="15" /></button>
                   <button class="icon-btn" title="复制订阅链接" @click="copySub(u)"><Copy :size="15" /></button>
                   <button class="icon-btn" title="重置订阅链接" @click="resetSub(u)"><RefreshCw :size="15" /></button>
                   <button class="icon-btn" title="重置设备" @click="resetDevices(u)"><Smartphone :size="15" /></button>
@@ -105,8 +101,19 @@
           <input v-model="form.username" type="text" placeholder="Alice" />
         </div>
         <div class="field">
-          <label>{{ editing ? '新密码' : '密码' }}</label>
-          <input v-model="form.password" type="text" :placeholder="editing ? '留空则保持当前密码' : '留空则自动生成'" />
+          <label>连接密码</label>
+          <input v-model="form.password" type="text" :placeholder="editing ? '留空保持当前连接密码' : '留空自动生成'" />
+          <span class="hint">用于 Hysteria 认证和订阅 URI；修改后客户端需同步更新。</span>
+        </div>
+        <div class="field">
+          <label>控制台登录密码</label>
+          <input v-model="form.loginPassword" type="text" :placeholder="editing ? '留空保持当前登录密码' : '留空则与连接密码相同'" />
+          <span class="hint">用于 /portal 用户中心登录，与连接密码相互独立。</span>
+        </div>
+        <div class="field full">
+          <label>订阅 Token</label>
+          <input v-model="form.subscriptionToken" type="text" :placeholder="editing ? '' : '留空自动生成'" />
+          <span class="hint">订阅 URL 中的 /api/files/&lt;token&gt;；修改后旧链接立即失效。</span>
         </div>
         <div class="field">
           <label>流量上限 (GB)</label>
@@ -157,12 +164,73 @@
       <div class="banner banner-info">请立即保存密码，每次重置只显示一次。</div>
       <dl class="kv">
         <dt>用户 ID</dt><dd class="mono">{{ credential.userId }}</dd>
-        <dt>密码</dt><dd class="mono">{{ credential.password || '(unchanged)' }}</dd>
+        <dt>连接密码</dt><dd class="mono">{{ credential.password || '(未变更)' }}</dd>
+        <dt>登录密码</dt><dd class="mono">{{ credential.loginPassword || '(未变更)' }}</dd>
         <dt>订阅</dt><dd class="mono" style="font-size: 11px">{{ credential.subscriptionUrl }}</dd>
       </dl>
       <template #footer>
         <button class="btn" @click="credentialOpen = false">关闭</button>
         <button class="btn btn-primary" @click="copyCredential"><Copy :size="14" /> 复制</button>
+      </template>
+    </Modal>
+
+    <Modal v-model="connectionsOpen" title="用户连接信息" size="lg">
+      <div v-if="connectionsError" class="banner banner-danger">{{ connectionsError }}</div>
+      <div v-if="connections" class="stack">
+        <div class="flex" style="flex-wrap: wrap">
+          <div class="avatar-sm">{{ (connections.user.username || connections.user.userId).slice(0, 1).toUpperCase() }}</div>
+          <div>
+            <div style="font-weight: 650">{{ connections.user.username }}</div>
+            <div class="mono dim small">{{ connections.user.userId }}</div>
+          </div>
+          <span class="spacer"></span>
+          <span class="badge" :class="connectionStatusClass">{{ connectionStatusLabel }}</span>
+          <span class="dim small">{{ connections.nodes.length }} 个节点</span>
+        </div>
+
+        <div class="field">
+          <label>订阅地址</label>
+          <CopyField :value="connections.subscription.url" prefix="订阅" />
+        </div>
+
+        <div class="flex" style="gap: 7px; flex-wrap: wrap">
+          <a class="chip" :href="connections.subscription.clashUrl" target="_blank" rel="noopener">Clash / Mihomo</a>
+          <a class="chip" :href="connections.subscription.singboxUrl" target="_blank" rel="noopener">sing-box</a>
+          <a class="chip" :href="connections.subscription.uriUrl" target="_blank" rel="noopener">URI list</a>
+        </div>
+
+        <div v-if="connections.subscription.qr" class="conn-qr">
+          <img :src="connections.subscription.qr" alt="订阅二维码" />
+        </div>
+
+        <div class="divider"></div>
+
+        <div v-if="connections.nodes.length" class="conn-nodes">
+          <article v-for="n in connections.nodes" :key="n.id" class="conn-node">
+            <div class="flex">
+              <span style="font-size: 17px">{{ n.flag || '🌐' }}</span>
+              <strong style="font-size: 12.5px">{{ n.name }}</strong>
+              <span class="badge" :class="n.online ? 'badge-ok' : 'badge-muted'">
+                <span class="dot" :class="n.online ? 'online' : 'offline'"></span>{{ n.online ? '在线' : '离线' }}
+              </span>
+              <span class="spacer"></span>
+              <span class="dim small">{{ (n.cores || []).join(' + ') }}</span>
+            </div>
+            <div v-if="n.configs.length" class="conn-configs">
+              <div v-for="c in n.configs" :key="c.name" class="conn-cfg">
+                <span class="mono">{{ c.name }}</span>
+                <button class="conn-copy" @click="copyConn(c.uri)">复制链接</button>
+              </div>
+            </div>
+            <div v-else class="dim small" style="padding-top: 8px">暂无可用配置</div>
+          </article>
+        </div>
+        <div v-else class="empty">该用户当前没有可用节点。</div>
+      </div>
+      <div v-else class="empty">正在加载连接信息…</div>
+      <template #footer>
+        <button class="btn" @click="connectionsOpen = false">关闭</button>
+        <button v-if="connections" class="btn btn-primary" @click="copyConn(connections.subscription.url)"><Copy :size="14" /> 复制订阅</button>
       </template>
     </Modal>
 
@@ -178,11 +246,13 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Copy, Gauge, Pencil, Plus, Power, RefreshCw, Smartphone, Trash2, Users } from 'lucide-vue-next'
+import { Cable, Copy, Gauge, Pencil, Plus, Power, RefreshCw, Smartphone, Trash2, Users } from 'lucide-vue-next'
 import { api } from '../api'
 import { notify } from '../store'
+import CopyField from '../components/CopyField.vue'
 import Modal from '../components/Modal.vue'
 import Pagination from '../components/Pagination.vue'
+import Select from '../components/Select.vue'
 import {
   bytesToGb, copyText, fmtBytes, fmtDate, fmtRelative, gbToBytes, pct, ratioClass,
 } from '../format'
@@ -206,14 +276,31 @@ const formError = ref('')
 const form = reactive(emptyForm())
 
 const credentialOpen = ref(false)
-const credential = reactive({ userId: '', password: '', subscriptionUrl: '' })
+const credential = reactive({ userId: '', password: '', loginPassword: '', subscriptionUrl: '' })
+const connectionsOpen = ref(false)
+const connections = ref(null)
+const connectionsError = ref('')
 const deleteOpen = ref(false)
 const deleteTarget = ref(null)
 
+const connectionStatusLabel = computed(() => ({
+  active: '正常', quota: '流量已用完', expired: '已过期', disabled: '已停用',
+}[connections.value?.user?.status] || '未知'))
+const connectionStatusClass = computed(() => ({
+  active: 'badge-ok', quota: 'badge-warn', expired: 'badge-danger', disabled: 'badge-danger',
+}[connections.value?.user?.status] || 'badge-muted'))
+
 const onlineCount = computed(() => users.value.filter((u) => u.online).length)
 
+const STATUS_OPTIONS = [
+  { value: '', label: '全部状态' },
+  { value: 'active', label: '正常' },
+  { value: 'disabled', label: '已禁用' },
+  { value: 'expired', label: '已过期' },
+]
+
 function emptyForm() {
-  return { userId: '', username: '', password: '', enabled: true, trafficGb: 0, maxDevices: 0, expireAt: '', groupIds: [], nodeIds: [] }
+  return { userId: '', username: '', password: '', loginPassword: '', subscriptionToken: '', enabled: true, trafficGb: 0, maxDevices: 0, expireAt: '', groupIds: [], nodeIds: [] }
 }
 function resetForm() {
   Object.assign(form, emptyForm())
@@ -265,7 +352,8 @@ function openCreate() {
 function openEdit(u) {
   editing.value = u
   Object.assign(form, {
-    userId: u.userId, username: u.username || '', password: '', enabled: u.enabled,
+    userId: u.userId, username: u.username || '', password: '', loginPassword: '',
+    subscriptionToken: u.subscriptionToken || '', enabled: u.enabled,
     trafficGb: bytesToGb(u.trafficLimit), maxDevices: u.maxDevices || 0,
     expireAt: u.expireAt ? toLocalInput(u.expireAt) : '',
     groupIds: (u.groups || []).map((g) => g.id), nodeIds: [...(u.nodeIds || [])],
@@ -290,14 +378,17 @@ async function save() {
       groupIds: form.groupIds, nodeIds: form.nodeIds,
     }
     if (form.password) payload.password = form.password
+    if (form.loginPassword) payload.loginPassword = form.loginPassword
+    if (form.subscriptionToken.trim()) payload.subscriptionToken = form.subscriptionToken.trim()
     let res
     if (editing.value) res = await api.updateUser(editing.value.id, payload)
     else res = await api.createUser(payload)
     modalOpen.value = false
     notify(editing.value ? '用户已更新' : '用户已创建')
-    if (res.password || !editing.value) {
+    if (res.password || res.loginPassword || !editing.value) {
       credential.userId = res.userId
       credential.password = res.password || ''
+      credential.loginPassword = res.loginPassword || ''
       credential.subscriptionUrl = res.subscriptionUrl
       credentialOpen.value = true
     }
@@ -318,6 +409,19 @@ async function toggle(u) {
   } catch (e) {
     notify(e.message, 'error')
   }
+}
+function openConnections(u) {
+  connectionsOpen.value = true
+  connections.value = null
+  connectionsError.value = ''
+  api.userConnections(u.id)
+    .then((res) => { connections.value = res })
+    .catch((e) => { connectionsError.value = e.message })
+}
+async function copyConn(text) {
+  if (!text) return
+  await copyText(text)
+  notify('已复制到剪贴板')
 }
 async function copySub(u) {
   let url = u.subscriptionUrl
@@ -377,7 +481,7 @@ async function confirmDelete() {
   }
 }
 async function copyCredential() {
-  await copyText(`用户 ID: ${credential.userId}\n密码: ${credential.password}\n订阅: ${credential.subscriptionUrl}`)
+  await copyText(`用户 ID: ${credential.userId}\n连接密码: ${credential.password}\n登录密码: ${credential.loginPassword}\n订阅: ${credential.subscriptionUrl}`)
   notify('Credentials copied')
 }
 
@@ -386,4 +490,14 @@ onMounted(() => { loadMeta(); load() })
 
 <style scoped>
 .avatar-sm { width: 30px; height: 30px; border-radius: 7px; flex: none; display: grid; place-items: center; font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--on-accent); background: var(--accent); }
+.stack { display: flex; flex-direction: column; gap: 14px; }
+.conn-qr { display: flex; justify-content: center; padding: 2px 0; }
+.conn-qr img { width: 150px; height: auto; aspect-ratio: 1; border-radius: 8px; background: #fff; padding: 7px; border: 1px solid var(--line); }
+.conn-nodes { display: flex; flex-direction: column; gap: 10px; }
+.conn-node { border: 1px solid var(--line-soft); border-radius: 10px; background: var(--panel-2); padding: 12px; }
+.conn-configs { margin-top: 9px; border-top: 1px solid var(--line-soft); }
+.conn-cfg { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line-soft); font-size: 11.5px; color: var(--muted); }
+.conn-cfg:first-child { border-top: 0; }
+.conn-copy { border: 0; background: none; color: var(--accent); font-size: 10.5px; padding: 2px 0; white-space: nowrap; }
+.conn-copy:hover { color: var(--accent-hover); }
 </style>

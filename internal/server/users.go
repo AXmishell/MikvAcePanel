@@ -9,26 +9,31 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/axmishell/mikvacepanel/internal/model"
 	"github.com/axmishell/mikvacepanel/internal/store"
 )
 
 var userIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{2,64}$`)
+var subscriptionTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{6,128}$`)
 
 type userPayload struct {
-	UserID       string     `json:"userId"`
-	XrayUUID     string     `json:"xrayUuid"`
-	Username     string     `json:"username"`
-	Password     string     `json:"password"`
-	Enabled      *bool      `json:"enabled"`
-	TrafficLimit int64      `json:"trafficLimit"`
-	TrafficGB    float64    `json:"trafficLimitGb"`
-	MaxDevices   int        `json:"maxDevices"`
-	ExpireAt     *time.Time `json:"expireAt"`
-	GroupIDs     []int64    `json:"groupIds"`
-	Groups       []int64    `json:"groups"`
-	NodeIDs      []int64    `json:"nodeIds"`
-	Nodes        []int64    `json:"nodes"`
+	UserID            string     `json:"userId"`
+	XrayUUID          string     `json:"xrayUuid"`
+	Username          string     `json:"username"`
+	Password          string     `json:"password"`
+	LoginPassword     string     `json:"loginPassword"`
+	SubscriptionToken string     `json:"subscriptionToken"`
+	Enabled           *bool      `json:"enabled"`
+	TrafficLimit      int64      `json:"trafficLimit"`
+	TrafficGB         float64    `json:"trafficLimitGb"`
+	MaxDevices        int        `json:"maxDevices"`
+	ExpireAt          *time.Time `json:"expireAt"`
+	GroupIDs          []int64    `json:"groupIds"`
+	Groups            []int64    `json:"groups"`
+	NodeIDs           []int64    `json:"nodeIds"`
+	Nodes             []int64    `json:"nodes"`
 }
 
 func (p *userPayload) groups() []int64 {
@@ -111,6 +116,45 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.decorateUser(u))
 }
 
+// handleUserConnections is the administrator-facing connection viewer. It
+// returns the same subscription links, nodes and endpoints that the user
+// portal shows, without requiring the user's password.
+func (s *Server) handleUserConnections(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	u, err := s.store.GetUserByID(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err, "user")
+		return
+	}
+	settings, _ := s.store.GetSettings(r.Context())
+	status, reason := portalStatus(u, time.Now().UTC())
+	used := u.TrafficUsed()
+	percent := 0
+	if u.TrafficLimit > 0 {
+		percent = int(used * 100 / u.TrafficLimit)
+		if percent > 100 {
+			percent = 100
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user": map[string]any{
+			"id": u.ID, "userId": u.UserID, "username": firstNonEmpty(u.Username, u.UserID),
+			"enabled": u.Enabled, "status": status, "statusReason": reason,
+			"expireAt": u.ExpireAt, "lastSeenAt": u.LastSeenAt,
+		},
+		"traffic": map[string]any{
+			"used": used, "tx": u.TrafficTx, "rx": u.TrafficRx,
+			"limit": u.TrafficLimit, "percent": percent, "unlimited": u.TrafficLimit <= 0,
+		},
+		"subscription": s.userSubscriptionLinks(r, u, settings),
+		"nodes":        s.userNodeConnections(r, u),
+	})
+}
+
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var p userPayload
 	if err := decodeJSON(r, &p); err != nil {
@@ -133,6 +177,24 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "password must be at least 6 characters")
 		return
 	}
+	loginPassword := p.LoginPassword
+	if loginPassword == "" {
+		loginPassword = password
+	}
+	if len(loginPassword) < 6 {
+		writeError(w, http.StatusBadRequest, "loginPassword must be at least 6 characters")
+		return
+	}
+	loginHash, err := bcrypt.GenerateFromPassword([]byte(loginPassword), bcrypt.DefaultCost)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not hash login password")
+		return
+	}
+	subToken := strings.TrimSpace(p.SubscriptionToken)
+	if subToken != "" && !subscriptionTokenPattern.MatchString(subToken) {
+		writeError(w, http.StatusBadRequest, "subscriptionToken must be 6-128 characters (letters, digits, underscore, dash)")
+		return
+	}
 	enabled := true
 	if p.Enabled != nil {
 		enabled = *p.Enabled
@@ -142,7 +204,8 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		uuid = store.RandomUUID()
 	}
 	u := &model.User{
-		UserID: userID, Username: strings.TrimSpace(p.Username), Password: password, XrayUUID: uuid,
+		UserID: userID, Username: strings.TrimSpace(p.Username), Password: password,
+		LoginPasswordHash: string(loginHash), SubscriptionToken: subToken, XrayUUID: uuid,
 		Enabled: enabled, TrafficLimit: p.limitBytes(), MaxDevices: p.MaxDevices, ExpireAt: p.ExpireAt,
 	}
 	created, err := s.store.CreateUser(r.Context(), u, p.groups(), p.nodes())
@@ -154,6 +217,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	s.syncXrayNodes(r.Context())
 	resp := s.decorateUser(created)
 	resp["password"] = password
+	resp["loginPassword"] = loginPassword
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -191,6 +255,29 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		existing.Password = p.Password
 	}
+	if p.LoginPassword != "" {
+		if len(p.LoginPassword) < 6 {
+			writeError(w, http.StatusBadRequest, "loginPassword must be at least 6 characters")
+			return
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(p.LoginPassword), bcrypt.DefaultCost)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not hash login password")
+			return
+		}
+		existing.LoginPasswordHash = string(hash)
+	}
+	newToken := strings.TrimSpace(p.SubscriptionToken)
+	if newToken != "" && newToken != existing.SubscriptionToken {
+		if !subscriptionTokenPattern.MatchString(newToken) {
+			writeError(w, http.StatusBadRequest, "subscriptionToken must be 6-128 characters (letters, digits, underscore, dash)")
+			return
+		}
+		if other, err := s.store.GetUserByToken(r.Context(), newToken); err == nil && other.ID != existing.ID {
+			writeError(w, http.StatusConflict, "subscription token already in use")
+			return
+		}
+	}
 	if p.Enabled != nil {
 		existing.Enabled = *p.Enabled
 	}
@@ -207,9 +294,23 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err, "update user")
 		return
 	}
+	if newToken != "" && newToken != updated.SubscriptionToken {
+		if err := s.store.SetUserSubscriptionToken(r.Context(), updated.ID, newToken); err != nil {
+			writeStoreError(w, err, "update subscription token")
+			return
+		}
+		updated.SubscriptionToken = newToken
+	}
 	s.store.AddEvent(r.Context(), "user.updated", 0, "info", "用户 "+updated.UserID+" 已更新")
 	s.syncXrayNodes(r.Context())
-	writeJSON(w, http.StatusOK, s.decorateUser(updated))
+	resp := s.decorateUser(updated)
+	if p.Password != "" {
+		resp["password"] = p.Password
+	}
+	if p.LoginPassword != "" {
+		resp["loginPassword"] = p.LoginPassword
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
@@ -287,8 +388,10 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 	}
 	var req struct {
 		Password string `json:"password"`
+		Kind     string `json:"kind"`
 	}
 	_ = decodeJSON(r, &req)
+	kind := strings.ToLower(strings.TrimSpace(req.Kind))
 	password := req.Password
 	if password == "" {
 		password = store.RandomToken(10)
@@ -297,10 +400,24 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "password must be at least 6 characters")
 		return
 	}
+	if kind == "login" {
+		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not hash login password")
+			return
+		}
+		if err := s.store.SetUserLoginPasswordHash(r.Context(), id, string(hash)); err != nil {
+			writeStoreError(w, err, "user")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"loginPassword": password})
+		return
+	}
 	if err := s.store.ResetUserPassword(r.Context(), id, password); err != nil {
 		writeStoreError(w, err, "user")
 		return
 	}
+	s.syncXrayNodes(r.Context())
 	writeJSON(w, http.StatusOK, map[string]string{"password": password})
 }
 

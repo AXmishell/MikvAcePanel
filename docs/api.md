@@ -147,6 +147,25 @@ HAPP/Incy 请求还会把 routing 指令前置到 URI 订阅正文。
 
 ---
 
+## 用户中心
+
+终端用户自助接口，完整说明见 [用户中心](user-portal.md)。
+
+| Method | Path | 认证 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/api/portal/config` | 无 | 是否启用及页面品牌信息 |
+| POST | `/api/portal/login` | 无 | `{ "userId": "...", "password": "..." }` |
+| POST | `/api/portal/logout` | Portal JWT | 注销会话 |
+| GET | `/api/portal/me` | Portal JWT | 账号、流量、设备、订阅与节点 |
+| POST | `/api/portal/password` | Portal JWT | `{ "oldPassword": "...", "newPassword": "..." }`，修改登录密码 |
+| POST | `/api/portal/connection-password` | Portal JWT | `{ "currentPassword": "...", "newPassword": "..." }`，修改连接密码 |
+| POST | `/api/portal/devices/reset` | Portal JWT | 清除设备计数 |
+| POST | `/api/portal/subscription/reset` | Portal JWT | 重置订阅 Token（需管理员开放） |
+
+Portal JWT 带有 `purpose=portal`，不能访问管理接口；管理员 JWT 也不能访问 `/api/portal/*`。
+
+---
+
 ## 管理接口
 
 ### 会话
@@ -167,6 +186,7 @@ HAPP/Incy 请求还会把 routing 指令前置到 URI 订阅正文。
 | --- | --- | --- |
 | GET | `/api/users?q=&status=&page=&pageSize=` | 列表，`status` 可为 `active/disabled/expired` |
 | GET | `/api/users/:id` | 详情 |
+| GET | `/api/users/:id/connections` | 该用户的订阅、节点与连接 URI（管理端查看） |
 | POST | `/api/users` | 创建 |
 | PUT | `/api/users/:id` | 更新 |
 | DELETE | `/api/users/:id` | 删除 |
@@ -195,7 +215,9 @@ HAPP/Incy 请求还会把 routing 指令前置到 URI 订阅正文。
 ```
 
 - `trafficLimit` 单位为字节，`trafficLimitGb` 为 GB 便捷字段；两者同时存在时以字节字段优先。
-- 创建时密码为空会自动生成；响应顶层包含一次性的 `password`。
+- 创建时密码为空会自动生成；响应顶层包含一次性的 `password`（连接密码）和 `loginPassword`（控制台登录密码）。
+- 用户密码分为 `password`（连接密码）与 `loginPassword`（登录密码）；更新时留空表示保持不变。
+- `subscriptionToken` 可由管理员指定，6–128 位字母、数字、下划线或短横线；修改后旧订阅链接立即失效。
 - 响应包含 `trafficUsed`、`online`、`onlineDevices`、`subscriptionUrl` 等派生字段。
 
 ### 分组
@@ -235,7 +257,31 @@ HAPP/Incy 请求还会把 routing 指令前置到 URI 订阅正文。
 | GET/PUT | `/api/cert/settings` | ACME CA、邮箱、DNS 服务商与凭据 |
 | POST | `/api/sync` | 同步所有节点 |
 
-节点请求字段见 [node-agent.md](node-agent.md)。
+节点请求字段见 [node-agent.md](node-agent.md)。其中 `runtimeMode` 可选 `process`（默认）或 `docker`，会影响 `/install` 返回的 `installCommand`、`installScript` 与 `compose`；Agent 实际回报的运行方式在只读字段 `runtime` 中。
+
+Hysteria 2 扩展选项放在请求体的 `hy2` 对象中（证书私钥等敏感字段不会出现在响应里）：
+
+| 字段 | 说明 |
+| --- | --- |
+| `quic.*` | `initStreamReceiveWindow`、`maxStreamReceiveWindow`、`initConnReceiveWindow`、`maxConnReceiveWindow`、`maxIdleTimeout`、`maxIncomingStreams`、`disablePathMTUDiscovery`、`disableStatelessReset` |
+| `congestion.type` / `bbrProfile` | `bbr` 或 `reno`，BBR 预设 `standard/conservative/aggressive`（2.8+） |
+| `resolver` | `type`（udp/tcp/tls/https）、`addr`、`timeout`、`sni`、`insecure` |
+| `sniff` | `enable`、`timeout`、`rewriteDomain`、`tcpPorts`、`udpPorts` |
+| `masquerade` | `type`（proxy/file/string）及对应子字段，另有 `listenHttp`、`listenHttps`、`forceHttps` |
+| `acme` | `ca`、`listenHost`、`type`（http/tls/dns）、`httpPort`、`tlsPort`、`dnsName`、`dnsConfig` |
+| `tls.sniGuard` | `strict` / `dns-san` / `disable` |
+| `direct` | `mode`、`bindIPv4`、`bindIPv6`、`bindDevice`、`fastOpen` |
+| `realm` | Realms 模式与 STUN/打洞调优（2.9+，与端口跳跃互斥） |
+| `mimic` | `enabled`、`interface`、`xdpMode`、`path`、`extraArgs`（2.12+，与端口跳跃互斥） |
+| `listenPortRange` | Hysteria 内置 UDP 端口范围监听（2.8+，与 Agent 端口跳跃互斥） |
+| `trafficListen` | `trafficStats.listen` 主机部分 |
+| `ignoreClientBandwidth` / `disableLossCompensation` / `disableUDP` / `udpIdleTimeout` / `speedTest` | 服务端限速与 UDP 行为 |
+| `geckoMinPacketSize` / `geckoMaxPacketSize` | Gecko 混淆分片大小（2.9.2+） |
+| `aclFile` / `geoip` / `geosite` / `geoUpdateInterval` | 文件式 ACL 与 Geo 数据库 |
+| `clientCA` | mTLS 客户端 CA（PEM），不能与节点自签 ACME 同用 |
+| `extraYaml` | 深合并到生成配置；禁止覆盖 `listen/auth/trafficStats/tls/acme/ech/realm/mimic` |
+| `echPem`（顶层） | `hysteria ech` 生成的完整 `ech.pem`，只写不读；`clearEch: true` 可清除 |
+
 
 ### 备份
 
@@ -256,6 +302,7 @@ HAPP/Incy 请求还会把 routing 指令前置到 URI 订阅正文。
 | Method | Path | 说明 |
 | --- | --- | --- |
 | GET | `/api/logs?page=&pageSize=&nodeId=&level=&event=&q=&from=&to=` | 分页日志，`from/to` RFC3339 |
+| GET | `/api/logs/export?format=log\|csv\|jsonl&nodeId=&level=&event=&q=&from=&to=` | 按当前筛选条件导出日志文件（同名筛选参数；最多 10 万行） |
 | GET | `/api/logs/summary?range=24h&nodeId=` | 聚合分析，`range` 支持 `1h/6h/24h/7d/30d` |
 | GET | `/api/logs/options` | 节点、级别、事件选项 |
 | DELETE | `/api/logs?before=RFC3339` | 删除指定时间之前的日志；不带参数删除全部 |
@@ -374,3 +421,9 @@ Authorization: Bearer <node token>
 | `ping` | `{ts}` |
 
 `logs` / `stats` 使用 batch id 幂等处理；Agent 在 10 秒内没收到 ack 会重发，重连后也会重发未确认批次。
+
+订阅侧说明：
+
+- `echConfig` 会写入 `hysteria2://` 分享链接的 `ech` 参数；Clash/sing-box 输出暂不注入 ECH，客户端仍可正常连接（服务端向后兼容未启用 ECH 的客户端）。
+- `realm` 与 `mimic` 模式无法用分享链接表达，这类节点不会出现在订阅中，需要客户端手动配置。
+- `clientCA`（mTLS）只负责服务端校验，客户端证书需另行签发和分发。

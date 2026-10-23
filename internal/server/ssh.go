@@ -98,21 +98,33 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 `
 	}
+	runtime := nodeRuntime(n)
+	sockCheck := ""
+	extra := ""
+	if runtime == "docker" {
+		sockCheck = `
+if [[ ! -S /var/run/docker.sock ]]; then
+  echo "Docker runtime requires /var/run/docker.sock on the host." >&2
+  exit 1
+fi
+`
+		extra = "  -e HOST_DATA_DIR=/var/lib/mikvace \\\n  -v /var/run/docker.sock:/var/run/docker.sock \\\n"
+	}
 	return fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
-%s%s
+%s%s%s
 mkdir -p /var/lib/mikvace
 docker rm -f mikvace-node >/dev/null 2>&1 || true
 docker run -d --name mikvace-node --restart unless-stopped \
   --network host --cap-add NET_ADMIN \
   -e PANEL_URL=%s \
   -e NODE_TOKEN=%s \
-  -e HY2_RUNTIME=process \
-  -e DATA_DIR=/data \
+  -e HY2_RUNTIME=%s \
+%s  -e DATA_DIR=/data \
   -v /var/lib/mikvace:/data \
   ghcr.io/axmishell/mikvacepanel-node:main
 echo "MikvAce node agent started."
-`, dockerCheck, installDocker, shellQuote(pub), shellQuote(n.Token))
+`, dockerCheck, installDocker, sockCheck, shellQuote(pub), shellQuote(n.Token), runtime, extra)
 }
 
 func runSSHInstall(host string, port int, user, password, key, expectedHostKey, script string) (sshInstallResult, string) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -127,15 +128,16 @@ func (h *Hub) SendToNode(nodeID int64, msgType string, payload any) bool {
 }
 
 // PushConfig sends a configuration revision to a node.
-func (h *Hub) PushConfig(nodeID, revision int64, protocol, config, tlsMode, domain, host, portRange string, port int) bool {
+func (h *Hub) PushConfig(nodeID, revision int64, protocol, config, tlsMode, domain, host, portRange string, port int, files map[string]string) bool {
 	return h.SendToNode(nodeID, "config", map[string]any{
 		"revision": revision, "protocol": protocol, "config": config, "yaml": config,
 		"tlsMode": tlsMode, "domain": domain, "host": host, "portRange": portRange, "port": port,
+		"files": files,
 	})
 }
 
 // PushConfigBundle sends one configuration per core to a multi-core agent.
-func (h *Hub) PushConfigBundle(nodeID, revision int64, configs map[string]string, cores []string, tlsMode, domain, host, portRange string, port int) bool {
+func (h *Hub) PushConfigBundle(nodeID, revision int64, configs map[string]string, cores []string, tlsMode, domain, host, portRange string, port int, files map[string]string) bool {
 	primary := ""
 	primaryConfig := ""
 	if len(cores) > 0 {
@@ -146,6 +148,7 @@ func (h *Hub) PushConfigBundle(nodeID, revision int64, configs map[string]string
 		"revision": revision, "cores": cores, "configs": configs,
 		"protocol": primary, "config": primaryConfig, "yaml": primaryConfig,
 		"tlsMode": tlsMode, "domain": domain, "host": host, "portRange": portRange, "port": port,
+		"files": files,
 	})
 }
 
@@ -402,6 +405,32 @@ func (h *Hub) DeviceCounts() map[string]int {
 	for uid, devices := range h.devices {
 		out[uid] = len(devices)
 	}
+	return out
+}
+
+// Device is one client address tracked for device-limit enforcement.
+type Device struct {
+	IP       string    `json:"ip"`
+	LastSeen time.Time `json:"lastSeen"`
+}
+
+// Devices returns the active client addresses of a user. Entries older than
+// grace are omitted; they are also pruned lazily during authentication.
+func (h *Hub) Devices(userID string, grace time.Duration) []Device {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if grace <= 0 {
+		grace = 15 * time.Minute
+	}
+	nowT := time.Now()
+	out := []Device{}
+	for ip, last := range h.devices[userID] {
+		if nowT.Sub(last) > grace {
+			continue
+		}
+		out = append(out, Device{IP: ip, LastSeen: last})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].LastSeen.After(out[j].LastSeen) })
 	return out
 }
 

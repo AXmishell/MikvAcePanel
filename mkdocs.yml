@@ -91,6 +91,7 @@ nav:
   - 使用手册:
       - 面板功能: panel.md
       - 订阅与客户端: subscriptions.md
+      - 用户中心: user-portal.md
       - 节点 Agent: node-agent.md
       - 证书签发: certificates.md
       - 两步验证: 2fa.md

@@ -282,3 +282,52 @@ func TestNodeCoresAndConfigBundle(t *testing.T) {
 		t.Fatalf("config roundtrip = %+v", got)
 	}
 }
+
+func TestNodeHy2SettingsRoundtrip(t *testing.T) {
+	st, ctx := testStore(t)
+	n, err := st.CreateNode(ctx, &model.Node{
+		Name: "hy2", IP: "203.0.113.9", Port: 443, Active: true, StatsPort: 9999, TLSMode: "selfsigned",
+		Hy2: model.Hy2Settings{
+			QUIC:               &model.Hy2QUIC{MaxIdleTimeout: "30s", MaxIncomingStreams: 512},
+			Congestion:         &model.Hy2Congestion{Type: "bbr", BBRProfile: "aggressive"},
+			Sniff:              &model.Hy2Sniff{Enable: true, TCPPorts: "80,443"},
+			ClientCA:           "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+			ECHPEM:             "-----BEGIN ECH KEYS-----\nAA==\n-----END ECH KEYS-----\n",
+			ECHConfig:          "AEz+DQBIAAAg",
+			ListenPortRange:    "20000-50000",
+			ExtraYAML:          "custom: true\n",
+			GeckoMinPacketSize: 512,
+		},
+	}, "hash", "prefix", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetNode(ctx, n.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Hy2.Congestion == nil || got.Hy2.Congestion.BBRProfile != "aggressive" {
+		t.Fatalf("congestion = %+v", got.Hy2.Congestion)
+	}
+	if got.Hy2.ECHConfig != "AEz+DQBIAAAg" || got.Hy2.ECHPEM == "" {
+		t.Fatalf("ech not persisted: %+v", got.Hy2)
+	}
+	if got.Hy2.ClientCA == "" || got.Hy2.ListenPortRange != "20000-50000" {
+		t.Fatalf("hy2 fields lost: %+v", got.Hy2)
+	}
+	got.Hy2.Congestion = &model.Hy2Congestion{Type: "reno"}
+	got.Hy2.ExtraYAML = ""
+	if _, err := st.UpdateNode(ctx, got, nil); err != nil {
+		t.Fatal(err)
+	}
+	again, err := st.GetNode(ctx, n.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Hy2.Congestion.Type != "reno" || again.Hy2.ExtraYAML != "" {
+		t.Fatalf("update not persisted: %+v", again.Hy2)
+	}
+	if again.Hy2.ECHPEM == "" {
+		t.Fatal("update must preserve ECH PEM")
+	}
+}

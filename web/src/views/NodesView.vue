@@ -32,6 +32,8 @@
           </div>
           <div class="flex" style="gap: 6px">
             <span class="badge badge-info">{{ coreLabel(n) }}</span>
+            <span class="badge" :class="runtimeMode(n) === 'docker' ? 'badge-info' : 'badge-muted'">{{ runtimeLabel(runtimeMode(n)) }}</span>
+            <span v-if="n.runtime && n.runtime !== runtimeMode(n)" class="badge badge-warn" :title="`Agent 实际运行方式为 ${n.runtime}，请重新安装以应用面板配置`">实际 {{ n.runtime }}</span>
             <StatusBadge :status="n.status" />
           </div>
         </div>
@@ -81,6 +83,7 @@
         <button class="tab" :class="{ active: tab === 'tls' }" @click="tab = 'tls'">TLS 与传输</button>
         <button class="tab" :class="{ active: tab === 'ssh' }" @click="tab = 'ssh'">SSH 自动安装</button>
         <button v-if="hasHysteria" class="tab" :class="{ active: tab === 'advanced' }" @click="tab = 'advanced'">ACL 与高级</button>
+        <button v-if="hasHysteria" class="tab" :class="{ active: tab === 'hy2' }" @click="tab = 'hy2'">Hysteria 2 调优</button>
       </div>
 
       <div v-show="tab === 'basic'" class="form-grid">
@@ -118,6 +121,11 @@
         <div class="field"><label>端口</label><input v-model.number="form.port" type="number" min="1" max="65535" placeholder="443" /></div>
         <div v-if="hasHysteria" class="field"><label>统计端口</label><input v-model.number="form.statsPort" type="number" min="1" max="65535" placeholder="9999" /></div>
         <div class="field"><label>最大在线用户数</label><input v-model.number="form.maxOnline" type="number" min="0" placeholder="0 = 不限制" /></div>
+        <div class="field">
+          <label>Agent 运行方式</label>
+          <Select v-model="form.runtimeMode" :options="RUNTIME_OPTIONS" />
+          <span class="hint">Docker 模式需要挂载 <span class="mono">/var/run/docker.sock</span>，修改后需重新安装 Agent 才会生效。</span>
+        </div>
         <div class="field"><label>排序权重</label><input v-model.number="form.ranking" type="number" min="0" step="0.1" placeholder="1.0" />
           <span class="hint">权重越高，订阅中越靠前。</span>
         </div>
@@ -136,11 +144,7 @@
       <div v-show="tab === 'tls' && (hasHysteria || hasXray)" class="form-grid">
         <div class="field">
           <label>TLS 模式</label>
-          <select v-model="form.tlsMode">
-            <option value="selfsigned">自签名（无需域名）</option>
-            <option value="managed">面板签发（CSR，推荐）</option>
-            <option value="acme">节点自签 ACME（TLS-ALPN）</option>
-          </select>
+          <Select v-model="form.tlsMode" :options="TLS_MODE_OPTIONS" />
           <span class="hint">面板签发使用 DNS-01，证书由面板申请后通过 WebSocket 下发；Xray 的 TLS 入站也使用该证书，REALITY 不需要证书。</span>
         </div>
         <div v-if="hasHysteria && form.tlsMode === 'acme'" class="field"><label>ACME 邮箱</label><input v-model="form.acmeEmail" type="email" placeholder="admin@example.com" /></div>
@@ -178,18 +182,12 @@
         <div class="field"><label>跳跃间隔</label><input v-model="form.hopInterval" type="text" placeholder="30s" /></div>
         <div class="field">
           <label>混淆</label>
-          <select v-model="form.obfsType">
-            <option value="">已禁用</option>
-            <option value="salamander">Salamander</option>
-            <option value="gecko">Gecko（Hysteria 2.9+）</option>
-          </select>
+          <Select v-model="form.obfsType" :options="OBFS_OPTIONS" />
         </div>
         <div class="field"><label>混淆密码</label><input v-model="form.obfsPassword" type="text" placeholder="启用时必填" /></div>
         <div class="field"><label>上行带宽</label><input v-model="form.bandwidthUp" type="text" placeholder="1 gbps" /></div>
         <div class="field"><label>下行带宽</label><input v-model="form.bandwidthDown" type="text" placeholder="1 gbps" /></div>
-        <div class="field full"><label>伪装代理 URL</label><input v-model="form.masqueradeUrl" type="url" placeholder="https://www.bing.com" />
-          <span class="hint">访问 Hysteria 端口的 HTTP 请求会反代到该站点。</span>
-        </div>
+        <div class="field full"><span class="hint">伪装方式、QUIC、拥塞控制、DNS、嗅探、mTLS、ECH、Realms 等选项在“Hysteria 2 调优”页签中配置。</span></div>
       </div>
 
 
@@ -218,41 +216,23 @@
           <div class="form-grid">
             <div class="field">
               <label>协议</label>
-              <select v-model="ib.protocol" @change="normalizeInbound(ib)">
-                <option value="vless">VLESS</option>
-                <option value="vmess">VMess</option>
-                <option value="trojan">Trojan</option>
-                <option value="shadowsocks">Shadowsocks</option>
-              </select>
+              <Select v-model="ib.protocol" :options="PROTOCOL_OPTIONS" @change="normalizeInbound(ib)" />
             </div>
             <div class="field"><label>入站标签</label><input v-model="ib.tag" type="text" placeholder="vless-in" /></div>
             <div class="field"><label>端口</label><input v-model.number="ib.port" type="number" min="1" max="65535" placeholder="443" /></div>
             <div class="field"><label>监听地址</label><input v-model="ib.listen" type="text" placeholder="0.0.0.0（默认）" /></div>
             <div class="field">
               <label>传输方式</label>
-              <select v-model="ib.transport" @change="normalizeInbound(ib)">
-                <option value="tcp">TCP（RAW）</option>
-                <option value="ws">WebSocket</option>
-                <option value="grpc">gRPC</option>
-                <option value="xhttp">XHTTP</option>
-                <option value="mkcp">mKCP</option>
-              </select>
+              <Select v-model="ib.transport" :options="TRANSPORT_OPTIONS" @change="normalizeInbound(ib)" />
             </div>
             <div class="field">
               <label>安全</label>
-              <select v-model="ib.security" :disabled="ib.protocol === 'shadowsocks'">
-                <option value="reality" :disabled="!['tcp', 'xhttp', 'grpc'].includes(ib.transport)">REALITY</option>
-                <option value="tls">TLS</option>
-                <option value="none">无加密</option>
-              </select>
+              <Select v-model="ib.security" :options="securityOptions(ib)" :disabled="ib.protocol === 'shadowsocks'" />
             </div>
             <div v-if="ib.protocol === 'vless' && ib.transport === 'tcp' && ib.security !== 'none'" class="field"><label>Flow</label><input v-model="ib.flow" type="text" placeholder="xtls-rprx-vision" /></div>
             <div v-if="ib.protocol === 'shadowsocks'" class="field">
               <label>加密方式</label>
-              <select v-model="ib.ssMethod">
-                <option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</option>
-                <option value="2022-blake3-aes-256-gcm">2022-blake3-aes-256-gcm</option>
-              </select>
+              <Select v-model="ib.ssMethod" :options="SS_METHOD_OPTIONS" />
             </div>
             <div class="field"><label>uTLS 指纹</label><input v-model="ib.fingerprint" type="text" placeholder="chrome" /></div>
             <template v-if="ib.security === 'reality'">
@@ -315,7 +295,7 @@
           <label>自定义出站</label>
           <div v-for="(o, i) in form.outbounds" :key="i" class="outbound-row">
             <input v-model="o.name" type="text" placeholder="名称" style="max-width: 130px" />
-            <select v-model="o.type" style="max-width: 110px"><option value="socks5">socks5</option><option value="http">http</option><option value="direct">direct</option></select>
+            <Select v-model="o.type" :options="OUTBOUND_TYPE_OPTIONS" size="sm" style="max-width: 110px" />
             <input v-model="o.addr" type="text" placeholder="1.2.3.4:1080 或 http URL" />
             <input v-model="o.username" type="text" placeholder="用户名" style="max-width: 110px" />
             <input v-model="o.password" type="text" placeholder="密码" style="max-width: 110px" />
@@ -324,6 +304,189 @@
           <button class="btn btn-sm" type="button" style="align-self: flex-start" @click="form.outbounds.push({ name: '', type: 'socks5', addr: '', username: '', password: '' })"><Plus :size="13" /> 添加出站</button>
           <span class="hint">可在 ACL 规则中通过名称引用这些出站。</span>
         </div>
+      </div>
+
+      <div v-show="tab === 'hy2'" class="form-grid">
+        <div class="field full hy2-subtabs">
+          <button v-for="sec in HY2_SECTIONS" :key="sec.id" type="button" class="hy2-subtab" :class="{ active: hy2Section === sec.id }" @click="hy2Section = sec.id">{{ sec.label }}</button>
+        </div>
+
+        <template v-if="hy2Section === 'basic'">
+        <div class="field full">
+          <label>配置模板</label>
+          <div class="flex" style="gap: 8px; flex-wrap: wrap">
+            <button v-for="t in HY2_TEMPLATE_PRESETS" :key="t.id" type="button" class="btn btn-sm" @click="applyHy2Template(t.id)">{{ t.label }}</button>
+          </div>
+          <span class="hint">
+            模板只覆盖 QUIC、拥塞控制、嗅探、伪装、SNI 校验和基础开关；ECH、mTLS、ACL、Realms、mimic 与额外 YAML 保持不变。应用后仍需点击“保存节点”才会下发。
+          </span>
+        </div>
+        <div class="field full"><strong>运行模式与监听</strong></div>
+        <div class="field full">
+          <label>Realms 牵线 URI</label>
+          <input v-model="form.hy2.realm.uri" type="text" placeholder="realm://public@realm.hy2.io/my-server-8f3a" />
+          <span class="hint">需要 Hysteria 2.9+。启用后 listen 由面板改写为 realm URI，并与端口跳跃互斥；分享链接无法表达 Realms，客户端需手动配置。</span>
+        </div>
+        <div class="field"><label>内置端口范围（listen）</label><input v-model="form.hy2.listenPortRange" type="text" placeholder="20000-50000" />
+          <span class="hint">Hysteria 2.8+ 自行监听并维护防火墙规则，与上面的“端口跳跃范围”互斥。</span>
+        </div>
+        <div class="field"><label>流量统计监听主机</label><input v-model="form.hy2.trafficListen" type="text" placeholder="127.0.0.1" />
+          <span class="hint">只改主机，端口仍由“统计端口”控制；默认仅本机。</span>
+        </div>
+        <div class="field"><label>Gecko 最小分片</label><input v-model.number="form.hy2.geckoMinPacketSize" type="number" min="0" max="2048" placeholder="512" /></div>
+        <div class="field"><label>Gecko 最大分片</label><input v-model.number="form.hy2.geckoMaxPacketSize" type="number" min="0" max="2048" placeholder="1200" />
+          <span class="hint">仅在选择 Gecko 混淆时生效，需 Hysteria 2.9.2+。</span>
+        </div>
+
+        <div class="field full"><strong>QUIC 参数</strong></div>
+        <div class="field"><label>初始流接收窗口</label><input v-model.number="form.hy2.quic.initStreamReceiveWindow" type="number" min="0" placeholder="8388608" /></div>
+        <div class="field"><label>最大流接收窗口</label><input v-model.number="form.hy2.quic.maxStreamReceiveWindow" type="number" min="0" placeholder="8388608" /></div>
+        <div class="field"><label>初始连接接收窗口</label><input v-model.number="form.hy2.quic.initConnReceiveWindow" type="number" min="0" placeholder="20971520" /></div>
+        <div class="field"><label>最大连接接收窗口</label><input v-model.number="form.hy2.quic.maxConnReceiveWindow" type="number" min="0" placeholder="20971520" /></div>
+        <div class="field"><label>最大并发入站流</label><input v-model.number="form.hy2.quic.maxIncomingStreams" type="number" min="0" placeholder="1024" /></div>
+        <div class="field"><label>最大空闲超时</label><input v-model="form.hy2.quic.maxIdleTimeout" type="text" placeholder="30s" /></div>
+        <div class="field full">
+          <label class="checkbox"><input v-model="form.hy2.quic.disablePathMTUDiscovery" type="checkbox" /> 禁用路径 MTU 探测</label>
+          <label class="checkbox"><input v-model="form.hy2.quic.disableStatelessReset" type="checkbox" /> 禁用 stateless reset</label>
+          <span class="hint">默认流/连接窗口为 8MB / 20MB，建议保持 2:5 比例；不清楚时留空。</span>
+        </div>
+
+        </template>
+
+        <template v-if="hy2Section === 'performance'">
+        <div class="field full"><strong>拥塞控制与限速</strong></div>
+        <div class="field"><label>拥塞控制器</label><Select v-model="form.hy2.congestion.type" :options="CONGESTION_OPTIONS" /></div>
+        <div class="field"><label>BBR 预设</label><Select v-model="form.hy2.congestion.bbrProfile" :options="BBR_PROFILE_OPTIONS" :disabled="form.hy2.congestion.type !== 'bbr'" /></div>
+        <div class="field"><label>UDP 空闲超时</label><input v-model="form.hy2.udpIdleTimeout" type="text" placeholder="60s" /></div>
+        <div class="field full">
+          <label class="checkbox"><input v-model="form.hy2.ignoreClientBandwidth" type="checkbox" /> 忽略客户端带宽设置（强制使用非 Brutal 控制器）</label>
+          <label class="checkbox"><input v-model="form.hy2.disableLossCompensation" type="checkbox" /> 关闭 Brutal 丢包补偿（2.10+）</label>
+          <label class="checkbox"><input v-model="form.hy2.disableUDP" type="checkbox" /> 禁用 UDP 转发（只允许 TCP）</label>
+          <label class="checkbox"><input v-model="form.hy2.speedTest" type="checkbox" /> 允许客户端进行速度测试</label>
+        </div>
+
+        <div class="field full"><strong>直连出站</strong></div>
+        <div class="field"><label>IP 栈模式</label><Select v-model="form.hy2.direct.mode" :options="DIRECT_MODE_OPTIONS" /></div>
+        <div class="field"><label>绑定 IPv4</label><input v-model="form.hy2.direct.bindIPv4" type="text" placeholder="2.4.6.8" /></div>
+        <div class="field"><label>绑定 IPv6</label><input v-model="form.hy2.direct.bindIPv6" type="text" placeholder="::" /></div>
+        <div class="field"><label>绑定网卡</label><input v-model="form.hy2.direct.bindDevice" type="text" placeholder="eth0" />
+          <span class="hint">绑定网卡与绑定 IP 互斥。</span>
+        </div>
+        <div class="field"><label class="checkbox"><input v-model="form.hy2.direct.fastOpen" type="checkbox" /> 启用 TCP Fast Open</label></div>
+
+        </template>
+
+        <template v-if="hy2Section === 'masquerade'">
+        <div class="field full"><strong>伪装（Masquerade）</strong></div>
+        <div class="field"><label>伪装类型</label><Select v-model="form.hy2.masquerade.type" :options="MASQ_TYPE_OPTIONS" /></div>
+        <div class="field"><label>HTTP 伪装监听</label><input v-model="form.hy2.masquerade.listenHttp" type="text" placeholder=":80（可选）" /></div>
+        <div class="field"><label>HTTPS 伪装监听</label><input v-model="form.hy2.masquerade.listenHttps" type="text" placeholder=":443（可选）" /></div>
+        <div class="field"><label class="checkbox"><input v-model="form.hy2.masquerade.forceHttps" type="checkbox" /> 强制跳转 HTTPS</label></div>
+        <template v-if="form.hy2.masquerade.type === 'proxy'">
+          <div class="field full"><label>反代目标 URL</label><input v-model="form.hy2.masquerade.proxyUrl" type="url" placeholder="https://www.bing.com" /></div>
+          <div class="field"><label class="checkbox"><input v-model="form.hy2.masquerade.rewriteHost" type="checkbox" /> 重写 Host</label></div>
+          <div class="field"><label class="checkbox"><input v-model="form.hy2.masquerade.insecure" type="checkbox" /> 跳过目标站 TLS 校验</label></div>
+          <div class="field"><label class="checkbox"><input v-model="form.hy2.masquerade.xForwarded" type="checkbox" /> 附加 X-Forwarded-* 头</label></div>
+        </template>
+        <template v-if="form.hy2.masquerade.type === 'file'">
+          <div class="field full"><label>静态目录</label><input v-model="form.hy2.masquerade.fileDir" type="text" placeholder="/www/masq" /></div>
+        </template>
+        <template v-if="form.hy2.masquerade.type === 'string'">
+          <div class="field full"><label>返回内容</label><textarea v-model="form.hy2.masquerade.content" rows="3" placeholder="hello"></textarea></div>
+          <div class="field full"><label>响应头（每行 key: value）</label><textarea v-model="form.hy2.masquerade.headersText" rows="3" placeholder="content-type: text/plain"></textarea></div>
+          <div class="field"><label>状态码</label><input v-model.number="form.hy2.masquerade.statusCode" type="number" min="100" max="599" placeholder="200" /></div>
+        </template>
+
+        </template>
+
+        <template v-if="hy2Section === 'network'">
+        <div class="field full"><strong>DNS 与协议嗅探</strong></div>
+        <div class="field"><label>解析器类型</label><Select v-model="form.hy2.resolver.type" :options="RESOLVER_TYPE_OPTIONS" /></div>
+        <div class="field"><label>解析器地址</label><input v-model="form.hy2.resolver.addr" type="text" placeholder="8.8.8.8:53" /></div>
+        <div class="field"><label>查询超时</label><input v-model="form.hy2.resolver.timeout" type="text" placeholder="4s" /></div>
+        <div class="field"><label>DoT/DoH SNI</label><input v-model="form.hy2.resolver.sni" type="text" placeholder="cloudflare-dns.com" /></div>
+        <div class="field"><label class="checkbox"><input v-model="form.hy2.resolver.insecure" type="checkbox" /> 跳过 DoT/DoH TLS 校验</label></div>
+        <div class="field"><label class="checkbox"><input v-model="form.hy2.sniff.enable" type="checkbox" /> 启用协议嗅探</label></div>
+        <div class="field"><label>嗅探超时</label><input v-model="form.hy2.sniff.timeout" type="text" placeholder="2s" /></div>
+        <div class="field"><label>TCP 端口</label><input v-model="form.hy2.sniff.tcpPorts" type="text" placeholder="80,443,8000-9000" /></div>
+        <div class="field"><label>UDP 端口</label><input v-model="form.hy2.sniff.udpPorts" type="text" placeholder="all" /></div>
+        <div class="field full"><label class="checkbox"><input v-model="form.hy2.sniff.rewriteDomain" type="checkbox" /> 对已是域名的目标也进行嗅探</label></div>
+
+        <div class="field full"><strong>ACL 与 Geo 数据</strong></div>
+        <div class="field"><label>ACL 文件路径</label><input v-model="form.hy2.aclFile" type="text" placeholder="/data/acl.txt" />
+          <span class="hint">填写后忽略上面的内联 ACL 规则，二者不能同时使用。</span>
+        </div>
+        <div class="field"><label>GeoIP 数据库</label><input v-model="form.hy2.geoip" type="text" placeholder="geoip.dat（留空自动下载）" /></div>
+        <div class="field"><label>GeoSite 数据库</label><input v-model="form.hy2.geosite" type="text" placeholder="geosite.dat（留空自动下载）" /></div>
+        <div class="field"><label>数据库刷新间隔</label><input v-model="form.hy2.geoUpdateInterval" type="text" placeholder="168h" /></div>
+
+        </template>
+
+        <template v-if="hy2Section === 'security'">
+        <div class="field full"><strong>TLS / ACME 高级</strong></div>
+        <div class="field"><label>SNI 校验</label><Select v-model="form.hy2.tls.sniGuard" :options="SNI_GUARD_OPTIONS" />
+          <span class="hint">面板签发证书建议 dns-san；自签名或 Realms 使用 disable。</span>
+        </div>
+        <div class="field"><label>ACME CA</label><Select v-model="form.hy2.acme.ca" :options="ACME_CA_OPTIONS" /></div>
+        <div class="field"><label>ACME 验证方式</label><Select v-model="form.hy2.acme.type" :options="ACME_TYPE_OPTIONS" /></div>
+        <div class="field"><label>ACME 监听主机</label><input v-model="form.hy2.acme.listenHost" type="text" placeholder="0.0.0.0" /></div>
+        <div class="field"><label>HTTP-01 端口</label><input v-model.number="form.hy2.acme.httpPort" type="number" min="0" max="65535" placeholder="80" /></div>
+        <div class="field"><label>TLS-ALPN 端口</label><input v-model.number="form.hy2.acme.tlsPort" type="number" min="0" max="65535" placeholder="443" /></div>
+        <template v-if="form.hy2.acme.type === 'dns'">
+          <div class="field"><label>DNS 提供商</label><input v-model="form.hy2.acme.dnsName" type="text" placeholder="cloudflare" /></div>
+          <div class="field full"><label>DNS 凭据（每行 key=value）</label><textarea v-model="form.hy2.acme.dnsConfigText" rows="3" placeholder="api_token=..."></textarea></div>
+        </template>
+        <div class="field full">
+          <label>客户端 CA（mTLS）</label>
+          <textarea v-model="form.hy2.clientCA" rows="4" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+          <span class="hint">填写后启用客户端证书校验，证书会下发到节点；客户端需自行携带证书。不能与节点自签 ACME 同时使用。</span>
+        </div>
+
+        <div class="field full"><strong>ECH（Encrypted Client Hello）</strong></div>
+        <div class="field full">
+          <label>ech.pem 内容</label>
+          <textarea v-model="form.hy2.echPem" rows="5" placeholder="在节点执行 hysteria ech --public-name decoy.example.com 后粘贴完整文件"></textarea>
+          <span class="hint">需 Hysteria 2.10+。留空保持现有密钥；面板只保存私钥并从 ECH CONFIGS 块提取客户端配置。</span>
+        </div>
+        <div v-if="form.hy2.echConfig && !form.hy2.clearEch" class="field full">
+          <span class="hint">当前已配置 ECH，客户端配置：<span class="mono">{{ form.hy2.echConfig.slice(0, 24) }}…</span></span>
+        </div>
+        <div v-if="form.hy2.echConfig" class="field full">
+          <label class="checkbox"><input v-model="form.hy2.clearEch" type="checkbox" /> 清除现有 ECH 密钥</label>
+        </div>
+
+        <div class="field full"><strong>Mimic（UDP 伪装成 TCP，Linux）</strong></div>
+        <div class="field full">
+          <label class="checkbox"><input v-model="form.hy2.mimic.enabled" type="checkbox" /> 启用 mimic（需 Hysteria 2.12+，两端都启用，且不能与端口跳跃并用）</label>
+        </div>
+        <template v-if="form.hy2.mimic.enabled">
+          <div class="field"><label>网卡</label><input v-model="form.hy2.mimic.interface" type="text" placeholder="eth0（留空自动选择）" /></div>
+          <div class="field"><label>XDP 模式</label><Select v-model="form.hy2.mimic.xdpMode" :options="XDP_MODE_OPTIONS" /></div>
+          <div class="field"><label>mimic 路径</label><input v-model="form.hy2.mimic.path" type="text" placeholder="/usr/bin/mimic" /></div>
+          <div class="field full"><label>额外参数（逗号分隔）</label><input v-model="form.hy2.mimic.extraArgsText" type="text" placeholder="--pad-size 1200" /></div>
+        </template>
+
+        </template>
+
+        <template v-if="hy2Section === 'advanced'">
+        <div class="field full"><strong>Realms 调优</strong></div>
+        <div class="field"><label>STUN 服务器（逗号分隔）</label><input v-model="form.hy2.realm.stunServersText" type="text" placeholder="stun.nextcloud.com:3478" /></div>
+        <div class="field"><label>STUN 超时</label><input v-model="form.hy2.realm.stunTimeout" type="text" placeholder="5s" /></div>
+        <div class="field"><label>打洞超时</label><input v-model="form.hy2.realm.punchTimeout" type="text" placeholder="5s" /></div>
+        <div class="field"><label>心跳间隔</label><input v-model="form.hy2.realm.heartbeatInterval" type="text" placeholder="30s" /></div>
+        <div class="field"><label>IP 栈</label><Select v-model="form.hy2.realm.ipMode" :options="IP_MODE_OPTIONS" /></div>
+        <div class="field"><label class="checkbox"><input v-model="form.hy2.realm.portMapping" type="checkbox" /> 启用 UPnP/NAT-PMP 端口映射</label></div>
+        <div class="field"><label>映射超时</label><input v-model="form.hy2.realm.portMapTimeout" type="text" placeholder="10s" /></div>
+        <div class="field"><label>映射租期</label><input v-model="form.hy2.realm.portMapLifetime" type="text" placeholder="10m" /></div>
+        <div class="field"><label class="checkbox"><input v-model="form.hy2.realm.insecure" type="checkbox" /> 跳过自建牵线服务器 TLS 校验（仅调试）</label></div>
+
+        <div class="field full"><strong>高级 YAML 覆盖</strong></div>
+        <div class="field full">
+          <label>额外 YAML</label>
+          <textarea v-model="form.hy2.extraYaml" rows="6" placeholder="congestion:&#10;  type: bbr&#10;  bbrProfile: conservative"></textarea>
+          <span class="hint">会深合并到生成的配置中；listen、auth、trafficStats、tls、acme、ech、realm、mimic 由面板管理，不允许覆盖。</span>
+        </div>
+        </template>
       </div>
 
       <template #footer>
@@ -335,17 +498,20 @@
     <Modal v-model="installOpen" title="安装节点 Agent" size="lg">
       <div v-if="installError" class="banner banner-danger">{{ installError }}</div>
       <div v-if="install" class="stack">
-        <div class="banner banner-info">在 VPS 上执行以下任一命令，Agent 将连接到 <span class="mono">{{ install.publicUrl }}</span>。</div>
+        <div class="banner banner-info">
+          在 VPS 上执行以下任一命令，Agent 将连接到 <span class="mono">{{ install.publicUrl }}</span>。
+          当前运行方式：<strong>{{ runtimeLabel(install.runtimeMode) }}</strong>。修改运行方式后需要重新安装 Agent。
+        </div>
         <div>
-          <div class="flex" style="margin-bottom: 7px"><strong class="small">Docker（进程模式，推荐）</strong><div class="spacer"></div><button class="btn btn-sm" @click="copy(install.installCommand)"><Copy :size="13" /> 复制</button></div>
+          <div class="flex" style="margin-bottom: 7px"><strong class="small">Docker（{{ runtimeLabel(install.runtimeMode) }}，当前配置）</strong><div class="spacer"></div><button class="btn btn-sm" @click="copy(install.installCommand)"><Copy :size="13" /> 复制</button></div>
           <pre class="code">{{ install.installCommand }}</pre>
         </div>
+        <details>
+          <summary class="small dim" style="cursor: pointer">其他运行方式（{{ runtimeLabel(install.runtimeMode === 'docker' ? 'process' : 'docker') }}）</summary>
+          <pre class="code" style="margin-top: 8px">{{ install.runtimeMode === 'docker' ? install.processCommand : install.dockerCommand }}</pre>
+        </details>
         <div>
-          <div class="flex" style="margin-bottom: 7px"><strong class="small">Docker（管理独立代理容器）</strong><div class="spacer"></div><button class="btn btn-sm" @click="copy(install.dockerCommand)"><Copy :size="13" /> 复制</button></div>
-          <pre class="code">{{ install.dockerCommand }}</pre>
-        </div>
-        <div>
-          <div class="flex" style="margin-bottom: 7px"><strong class="small">一键安装脚本</strong><div class="spacer"></div><button class="btn btn-sm" @click="copy(install.installScript)"><Copy :size="13" /> 复制</button></div>
+          <div class="flex" style="margin-bottom: 7px"><strong class="small">一键安装脚本（--runtime {{ install.runtimeMode }}）</strong><div class="spacer"></div><button class="btn btn-sm" @click="copy(install.installScript)"><Copy :size="13" /> 复制</button></div>
           <pre class="code">{{ install.installScript }}</pre>
         </div>
         <details>
@@ -420,6 +586,7 @@ import {
 import { api } from '../api'
 import { notify } from '../store'
 import Modal from '../components/Modal.vue'
+import Select from '../components/Select.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import { copyText, fmtBytes, fmtDate, fmtRelative } from '../format'
 
@@ -431,6 +598,7 @@ const error = ref('')
 
 const modalOpen = ref(false)
 const tab = ref('basic')
+const hy2Section = ref('basic')
 const editing = ref(null)
 const saving = ref(false)
 const formError = ref('')
@@ -513,13 +681,216 @@ function inboundsFromNode(n) {
   }]
 }
 
+function hy2Defaults() {
+  return {
+    quic: {
+      initStreamReceiveWindow: 0, maxStreamReceiveWindow: 0,
+      initConnReceiveWindow: 0, maxConnReceiveWindow: 0,
+      maxIdleTimeout: '', maxIncomingStreams: 0,
+      disablePathMTUDiscovery: false, disableStatelessReset: false,
+    },
+    congestion: { type: '', bbrProfile: '' },
+    resolver: { type: '', addr: '', timeout: '', sni: '', insecure: false },
+    sniff: { enable: false, timeout: '', rewriteDomain: false, tcpPorts: '', udpPorts: '' },
+    masquerade: {
+      type: '', proxyUrl: '', rewriteHost: true, insecure: false, xForwarded: false,
+      fileDir: '', content: '', headersText: '', statusCode: 0,
+      listenHttp: '', listenHttps: '', forceHttps: false,
+    },
+    acme: { ca: '', listenHost: '', type: '', httpPort: 0, tlsPort: 0, dnsName: '', dnsConfigText: '' },
+    tls: { sniGuard: 'disable' },
+    direct: { mode: '', bindIPv4: '', bindIPv6: '', bindDevice: '', fastOpen: false },
+    realm: {
+      uri: '', stunServersText: '', stunTimeout: '', punchTimeout: '', heartbeatInterval: '',
+      insecure: false, ipMode: '', portMapping: false, portMapTimeout: '', portMapLifetime: '',
+    },
+    mimic: { enabled: false, interface: '', xdpMode: '', path: '', extraArgsText: '' },
+    listenPortRange: '', trafficListen: '',
+    ignoreClientBandwidth: false, disableLossCompensation: false,
+    disableUDP: false, udpIdleTimeout: '', speedTest: false,
+    geckoMinPacketSize: 0, geckoMaxPacketSize: 0,
+    aclFile: '', geoip: '', geosite: '', geoUpdateInterval: '',
+    clientCA: '', echPem: '', echConfig: '', clearEch: false,
+    extraYaml: '',
+  }
+}
+
+function mergeDefaults(base, src) {
+  if (!src || typeof src !== 'object') return base
+  const out = Array.isArray(base) ? [...base] : { ...base }
+  for (const k of Object.keys(src)) {
+    const v = src[k]
+    if (v === null || v === undefined) continue
+    if (typeof v === 'object' && !Array.isArray(v) && base && typeof base[k] === 'object' && !Array.isArray(base[k])) {
+      out[k] = mergeDefaults(base[k], v)
+    } else {
+      out[k] = v
+    }
+  }
+  return out
+}
+
+function mapToText(map) {
+  if (!map || typeof map !== 'object') return ''
+  return Object.entries(map).map(([k, v]) => `${k}=${v}`).join('\n')
+}
+
+function textToMap(text) {
+  const out = {}
+  for (const line of String(text || '').split('\n')) {
+    const i = line.indexOf('=')
+    if (i <= 0) continue
+    const k = line.slice(0, i).trim()
+    const v = line.slice(i + 1).trim()
+    if (k) out[k] = v
+  }
+  return out
+}
+
+function hy2FromNode(n) {
+  const h = mergeDefaults(hy2Defaults(), n.hy2 || {})
+  if (!h.masquerade.type && n.masqueradeUrl) {
+    h.masquerade.type = 'proxy'
+    h.masquerade.proxyUrl = n.masqueradeUrl
+    h.masquerade.rewriteHost = true
+  }
+  h.masquerade.headersText = mapToText(h.masquerade.headers)
+  delete h.masquerade.headers
+  h.acme.dnsConfigText = mapToText(h.acme.dnsConfig)
+  delete h.acme.dnsConfig
+  h.realm.stunServersText = (h.realm.stunServers || []).join(', ')
+  delete h.realm.stunServers
+  h.mimic.extraArgsText = (h.mimic.extraArgs || []).join(', ')
+  delete h.mimic.extraArgs
+  h.echPem = ''
+  h.clearEch = false
+  return h
+}
+
+function hy2Payload() {
+  const h = JSON.parse(JSON.stringify(form.hy2))
+  h.masquerade.headers = textToMap(h.masquerade.headersText)
+  delete h.masquerade.headersText
+  h.acme.dnsConfig = textToMap(h.acme.dnsConfigText)
+  delete h.acme.dnsConfigText
+  h.realm.stunServers = splitList(h.realm.stunServersText)
+  delete h.realm.stunServersText
+  h.mimic.extraArgs = splitList(h.mimic.extraArgsText)
+  delete h.mimic.extraArgsText
+  delete h.echConfig
+  delete h.echPem
+  delete h.clearEch
+  return h
+}
+
+// hy2Template builds the sections controlled by a preset. Unmanaged sections
+// (resolver/direct/realm/mimic/ECH/mTLS/ACL/extra YAML) are intentionally
+// absent so applying a template never wipes advanced state.
+function hy2Template(overrides = {}) {
+  const base = {
+    quic: {
+      initStreamReceiveWindow: 0, maxStreamReceiveWindow: 0,
+      initConnReceiveWindow: 0, maxConnReceiveWindow: 0,
+      maxIdleTimeout: '', maxIncomingStreams: 0,
+      disablePathMTUDiscovery: false, disableStatelessReset: false,
+    },
+    congestion: { type: '', bbrProfile: '' },
+    sniff: { enable: false, timeout: '2s', rewriteDomain: false, tcpPorts: '80,443', udpPorts: 'all' },
+    masquerade: {
+      type: '', proxyUrl: '', rewriteHost: true, insecure: false, xForwarded: false,
+      fileDir: '', content: '', headersText: '', statusCode: 0,
+      listenHttp: '', listenHttps: '', forceHttps: false,
+    },
+    tls: { sniGuard: 'disable' },
+    ignoreClientBandwidth: false,
+    disableLossCompensation: false,
+    disableUDP: false,
+    udpIdleTimeout: '',
+    speedTest: false,
+    trafficListen: '',
+    geckoMinPacketSize: 0,
+    geckoMaxPacketSize: 0,
+  }
+  return mergeDefaults(base, overrides)
+}
+
+const HY2_SECTIONS = [
+  { id: 'basic', label: '基础与 QUIC' },
+  { id: 'performance', label: '拥塞与出站' },
+  { id: 'masquerade', label: '伪装' },
+  { id: 'network', label: 'DNS / ACL' },
+  { id: 'security', label: '安全 / ECH' },
+  { id: 'advanced', label: 'Realms / 高级' },
+]
+
+const HY2_TEMPLATE_PRESETS = [
+  { id: 'official', label: '官方默认', values: hy2Template() },
+  {
+    id: 'balanced',
+    label: '推荐（均衡）',
+    values: hy2Template({
+      quic: { maxIdleTimeout: '30s', maxIncomingStreams: 1024 },
+      udpIdleTimeout: '60s',
+      trafficListen: '127.0.0.1',
+    }),
+  },
+  {
+    id: 'performance',
+    label: '高性能',
+    values: hy2Template({
+      quic: {
+        initStreamReceiveWindow: 8388608, maxStreamReceiveWindow: 8388608,
+        initConnReceiveWindow: 20971520, maxConnReceiveWindow: 20971520,
+        maxIdleTimeout: '30s', maxIncomingStreams: 4096,
+      },
+      congestion: { type: 'bbr', bbrProfile: 'aggressive' },
+      sniff: { enable: true },
+      udpIdleTimeout: '60s',
+      trafficListen: '127.0.0.1',
+    }),
+  },
+  {
+    id: 'anticensorship',
+    label: '抗审查',
+    values: hy2Template({
+      quic: { maxIdleTimeout: '30s', maxIncomingStreams: 1024 },
+      sniff: { enable: true },
+      masquerade: {
+        type: 'proxy', proxyUrl: 'https://www.bing.com',
+        rewriteHost: true, xForwarded: true,
+      },
+      udpIdleTimeout: '60s',
+      trafficListen: '127.0.0.1',
+    }),
+  },
+  {
+    id: 'weak',
+    label: '弱网优化',
+    values: hy2Template({
+      quic: { maxIdleTimeout: '60s', maxIncomingStreams: 2048 },
+      congestion: { type: 'bbr', bbrProfile: 'conservative' },
+      ignoreClientBandwidth: true,
+      udpIdleTimeout: '120s',
+      trafficListen: '127.0.0.1',
+    }),
+  },
+]
+
+function applyHy2Template(id, silent = false) {
+  const tpl = HY2_TEMPLATE_PRESETS.find((t) => t.id === id)
+  if (!tpl) return
+  form.hy2 = mergeDefaults(form.hy2, tpl.values)
+  if (!silent) notify(`已应用模板：${tpl.label}`)
+}
+
 function emptyForm() {
   return {
     name: '', flag: '', ip: '', domain: '', sni: '', listen: '', port: 443, statsPort: 9999,
     tlsMode: 'selfsigned', acmeEmail: '', portRange: '', hopInterval: '30s', obfsType: '',
     obfsPassword: '', bandwidthUp: '', bandwidthDown: '', masqueradeUrl: '',
-    type: 'hysteria', cores: ['hysteria'], maxOnline: 0, ranking: 1, active: true, groupIds: [], aclText: 'direct(all)',
+    type: 'hysteria', cores: ['hysteria'], runtimeMode: 'process', maxOnline: 0, ranking: 1, active: true, groupIds: [], aclText: 'direct(all)',
     outbounds: [], sshPort: 22, sshUser: 'root', sshPassword: '', sshKey: '', sshHostKey: '', sshInstallDocker: false,
+    hy2: hy2Defaults(),
     xray: { apiPort: 61000, inbounds: [emptyInbound()] },
   }
 }
@@ -537,6 +908,109 @@ const XRAY_PRESETS = [
   { id: 'vless-vmess', label: 'VLESS + VMess', protocols: ['vless', 'vmess'] },
   { id: 'all', label: '全协议', protocols: ['vless', 'vmess', 'trojan', 'shadowsocks'] },
 ]
+const RUNTIME_OPTIONS = [
+  { value: 'process', label: '进程模式（同容器内运行代理核心）' },
+  { value: 'docker', label: 'Docker 模式（管理独立代理容器）' },
+]
+const TLS_MODE_OPTIONS = [
+  { value: 'selfsigned', label: '自签名（无需域名）' },
+  { value: 'managed', label: '面板签发（CSR，推荐）' },
+  { value: 'acme', label: '节点自签 ACME（TLS-ALPN）' },
+]
+const OBFS_OPTIONS = [
+  { value: '', label: '已禁用' },
+  { value: 'salamander', label: 'Salamander' },
+  { value: 'gecko', label: 'Gecko（Hysteria 2.9+）' },
+]
+const PROTOCOL_OPTIONS = [
+  { value: 'vless', label: 'VLESS' },
+  { value: 'vmess', label: 'VMess' },
+  { value: 'trojan', label: 'Trojan' },
+  { value: 'shadowsocks', label: 'Shadowsocks' },
+]
+const TRANSPORT_OPTIONS = [
+  { value: 'tcp', label: 'TCP（RAW）' },
+  { value: 'ws', label: 'WebSocket' },
+  { value: 'grpc', label: 'gRPC' },
+  { value: 'xhttp', label: 'XHTTP' },
+  { value: 'mkcp', label: 'mKCP' },
+]
+const SS_METHOD_OPTIONS = [
+  { value: '2022-blake3-aes-128-gcm', label: '2022-blake3-aes-128-gcm' },
+  { value: '2022-blake3-aes-256-gcm', label: '2022-blake3-aes-256-gcm' },
+]
+const OUTBOUND_TYPE_OPTIONS = [
+  { value: 'socks5', label: 'socks5' },
+  { value: 'http', label: 'http' },
+  { value: 'direct', label: 'direct' },
+]
+const CONGESTION_OPTIONS = [
+  { value: '', label: '默认（BBR）' },
+  { value: 'bbr', label: 'BBR' },
+  { value: 'reno', label: 'Reno' },
+]
+const BBR_PROFILE_OPTIONS = [
+  { value: '', label: 'standard（默认）' },
+  { value: 'standard', label: 'standard' },
+  { value: 'conservative', label: 'conservative' },
+  { value: 'aggressive', label: 'aggressive' },
+]
+const MASQ_TYPE_OPTIONS = [
+  { value: '', label: '关闭' },
+  { value: 'proxy', label: '反向代理站点（proxy）' },
+  { value: 'file', label: '静态目录（file）' },
+  { value: 'string', label: '固定字符串（string）' },
+]
+const RESOLVER_TYPE_OPTIONS = [
+  { value: '', label: '使用系统 DNS' },
+  { value: 'udp', label: 'UDP' },
+  { value: 'tcp', label: 'TCP' },
+  { value: 'tls', label: 'DNS over TLS' },
+  { value: 'https', label: 'DNS over HTTPS' },
+]
+const DIRECT_MODE_OPTIONS = [
+  { value: '', label: 'auto（默认双栈）' },
+  { value: 'auto', label: 'auto' },
+  { value: '4', label: '仅 IPv4' },
+  { value: '6', label: '仅 IPv6' },
+  { value: '46', label: '优先 IPv4' },
+  { value: '64', label: '优先 IPv6' },
+]
+const SNI_GUARD_OPTIONS = [
+  { value: 'disable', label: 'disable（兼容自签名）' },
+  { value: 'dns-san', label: 'dns-san（推荐用于有效证书）' },
+  { value: 'strict', label: 'strict（严格匹配）' },
+]
+const ACME_CA_OPTIONS = [
+  { value: '', label: '默认' },
+  { value: 'letsencrypt', label: "Let's Encrypt" },
+  { value: 'zerossl', label: 'ZeroSSL' },
+]
+const ACME_TYPE_OPTIONS = [
+  { value: '', label: '保持默认（TLS-ALPN）' },
+  { value: 'tls', label: 'TLS-ALPN' },
+  { value: 'http', label: 'HTTP-01' },
+  { value: 'dns', label: 'DNS-01' },
+]
+const XDP_MODE_OPTIONS = [
+  { value: '', label: '自动' },
+  { value: 'native', label: 'native' },
+  { value: 'skb', label: 'skb' },
+]
+const IP_MODE_OPTIONS = [
+  { value: '', label: 'dual（默认）' },
+  { value: 'dual', label: 'dual' },
+  { value: 'v4', label: '仅 IPv4' },
+  { value: 'v6', label: '仅 IPv6' },
+]
+function securityOptions(ib) {
+  const reality = ['tcp', 'xhttp', 'grpc'].includes(ib.transport)
+  return [
+    { value: 'reality', label: 'REALITY', disabled: !reality },
+    { value: 'tls', label: 'TLS' },
+    { value: 'none', label: '无加密' },
+  ]
+}
 function protocolDefaults(proto) {
   switch (proto) {
     case 'vmess':
@@ -613,7 +1087,7 @@ function toggleCore(core) {
     }
   }
   form.type = form.cores[0]
-  if (form.type !== 'xray' && tab.value === 'advanced' && !form.cores.includes('hysteria')) tab.value = 'tls'
+  if (!form.cores.includes('hysteria') && (tab.value === 'advanced' || tab.value === 'hy2')) tab.value = 'tls'
 }
 function addInbound() {
   const ib = emptyInbound()
@@ -641,6 +1115,12 @@ function coreLabel(n) {
   const cores = (n.cores && n.cores.length ? n.cores : [n.type || 'hysteria'])
   return cores.map((c) => (c === 'xray' ? 'Xray' : 'Hy2')).join(' + ')
 }
+function runtimeMode(n) {
+  return n?.runtimeMode === 'docker' ? 'docker' : 'process'
+}
+function runtimeLabel(mode) {
+  return mode === 'docker' ? 'Docker 模式' : '进程模式'
+}
 function versionLabel(n) {
   const cores = (n.cores && n.cores.length ? n.cores : [n.type || 'hysteria'])
   const parts = []
@@ -649,7 +1129,7 @@ function versionLabel(n) {
   return parts.join(' · ') || 'unknown'
 }
 watch(() => form.cores.slice(), () => {
-  if (!form.cores.includes('hysteria') && tab.value === 'advanced') tab.value = 'tls'
+  if (!form.cores.includes('hysteria') && (tab.value === 'advanced' || tab.value === 'hy2')) tab.value = 'tls'
 })
 function toggleId(list, id) {
   const i = list.indexOf(id)
@@ -690,7 +1170,9 @@ async function loadGroups() {
 function openCreate() {
   editing.value = null
   resetForm()
+  applyHy2Template('balanced', true)
   tab.value = 'basic'
+  hy2Section.value = 'basic'
   formError.value = ''
   modalOpen.value = true
   certInfo.value = null
@@ -706,14 +1188,17 @@ function openEdit(n) {
     hopInterval: n.hopInterval || '', obfsType: n.obfsType || '', obfsPassword: n.obfsPassword || '',
     bandwidthUp: n.bandwidthUp || '', bandwidthDown: n.bandwidthDown || '', masqueradeUrl: n.masqueradeUrl || '',
     maxOnline: n.maxOnline || 0, ranking: n.ranking || 1, active: n.active,
+    runtimeMode: n.runtimeMode || 'process',
     sshPort: n.sshPort || 22, sshUser: n.sshUser || '', sshPassword: '', sshKey: '',
     sshHostKey: n.sshHostKey || '', sshInstallDocker: !!n.sshInstallDocker,
     groupIds: (n.groups || []).map((g) => g.id),
     aclText: (n.acl || []).join('\n'),
     outbounds: (n.outbounds || []).map((o) => ({ ...o })),
+    hy2: hy2FromNode(n),
     xray: { apiPort: n.xray?.apiPort || 61000, inbounds: inboundsFromNode(n) },
   })
   tab.value = 'basic'
+  hy2Section.value = 'basic'
   formError.value = ''
   modalOpen.value = true
   certInfo.value = null
@@ -793,6 +1278,7 @@ async function save() {
       formError.value = '至少启用一个 Xray 入站'
       return
     }
+    const hy2 = hy2Payload()
     const payload = {
       type: form.cores[0],
       cores: form.cores.slice(),
@@ -800,8 +1286,13 @@ async function save() {
       listen: form.listen, port: Number(form.port) || 443, statsPort: Number(form.statsPort) || 9999,
       tlsMode: form.tlsMode, acmeEmail: form.acmeEmail, portRange: form.portRange,
       hopInterval: form.hopInterval, obfsType: form.obfsType, obfsPassword: form.obfsPassword,
-      bandwidthUp: form.bandwidthUp, bandwidthDown: form.bandwidthDown, masqueradeUrl: form.masqueradeUrl,
+      bandwidthUp: form.bandwidthUp, bandwidthDown: form.bandwidthDown,
+      masqueradeUrl: hy2.masquerade.type === 'proxy' ? hy2.masquerade.proxyUrl : '',
+      hy2,
+      echPem: form.hy2.echPem,
+      clearEch: !!form.hy2.clearEch,
       maxOnline: Number(form.maxOnline) || 0, ranking: Number(form.ranking) || 1, active: form.active,
+      runtimeMode: form.runtimeMode,
       sshPort: Number(form.sshPort) || 22, sshUser: form.sshUser,
       sshPassword: form.sshPassword, sshKey: form.sshKey, sshHostKey: form.sshHostKey,
       sshInstallDocker: form.sshInstallDocker,
@@ -826,12 +1317,18 @@ async function save() {
     let res
     if (editing.value) {
       res = await api.updateNode(editing.value.id, payload)
-      notify('节点已更新')
+      const rev = res.configRevision || res.node?.configRevision || 0
+      if (res.configError) notify(res.configError, 'error')
+      else if (!res.configChanged) notify(`节点已更新，生成的配置没有变化（版本 ${rev}）`)
+      else if (res.pushed) notify(`节点已更新，配置版本 ${rev} 已推送`)
+      else notify(`节点已更新，配置版本 ${rev} 已保存，Agent 连接后自动推送`)
       modalOpen.value = false
       await load()
     } else {
       res = await api.createNode(payload)
-      notify('节点已创建 — 请安装 Agent 以连接')
+      const rev = res.configRevision || res.node?.configRevision || 0
+      if (res.configError) notify(res.configError, 'error')
+      else notify(`节点已创建，配置版本 ${rev} 已保存 — 请安装 Agent 以连接`)
       modalOpen.value = false
       await load()
       const created = res.node || res
@@ -874,7 +1371,11 @@ async function syncAll() {
 async function sync(n) {
   try {
     const res = await api.syncNode(n.id)
-    notify(res.pushed ? `配置版本 ${res.revision} 已推送到 Agent` : `配置版本 ${res.revision} 已保存（Agent 离线）`)
+    if (res.configError) notify(res.configError, 'error')
+    else if (!res.configChanged) notify(res.pushed ? `配置未变化，已重新推送版本 ${res.revision}` : `配置未变化（版本 ${res.revision}）`)
+    else if (res.pushed) notify(`配置版本 ${res.revision} 已推送`)
+    else if (!res.connected) notify(`配置版本 ${res.revision} 已保存（Agent 离线，连接后自动推送）`)
+    else notify(`配置版本 ${res.revision} 已保存（推送失败，请查看日志）`)
     load()
   } catch (e) {
     notify(e.message, 'error')
@@ -903,7 +1404,12 @@ async function resetToken() {
   if (!confirm('Resetting the token disconnects the current agent until it is reconfigured. Continue?')) return
   try {
     const res = await api.resetNodeToken(install.value.nodeId)
-    install.value = { ...install.value, token: res.token, installCommand: res.installCommand, dockerCommand: res.dockerCommand }
+    install.value = {
+      ...install.value, token: res.token, runtimeMode: res.runtimeMode,
+      installScript: res.installScript, installCommand: res.installCommand,
+      processCommand: res.processCommand, dockerCommand: res.dockerCommand,
+      compose: res.compose,
+    }
     notify('New token generated')
     load()
   } catch (e) {

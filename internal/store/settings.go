@@ -153,6 +153,13 @@ var DefaultSettings = map[string]string{
 	"backup_enabled":               "true",
 	"backup_interval_hours":        "24",
 	"backup_keep":                  "7",
+	"portal_enabled":               "true",
+	"portal_title":                 "用户中心",
+	"portal_note":                  "",
+	"portal_allow_password_change": "true",
+	"portal_allow_device_reset":    "true",
+	"portal_allow_sub_reset":       "false",
+	"portal_session_hours":         "72",
 }
 
 // EnsureDefaultSettings inserts missing settings.

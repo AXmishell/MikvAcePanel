@@ -1,7 +1,13 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { auth } from './store'
+import { auth, portalAuth } from './store'
 
 const routes = [
+  {
+    path: '/',
+    name: 'home',
+    component: () => import('./views/HomeView.vue'),
+    meta: { public: true, title: '首页' },
+  },
   {
     path: '/login',
     name: 'login',
@@ -9,10 +15,21 @@ const routes = [
     meta: { public: true, title: '登录' },
   },
   {
+    path: '/portal/login',
+    name: 'portal-login',
+    component: () => import('./views/PortalLoginView.vue'),
+    meta: { public: true, portal: true, title: '用户登录' },
+  },
+  {
+    path: '/portal',
+    name: 'portal',
+    component: () => import('./views/PortalView.vue'),
+    meta: { public: true, portal: true, title: '用户中心' },
+  },
+  {
     path: '/',
     component: () => import('./components/AppLayout.vue'),
     children: [
-      { path: '', redirect: '/dashboard' },
       { path: 'dashboard', name: 'dashboard', component: () => import('./views/DashboardView.vue'), meta: { title: '仪表盘' } },
       { path: 'users', name: 'users', component: () => import('./views/UsersView.vue'), meta: { title: '用户' } },
       { path: 'nodes', name: 'nodes', component: () => import('./views/NodesView.vue'), meta: { title: '节点' } },
@@ -33,6 +50,15 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
+  if (to.meta.portal) {
+    if (to.name === 'portal-login') {
+      return portalAuth.token ? { name: 'portal' } : true
+    }
+    if (!portalAuth.token) {
+      return { name: 'portal-login', query: { redirect: to.fullPath } }
+    }
+    return true
+  }
   if (to.meta.public) {
     if (to.name === 'login' && auth.token) return { name: 'dashboard' }
     return true

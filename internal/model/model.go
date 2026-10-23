@@ -54,10 +54,15 @@ type Group struct {
 // User is a subscription / proxy account. Password is only used internally for
 // Hysteria authentication and subscription generation.
 type User struct {
-	ID                int64      `json:"id"`
-	UserID            string     `json:"userId"`
-	Username          string     `json:"username"`
-	Password          string     `json:"-"`
+	ID       int64  `json:"id"`
+	UserID   string `json:"userId"`
+	Username string `json:"username"`
+	// Password is the proxy connection credential. It stays readable because
+	// Hysteria authenticates against it and subscription URIs embed it.
+	Password string `json:"-"`
+	// LoginPasswordHash is the bcrypt hash used by the user portal. Legacy
+	// accounts with an empty hash fall back to Password on first login.
+	LoginPasswordHash string     `json:"-"`
 	SubscriptionToken string     `json:"subscriptionToken"`
 	XrayUUID          string     `json:"xrayUuid"`
 	Enabled           bool       `json:"enabled"`
@@ -233,6 +238,7 @@ type Node struct {
 	ACL              []string     `json:"acl"`
 	Outbounds        []Outbound   `json:"outbounds"`
 	Xray             XraySettings `json:"xray"`
+	Hy2              Hy2Settings  `json:"hy2"`
 	Cores            []string     `json:"cores"`
 	Groups           []Group      `json:"groups"`
 	MaxOnline        int          `json:"maxOnline"`
@@ -247,18 +253,21 @@ type Node struct {
 	Hy2Version       string       `json:"hy2Version"`
 	XrayVersion      string       `json:"xrayVersion"`
 	Runtime          string       `json:"runtime"`
-	Capabilities     []string     `json:"capabilities,omitempty"`
-	CertFingerprint  string       `json:"certFingerprint,omitempty"`
-	CertNotAfter     *time.Time   `json:"certNotAfter,omitempty"`
-	LastSeenAt       *time.Time   `json:"lastSeenAt"`
-	ConfigRevision   int64        `json:"configRevision"`
-	AppliedRevision  int64        `json:"appliedRevision"`
-	ConfigError      string       `json:"configError"`
-	TrafficTx        int64        `json:"trafficTx"`
-	TrafficRx        int64        `json:"trafficRx"`
-	OnlineUsers      int          `json:"onlineUsers"`
-	CreatedAt        time.Time    `json:"createdAt"`
-	UpdatedAt        time.Time    `json:"updatedAt"`
+	// RuntimeMode is the operator-selected agent runtime (process or docker).
+	// Runtime is the value reported by the connected agent.
+	RuntimeMode     string     `json:"runtimeMode"`
+	Capabilities    []string   `json:"capabilities,omitempty"`
+	CertFingerprint string     `json:"certFingerprint,omitempty"`
+	CertNotAfter    *time.Time `json:"certNotAfter,omitempty"`
+	LastSeenAt      *time.Time `json:"lastSeenAt"`
+	ConfigRevision  int64      `json:"configRevision"`
+	AppliedRevision int64      `json:"appliedRevision"`
+	ConfigError     string     `json:"configError"`
+	TrafficTx       int64      `json:"trafficTx"`
+	TrafficRx       int64      `json:"trafficRx"`
+	OnlineUsers     int        `json:"onlineUsers"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
 }
 
 // ValidCore reports whether name is a proxy core managed by the agent.

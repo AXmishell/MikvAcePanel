@@ -221,6 +221,24 @@ func (s *Server) routes() http.Handler {
 	r.Get("/api/agent/version", s.handleAgentVersion)
 	r.Get("/api/node/ws", s.handleAgentWS)
 
+	// User self-service portal. Public config/login endpoints are separate
+	// from the authenticated portal API so the login page can show branding
+	// and whether the portal is enabled.
+	r.Route("/api/portal", func(pr chi.Router) {
+		pr.Use(noStore)
+		pr.Get("/config", s.handlePortalConfig)
+		pr.Post("/login", s.handlePortalLogin)
+		pr.Group(func(pr chi.Router) {
+			pr.Use(s.portalAuth)
+			pr.Post("/logout", s.handlePortalLogout)
+			pr.Get("/me", s.handlePortalMe)
+			pr.Post("/password", s.handlePortalChangePassword)
+			pr.Post("/connection-password", s.handlePortalChangeConnectionPassword)
+			pr.Post("/devices/reset", s.handlePortalResetDevices)
+			pr.Post("/subscription/reset", s.handlePortalResetSubscription)
+		})
+	})
+
 	r.Group(func(pr chi.Router) {
 		pr.Use(s.adminAuth)
 		pr.Get("/api/me", s.handleMe)
@@ -239,6 +257,7 @@ func (s *Server) routes() http.Handler {
 		pr.Get("/api/users", s.handleListUsers)
 		pr.Post("/api/users", s.handleCreateUser)
 		pr.Get("/api/users/{id}", s.handleGetUser)
+		pr.Get("/api/users/{id}/connections", s.handleUserConnections)
 		pr.Put("/api/users/{id}", s.handleUpdateUser)
 		pr.Delete("/api/users/{id}", s.handleDeleteUser)
 		pr.Post("/api/users/{id}/enable", s.handleEnableUser)
@@ -274,6 +293,7 @@ func (s *Server) routes() http.Handler {
 		pr.Put("/api/cert/settings", s.handleUpdateCertSettings)
 
 		pr.Get("/api/logs", s.handleLogs)
+		pr.Get("/api/logs/export", s.handleExportLogs)
 		pr.Get("/api/logs/summary", s.handleLogSummary)
 		pr.Get("/api/logs/options", s.handleLogOptions)
 		pr.Delete("/api/logs", s.handleDeleteLogs)
@@ -308,7 +328,9 @@ func (s *Server) routes() http.Handler {
 			}
 			http.Redirect(w, r, target, http.StatusFound)
 		}
-		r.Get("/", redirectPanel)
+		// `/` is a public landing page; `/panel` keeps redirecting into the
+		// administrator console for existing bookmarks.
+		r.Get("/", s.serveSPA)
 		r.Get("/panel", redirectPanel)
 		r.Get("/panel/*", redirectPanel)
 		r.Get("/assets/*", s.serveSPA)
@@ -737,19 +759,23 @@ func bearerToken(r *http.Request) string {
 	return ""
 }
 
-func (s *Server) loginAllowed(ctx context.Context, ip string) bool {
+// loginAllowed reports whether scope+ip may attempt a login. The scope keeps
+// the administrator and user-portal limiters independent, so a noisy portal
+// client cannot lock operators out of the panel (and vice versa).
+func (s *Server) loginAllowed(ctx context.Context, scope, ip string) bool {
 	if s.redis != nil {
 		window := time.Now().Unix() / 60
-		n, err := s.redis.GetInt(ctx, fmt.Sprintf("ratelimit:login:%s:%d", ip, window))
+		n, err := s.redis.GetInt(ctx, fmt.Sprintf("ratelimit:login:%s:%s:%d", scope, ip, window))
 		if err == nil {
 			return n < 10
 		}
 		s.logRedisError("redis login rate limit failed, falling back to memory", err)
 	}
+	key := scope + "|" + ip
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
 	nowT := time.Now()
-	tries := s.loginTries[ip]
+	tries := s.loginTries[key]
 	kept := tries[:0]
 	for _, t := range tries {
 		if nowT.Sub(t) < time.Minute {
@@ -757,9 +783,9 @@ func (s *Server) loginAllowed(ctx context.Context, ip string) bool {
 		}
 	}
 	if len(kept) == 0 {
-		delete(s.loginTries, ip)
+		delete(s.loginTries, key)
 	} else {
-		s.loginTries[ip] = kept
+		s.loginTries[key] = kept
 	}
 	s.pruneLoginTriesLocked(nowT)
 	return len(kept) < 10
@@ -785,24 +811,25 @@ func (s *Server) pruneLoginTriesLocked(nowT time.Time) {
 	}
 }
 
-func (s *Server) recordLoginFailure(ctx context.Context, ip string) {
+func (s *Server) recordLoginFailure(ctx context.Context, scope, ip string) {
 	if s.redis != nil {
 		window := time.Now().Unix() / 60
-		name := fmt.Sprintf("ratelimit:login:%s:%d", ip, window)
+		name := fmt.Sprintf("ratelimit:login:%s:%s:%d", scope, ip, window)
 		_, err := s.redis.Incr(ctx, name, 2*time.Minute)
 		if err == nil {
 			return
 		}
 		s.logRedisError("redis login rate limit failed, falling back to memory", err)
 	}
+	key := scope + "|" + ip
 	s.loginMu.Lock()
-	s.loginTries[ip] = append(s.loginTries[ip], time.Now())
+	s.loginTries[key] = append(s.loginTries[key], time.Now())
 	s.loginMu.Unlock()
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r)
-	if !s.loginAllowed(r.Context(), ip) {
+	if !s.loginAllowed(r.Context(), "admin", ip) {
 		writeError(w, http.StatusTooManyRequests, "too many login attempts, try again later")
 		return
 	}
@@ -816,12 +843,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	admin, err := s.store.GetAdminByUsername(r.Context(), strings.TrimSpace(req.Username))
 	if err != nil {
-		s.recordLoginFailure(r.Context(), ip)
+		s.recordLoginFailure(r.Context(), "admin", ip)
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(admin.PasswordHash), []byte(req.Password)) != nil {
-		s.recordLoginFailure(r.Context(), ip)
+		s.recordLoginFailure(r.Context(), "admin", ip)
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}

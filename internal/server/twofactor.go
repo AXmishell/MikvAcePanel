@@ -132,7 +132,7 @@ func (s *Server) verifySecondFactor(ctx context.Context, admin *model.Admin, cod
 
 func (s *Server) handleLogin2FA(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r)
-	if !s.loginAllowed(r.Context(), ip) {
+	if !s.loginAllowed(r.Context(), "admin", ip) {
 		writeError(w, http.StatusTooManyRequests, "too many login attempts, try again later")
 		return
 	}
@@ -160,13 +160,13 @@ func (s *Server) handleLogin2FA(w http.ResponseWriter, r *http.Request) {
 	}
 	admin, err := s.store.GetAdminByID(r.Context(), claims.AdminID)
 	if err != nil || !admin.TOTPEnabled || admin.TOTPSecret == "" {
-		s.recordLoginFailure(r.Context(), ip)
+		s.recordLoginFailure(r.Context(), "admin", ip)
 		s.recordChallengeFailure(claims.ID)
 		writeError(w, http.StatusUnauthorized, "two-factor authentication is not available")
 		return
 	}
 	if !s.verifySecondFactor(r.Context(), admin, req.Code) {
-		s.recordLoginFailure(r.Context(), ip)
+		s.recordLoginFailure(r.Context(), "admin", ip)
 		s.recordChallengeFailure(claims.ID)
 		writeError(w, http.StatusUnauthorized, "invalid verification code")
 		return

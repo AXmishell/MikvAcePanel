@@ -12,27 +12,36 @@ import (
 	"github.com/axmishell/mikvacepanel/internal/model"
 )
 
+// nodeRuntimeMode normalizes the operator-selected runtime before it is
+// written to SQLite. Invalid or missing values fall back to process mode.
+func nodeRuntimeMode(n *model.Node) string {
+	if n != nil && strings.EqualFold(strings.TrimSpace(n.RuntimeMode), "docker") {
+		return "docker"
+	}
+	return "process"
+}
+
 const nodeSelect = `SELECT id, name, type, flag, ip, domain, sni, listen, port, port_range, hop_interval,
-	obfs_type, obfs_password, stats_port, stats_secret, xray_json, ssh_port, ssh_user, ssh_password, ssh_key, ssh_host_key, ssh_install_docker,
+	obfs_type, obfs_password, stats_port, stats_secret, xray_json, hy2_json, ssh_port, ssh_user, ssh_password, ssh_key, ssh_host_key, ssh_install_docker,
 	tls_mode, acme_email, bandwidth_up, bandwidth_down,
 	masquerade_url, acl_json, outbounds_json, max_online, ranking, active, status, token_hash, token, token_prefix,
-	agent_version, os, arch, hy2_version, runtime, last_seen_at, config_revision, applied_revision,
+	agent_version, os, arch, hy2_version, runtime, runtime_mode, last_seen_at, config_revision, applied_revision,
 	config_error, traffic_tx, traffic_rx, online_users, created_at, updated_at,
 	capabilities_json, cert_fingerprint, cert_not_after, cores_json, xray_version FROM nodes`
 
 func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
 	var n model.Node
-	var acl, outbounds, xrayJSON string
+	var acl, outbounds, xrayJSON, hy2JSON string
 	var active, sshInstallDocker int
 	var last sql.NullString
 	var capsJSON, certAfter, coresJSON sql.NullString
 	var created, updated string
 	err := row.Scan(&n.ID, &n.Name, &n.Type, &n.Flag, &n.IP, &n.Domain, &n.SNI, &n.Listen,
 		&n.Port, &n.PortRange, &n.HopInterval, &n.ObfsType, &n.ObfsPassword, &n.StatsPort, &n.StatsSecret,
-		&xrayJSON, &n.SSHPort, &n.SSHUser, &n.SSHPassword, &n.SSHKey, &n.SSHHostKey, &sshInstallDocker,
+		&xrayJSON, &hy2JSON, &n.SSHPort, &n.SSHUser, &n.SSHPassword, &n.SSHKey, &n.SSHHostKey, &sshInstallDocker,
 		&n.TLSMode, &n.ACMEEmail, &n.BandwidthUp, &n.BandwidthDown, &n.MasqueradeURL, &acl, &outbounds,
 		&n.MaxOnline, &n.Ranking, &active, &n.Status, new(string), &n.Token, &n.TokenPrefix, &n.AgentVersion,
-		&n.OS, &n.Arch, &n.Hy2Version, &n.Runtime, &last, &n.ConfigRevision, &n.AppliedRevision,
+		&n.OS, &n.Arch, &n.Hy2Version, &n.Runtime, &n.RuntimeMode, &last, &n.ConfigRevision, &n.AppliedRevision,
 		&n.ConfigError, &n.TrafficTx, &n.TrafficRx, &n.OnlineUsers, &created, &updated,
 		&capsJSON, &n.CertFingerprint, &certAfter, &coresJSON, &n.XrayVersion)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -53,10 +62,16 @@ func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
 	}
 	n.CreatedAt = parseTime(created)
 	n.UpdatedAt = parseTime(updated)
+	if n.RuntimeMode == "" {
+		n.RuntimeMode = "process"
+	}
 	n.ACL = unmarshalStrings(acl)
 	n.Outbounds = unmarshalOutbounds(outbounds)
 	if xrayJSON != "" && xrayJSON != "{}" {
 		_ = json.Unmarshal([]byte(xrayJSON), &n.Xray)
+	}
+	if hy2JSON != "" && hy2JSON != "{}" {
+		_ = json.Unmarshal([]byte(hy2JSON), &n.Hy2)
 	}
 	n.Groups = []model.Group{}
 	if n.Type == "" {
@@ -190,16 +205,16 @@ func (s *Store) CreateNode(ctx context.Context, n *model.Node, tokenHash, tokenP
 	}
 	res, err := s.DB.ExecContext(ctx,
 		`INSERT INTO nodes (name, type, flag, ip, domain, sni, listen, port, port_range, hop_interval,
-		 obfs_type, obfs_password, stats_port, stats_secret, xray_json, cores_json, ssh_port, ssh_user, ssh_password, ssh_key, ssh_host_key, ssh_install_docker,
+		 obfs_type, obfs_password, stats_port, stats_secret, xray_json, hy2_json, cores_json, ssh_port, ssh_user, ssh_password, ssh_key, ssh_host_key, ssh_install_docker,
 		 tls_mode, acme_email, bandwidth_up, bandwidth_down,
 		 masquerade_url, acl_json, outbounds_json, max_online, ranking, active, status, token_hash, token, token_prefix,
-		 created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 runtime_mode, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.Name, n.Type, n.Flag, n.IP, n.Domain, n.SNI, n.Listen, n.Port, n.PortRange, n.HopInterval,
-		n.ObfsType, n.ObfsPassword, n.StatsPort, n.StatsSecret, marshalJSON(n.Xray), marshalJSON(n.Cores), n.SSHPort, n.SSHUser, n.SSHPassword, n.SSHKey, n.SSHHostKey,
+		n.ObfsType, n.ObfsPassword, n.StatsPort, n.StatsSecret, marshalJSON(n.Xray), marshalJSON(n.Hy2), marshalJSON(n.Cores), n.SSHPort, n.SSHUser, n.SSHPassword, n.SSHKey, n.SSHHostKey,
 		boolInt(n.SSHInstallDocker), n.TLSMode, n.ACMEEmail, n.BandwidthUp, n.BandwidthDown,
 		n.MasqueradeURL, marshalJSON(n.ACL), marshalJSON(n.Outbounds), n.MaxOnline, n.Ranking, boolInt(n.Active),
-		"offline", tokenHash, n.Token, tokenPrefix, ts(nowT), ts(nowT))
+		"offline", tokenHash, n.Token, tokenPrefix, nodeRuntimeMode(n), ts(nowT), ts(nowT))
 	if err != nil {
 		return nil, attr(err, "create node")
 	}
@@ -214,15 +229,15 @@ func (s *Store) CreateNode(ctx context.Context, n *model.Node, tokenHash, tokenP
 func (s *Store) UpdateNode(ctx context.Context, n *model.Node, groupIDs []int64) (*model.Node, error) {
 	res, err := s.DB.ExecContext(ctx,
 		`UPDATE nodes SET name = ?, type = ?, flag = ?, ip = ?, domain = ?, sni = ?, listen = ?, port = ?, port_range = ?,
-		 hop_interval = ?, obfs_type = ?, obfs_password = ?, stats_port = ?, xray_json = ?, cores_json = ?, ssh_port = ?, ssh_user = ?,
+		 hop_interval = ?, obfs_type = ?, obfs_password = ?, stats_port = ?, xray_json = ?, hy2_json = ?, cores_json = ?, ssh_port = ?, ssh_user = ?,
 		 ssh_password = ?, ssh_key = ?, ssh_host_key = ?, ssh_install_docker = ?, tls_mode = ?, acme_email = ?,
 		 bandwidth_up = ?, bandwidth_down = ?, masquerade_url = ?, acl_json = ?, outbounds_json = ?,
-		 max_online = ?, ranking = ?, active = ?, updated_at = ? WHERE id = ?`,
+		 max_online = ?, ranking = ?, active = ?, runtime_mode = ?, updated_at = ? WHERE id = ?`,
 		n.Name, n.Type, n.Flag, n.IP, n.Domain, n.SNI, n.Listen, n.Port, n.PortRange, n.HopInterval,
-		n.ObfsType, n.ObfsPassword, n.StatsPort, marshalJSON(n.Xray), marshalJSON(n.Cores), n.SSHPort, n.SSHUser, n.SSHPassword, n.SSHKey, n.SSHHostKey,
+		n.ObfsType, n.ObfsPassword, n.StatsPort, marshalJSON(n.Xray), marshalJSON(n.Hy2), marshalJSON(n.Cores), n.SSHPort, n.SSHUser, n.SSHPassword, n.SSHKey, n.SSHHostKey,
 		boolInt(n.SSHInstallDocker), n.TLSMode, n.ACMEEmail, n.BandwidthUp, n.BandwidthDown,
 		n.MasqueradeURL, marshalJSON(n.ACL), marshalJSON(n.Outbounds), n.MaxOnline, n.Ranking,
-		boolInt(n.Active), ts(now()), n.ID)
+		boolInt(n.Active), nodeRuntimeMode(n), ts(now()), n.ID)
 	if err != nil {
 		return nil, attr(err, "update node")
 	}

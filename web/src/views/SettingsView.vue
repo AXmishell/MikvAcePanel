@@ -13,6 +13,7 @@
     <div class="tabs">
       <button class="tab" :class="{ active: tab === 'general' }" @click="tab = 'general'">常规</button>
       <button class="tab" :class="{ active: tab === 'subscription' }" @click="tab = 'subscription'">订阅页面</button>
+      <button class="tab" :class="{ active: tab === 'portal' }" @click="tab = 'portal'">用户中心</button>
       <button class="tab" :class="{ active: tab === 'analysis' }" @click="tab = 'analysis'">日志分析</button>
       <button class="tab" :class="{ active: tab === 'security' }" @click="tab = 'security'">安全</button>
       <button class="tab" :class="{ active: tab === 'certs' }" @click="tab = 'certs'; loadCertSettings()">证书签发</button>
@@ -34,7 +35,7 @@
             </div>
             <div class="field full">
               <label>订阅地址预览</label>
-              <div class="copy-row"><input :value="subscriptionPreview" readonly /><button class="btn btn-sm" @click="copy(subscriptionPreview)"><Copy :size="13" /> 复制</button></div>
+              <CopyField :value="subscriptionPreview" prefix="订阅" />
             </div>
           </div>
           <div class="divider"></div>
@@ -96,10 +97,7 @@
             </div>
             <div class="field"><label>HAPP Provider ID</label><input v-model="form.happ_provider_id" type="text" placeholder="可选" /></div>
             <div class="field"><label>HAPP 路由模式</label>
-              <select v-model="form.happ_routing_mode">
-                <option value="off">关闭（清除 HAPP 路由）</option>
-                <option value="custom">自定义路由配置</option>
-              </select>
+              <Select v-model="form.happ_routing_mode" :options="HAPP_ROUTING_OPTIONS" />
             </div>
             <div class="field full"><label>HAPP 路由配置（JSON）</label>
               <textarea v-model="form.happ_routing_profile" rows="4" placeholder='{"rules":[]}'></textarea>
@@ -110,6 +108,48 @@
         </div>
         <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
           <button class="btn btn-primary" :disabled="saving" @click="save(['page_title', 'subscription_title', 'page_note', 'logo_url', 'subscription_update_interval', 'support_url', 'web_page_url', 'subscription_buttons', 'happ_provider_id', 'happ_routing_mode', 'happ_routing_profile', 'happ_announce'])">保存订阅设置</button>
+        </div>
+      </section>
+
+      <section v-show="tab === 'portal'" class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">终端用户中心</div>
+            <div class="card-sub">用户使用用户 ID 与密码登录，查看订阅、流量、到期时间与设备。</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="field full">
+              <label class="checkbox">
+                <span class="switch"><input v-model="form.portal_enabled" type="checkbox" /></span>
+                启用用户中心
+              </label>
+              <span class="hint">关闭后 /portal 登录会被拒绝，已有的订阅链接不受影响。</span>
+            </div>
+            <div class="field"><label>页面标题</label><input v-model="form.portal_title" type="text" placeholder="用户中心" /></div>
+            <div class="field"><label>登录有效期（小时）</label><input v-model.number="form.portal_session_hours" type="number" min="1" max="720" />
+              <span class="hint">默认 72 小时，最长 720 小时。</span>
+            </div>
+            <div class="field full"><label>页面说明</label><input v-model="form.portal_note" type="text" placeholder="留空则使用订阅页面的说明" /></div>
+            <div class="field full">
+              <label>入口地址</label>
+              <CopyField :value="portalPreview" prefix="入口" />
+              <span class="hint">用户可以把它加入书签，或由管理员随订阅信息一起发送。</span>
+            </div>
+            <div class="field full">
+              <label>用户可自助操作</label>
+              <div class="chip-list">
+                <label class="checkbox"><input v-model="form.portal_allow_password_change" type="checkbox" /> 修改密码</label>
+                <label class="checkbox"><input v-model="form.portal_allow_device_reset" type="checkbox" /> 重置设备</label>
+                <label class="checkbox"><input v-model="form.portal_allow_sub_reset" type="checkbox" /> 重置订阅链接</label>
+              </div>
+              <span class="hint">重置订阅链接会让旧链接立即失效，建议只在必要时开放。</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
+          <button class="btn btn-primary" :disabled="saving" @click="save(['portal_enabled', 'portal_title', 'portal_note', 'portal_session_hours', 'portal_allow_password_change', 'portal_allow_device_reset', 'portal_allow_sub_reset'])">保存用户中心设置</button>
         </div>
       </section>
 
@@ -254,20 +294,12 @@
           <div class="form-grid">
             <div class="field">
               <label>ACME 目录</label>
-              <select v-model="certForm.ca">
-                <option value="https://acme-v02.api.letsencrypt.org/directory">Let's Encrypt</option>
-                <option value="https://acme-staging-v02.api.letsencrypt.org/directory">Let's Encrypt Staging（测试）</option>
-              </select>
+              <Select v-model="certForm.ca" :options="ACME_CA_OPTIONS" />
             </div>
             <div class="field"><label>ACME 邮箱</label><input v-model="certForm.email" type="email" placeholder="admin@example.com" /></div>
             <div class="field">
               <label>DNS 服务商</label>
-              <select v-model="certForm.provider">
-                <option value="manual">手动 TXT（无 API）</option>
-                <option value="cloudflare">Cloudflare</option>
-                <option value="alidns">阿里云 DNS</option>
-                <option value="dnspod">DNSPod</option>
-              </select>
+              <Select v-model="certForm.provider" :options="DNS_PROVIDER_OPTIONS" />
             </div>
             <div class="field"><label>提前续期天数</label><input v-model.number="certForm.renewDays" type="number" min="1" max="90" /></div>
             <template v-if="certForm.provider === 'cloudflare'">
@@ -361,20 +393,19 @@
 
     <Modal v-model="tokenModal" title="API 密钥已创建" size="sm">
       <div class="banner banner-warn">请立即复制该令牌，之后无法再次查看。</div>
-      <div class="copy-row">
-        <input :value="newToken" readonly @focus="$event.target.select()" />
-        <button class="btn btn-primary" @click="copy(newToken)"><Copy :size="14" /> 复制</button>
-      </div>
+      <CopyField :value="newToken" prefix="Token" />
     </Modal>
   </div>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { Copy, Download, Plus, Power, Trash2 } from 'lucide-vue-next'
+import { Download, Plus, Power, Trash2 } from 'lucide-vue-next'
 import { api } from '../api'
 import { auth, notify } from '../store'
+import CopyField from '../components/CopyField.vue'
 import Modal from '../components/Modal.vue'
+import Select from '../components/Select.vue'
 import { copyText, fmtBytes, fmtDate, fmtRelative } from '../format'
 import { setTheme, theme, themeOptions } from '../theme'
 
@@ -389,6 +420,7 @@ const pwSaving = ref(false)
 const pw = reactive({ old: '', next: '', confirm: '' })
 
 const subscriptionPreview = ref('')
+const portalPreview = ref('')
 const apiKeys = ref([])
 const scopes = ref([])
 const keyModal = ref(false)
@@ -404,9 +436,37 @@ const twoFA = reactive({ enabled: false, recoveryRemaining: 0, password: '', cod
 const certForm = reactive({ ca: 'https://acme-v02.api.letsencrypt.org/directory', email: '', provider: 'manual', renewDays: 30, apiToken: '', accessKeyId: '', accessKeySecret: '', loginToken: '', dnsConfigured: false })
 const certSaving = ref(false)
 
+const HAPP_ROUTING_OPTIONS = [
+  { value: 'off', label: '关闭（清除 HAPP 路由）' },
+  { value: 'custom', label: '自定义路由配置' },
+]
+const ACME_CA_OPTIONS = [
+  { value: 'https://acme-v02.api.letsencrypt.org/directory', label: "Let's Encrypt" },
+  { value: 'https://acme-staging-v02.api.letsencrypt.org/directory', label: "Let's Encrypt Staging（测试）" },
+]
+const DNS_PROVIDER_OPTIONS = [
+  { value: 'manual', label: '手动 TXT（无 API）' },
+  { value: 'cloudflare', label: 'Cloudflare' },
+  { value: 'alidns', label: '阿里云 DNS' },
+  { value: 'dnspod', label: 'DNSPod' },
+]
+
+// Settings are stored as strings, so checkbox-bound keys must be normalized
+// when loading and stringified when saving.
+const BOOL_KEYS = [
+  'log_ingest_enabled', 'portal_enabled', 'portal_allow_password_change',
+  'portal_allow_device_reset', 'portal_allow_sub_reset',
+]
+
+function applySettings(src) {
+  Object.assign(form, src)
+  for (const k of BOOL_KEYS) form[k] = form[k] === true || form[k] === 'true'
+}
+
 function syncPreview() {
   const pub = (form.public_url || '').replace(/\/+$/, '')
   subscriptionPreview.value = pub ? `${pub}/api/files/<token>` : '/api/files/<token>'
+  portalPreview.value = pub ? `${pub}/portal` : '/portal'
 }
 async function loadBackups() {
   try {
@@ -663,8 +723,7 @@ async function load() {
     const res = await api.settings()
     settings.value = res.settings
     meta.value = { version: res.version, platform: res.platform, dataDir: res.dataDir }
-    Object.assign(form, res.settings)
-    form.log_ingest_enabled = form.log_ingest_enabled === 'true' || form.log_ingest_enabled === true
+    applySettings(res.settings)
     syncPreview()
     loadCertSettings()
     load2FA()
@@ -684,11 +743,12 @@ async function save(keys) {
     for (const k of keys) {
       payload[k] = form[k]
     }
-    if (keys.includes('log_ingest_enabled')) payload.log_ingest_enabled = form.log_ingest_enabled ? 'true' : 'false'
+    for (const k of BOOL_KEYS) {
+      if (keys.includes(k)) payload[k] = form[k] ? 'true' : 'false'
+    }
     const res = await api.updateSettings(payload)
     settings.value = res.settings
-    Object.assign(form, res.settings)
-    form.log_ingest_enabled = form.log_ingest_enabled === 'true' || form.log_ingest_enabled === true
+    applySettings(res.settings)
     syncPreview()
     saved.value = '设置已保存。'
     notify('设置已保存')
@@ -716,10 +776,6 @@ async function changePassword() {
   } finally {
     pwSaving.value = false
   }
-}
-async function copy(text) {
-  await copyText(text)
-  notify('已复制')
 }
 onMounted(() => { load(); loadKeys(); loadBackups() })
 </script>

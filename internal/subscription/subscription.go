@@ -31,6 +31,7 @@ type Endpoint struct {
 	ObfsType     string
 	ObfsPassword string
 	Insecure     bool
+	ECHConfig    string
 }
 
 // DetectFormat implements the same User-Agent detection order as CELERITY.
@@ -79,6 +80,12 @@ func Endpoints(n model.Node) []Endpoint {
 	if host == "" {
 		return nil
 	}
+	// Realms mode and mimic cannot be expressed in share links: clients must
+	// configure the rendezvous URI manually, and mimic has to be enabled on
+	// both ends. Returning no endpoint is better than publishing a dead link.
+	if n.Hy2.IsRealm() || (n.Hy2.Mimic != nil && n.Hy2.Mimic.Enabled) {
+		return nil
+	}
 	sni := strings.TrimSpace(n.Domain)
 	if sni == "" {
 		sni = strings.TrimSpace(n.SNI)
@@ -88,12 +95,17 @@ func Endpoints(n model.Node) []Endpoint {
 		Label: "TLS", Host: host, Port: defaultInt(n.Port, 443),
 		SNI: sni, HasCert: hasCert, Insecure: !hasCert,
 		ObfsType: n.ObfsType, ObfsPassword: n.ObfsPassword,
+		ECHConfig: strings.TrimSpace(n.Hy2.ECHConfig),
 	}
 	out := []Endpoint{base}
-	if strings.TrimSpace(n.PortRange) != "" {
+	portRange := strings.TrimSpace(n.PortRange)
+	if strings.TrimSpace(n.Hy2.ListenPortRange) != "" {
+		portRange = strings.TrimSpace(n.Hy2.ListenPortRange)
+	}
+	if portRange != "" {
 		hop := base
 		hop.Label = "Hopping"
-		hop.PortRange = strings.TrimSpace(n.PortRange)
+		hop.PortRange = portRange
 		hop.HopInterval = n.HopInterval
 		out = append(out, hop)
 	}
@@ -154,6 +166,9 @@ func URI(u *model.User, n model.Node, e Endpoint) string {
 	if e.ObfsType != "" && e.ObfsPassword != "" {
 		params = append(params, "obfs="+url.QueryEscape(e.ObfsType))
 		params = append(params, "obfs-password="+url.QueryEscape(e.ObfsPassword))
+	}
+	if e.ECHConfig != "" {
+		params = append(params, "ech="+url.QueryEscape(e.ECHConfig))
 	}
 	return fmt.Sprintf("hysteria2://%s@%s:%d?%s#%s", userInfo(u), e.Host, e.Port,
 		strings.Join(params, "&"), encodeFragment(Label(n, e)))

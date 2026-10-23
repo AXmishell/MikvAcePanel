@@ -6,17 +6,8 @@
         <div class="dim small">由 Agent 上报的代理日志，经过解析与规则化检测评分。</div>
       </div>
       <div class="spacer"></div>
-      <select v-model="range" style="width: 120px" @change="refreshAll">
-        <option value="1h">最近 1 小时</option>
-        <option value="6h">最近 6 小时</option>
-        <option value="24h">最近 24 小时</option>
-        <option value="7d">最近 7 天</option>
-        <option value="30d">最近 30 天</option>
-      </select>
-      <select v-model="nodeId" style="width: 150px" @change="refreshAll">
-        <option value="">全部节点</option>
-        <option v-for="n in options.nodes" :key="n.id" :value="String(n.id)">{{ n.flag }} {{ n.name }}</option>
-      </select>
+      <Select v-model="range" :options="RANGE_OPTIONS" size="sm" style="width: 120px" @change="refreshAll" />
+      <Select v-model="nodeId" :options="nodeOptions" size="sm" style="width: 150px" @change="refreshAll" />
       <button class="btn btn-sm" :disabled="loading" @click="refreshAll"><RefreshCw :size="14" :class="{ spin: loading }" /> 刷新</button>
       <label class="checkbox" style="margin-left: 4px"><span class="switch"><input v-model="autoRefresh" type="checkbox" /><span></span></span> 实时</label>
     </div>
@@ -103,20 +94,16 @@
     </div>
 
     <section class="card section-gap">
-      <div class="card-header">
+      <div class="card-header" style="flex-wrap: wrap">
         <div class="card-title">日志流</div>
         <div class="spacer"></div>
+        <Select v-model="exportFormat" :options="EXPORT_FORMAT_OPTIONS" size="sm" style="width: 128px" />
+        <button class="btn btn-sm" @click="downloadLogs"><Download :size="13" /> 下载</button>
         <button class="btn btn-danger btn-sm" @click="clearLogs"><Trash2 :size="13" /> 清空日志</button>
       </div>
       <div class="toolbar" style="padding: 12px 14px 0; margin-bottom: 10px">
-        <select v-model="filterLevel" style="width: 120px" @change="reloadLogs">
-          <option value="">全部级别</option>
-          <option v-for="l in options.levels" :key="l" :value="l">{{ l }}</option>
-        </select>
-        <select v-model="filterEvent" style="width: 170px" @change="reloadLogs">
-          <option value="">全部事件</option>
-          <option v-for="e in options.events" :key="e.value" :value="e.value">{{ e.label }}</option>
-        </select>
+        <Select v-model="filterLevel" :options="levelOptions" size="sm" style="width: 120px" @change="reloadLogs" />
+        <Select v-model="filterEvent" :options="eventOptions" size="sm" style="width: 170px" @change="reloadLogs" />
         <input v-model="filterQuery" type="search" placeholder="搜索消息、IP、用户…" @keyup.enter="reloadLogs" />
         <button class="btn btn-sm" @click="reloadLogs">应用</button>
         <div class="spacer"></div>
@@ -171,7 +158,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  ChevronRight, Copy, RefreshCw, ScrollText, ShieldAlert, Trash2, TriangleAlert, Wifi,
+  ChevronRight, Copy, Download, RefreshCw, ScrollText, ShieldAlert, Trash2, TriangleAlert, Wifi,
 } from 'lucide-vue-next'
 import { api } from '../api'
 import { notify } from '../store'
@@ -179,6 +166,7 @@ import StatCard from '../components/StatCard.vue'
 import LineChart from '../components/LineChart.vue'
 import Pagination from '../components/Pagination.vue'
 import Modal from '../components/Modal.vue'
+import Select from '../components/Select.vue'
 import { copyText, eventLabel, fmtBytes, fmtDate, fmtRelative } from '../format'
 
 const route = useRoute()
@@ -190,6 +178,34 @@ const error = ref('')
 const summary = ref(null)
 const options = ref({ nodes: [], levels: [], events: [] })
 
+const EXPORT_FORMAT_OPTIONS = [
+  { value: 'log', label: '日志 .log' },
+  { value: 'csv', label: '表格 .csv' },
+  { value: 'jsonl', label: 'JSONL' },
+]
+const RANGE_OPTIONS = [
+  { value: '1h', label: '最近 1 小时' },
+  { value: '6h', label: '最近 6 小时' },
+  { value: '24h', label: '最近 24 小时' },
+  { value: '7d', label: '最近 7 天' },
+  { value: '30d', label: '最近 30 天' },
+]
+const nodeOptions = computed(() => [
+  { value: '', label: '全部节点' },
+  ...(options.value.nodes || []).map((n) => ({
+    value: String(n.id),
+    label: `${n.flag || ''} ${n.name || ''}`.trim() || `节点 #${n.id}`,
+  })),
+])
+const levelOptions = computed(() => [
+  { value: '', label: '全部级别' },
+  ...(options.value.levels || []).map((l) => ({ value: l, label: l })),
+])
+const eventOptions = computed(() => [
+  { value: '', label: '全部事件' },
+  ...(options.value.events || []).map((e) => ({ value: e.value, label: e.label })),
+])
+
 const logs = ref([])
 const total = ref(0)
 const page = ref(1)
@@ -197,6 +213,7 @@ const pageSize = 50
 const filterLevel = ref('')
 const filterEvent = ref('')
 const filterQuery = ref('')
+const exportFormat = ref('log')
 
 const detailOpen = ref(false)
 const detail = ref(null)
@@ -277,6 +294,29 @@ async function loadOptions() {
 function openDetail(l) {
   detail.value = l
   detailOpen.value = true
+}
+async function downloadLogs() {
+  try {
+    const res = await api.downloadLogs({
+      format: exportFormat.value,
+      nodeId: nodeId.value,
+      level: filterLevel.value,
+      event: filterEvent.value,
+      q: filterQuery.value,
+      from: windowFrom(),
+    })
+    const url = URL.createObjectURL(res.blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = res.filename || `mikvace-logs.${exportFormat.value}`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    notify(res.truncated ? '日志已下载（超过 10 万行，已截断）' : '日志已下载')
+  } catch (e) {
+    notify(e.message, 'error')
+  }
 }
 async function clearLogs() {
   if (!confirm('删除所有已存储的代理日志？分析历史将丢失。')) return

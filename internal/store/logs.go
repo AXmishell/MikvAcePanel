@@ -133,6 +133,33 @@ func logWhere(f model.LogFilter) (string, []any) {
 	return strings.Join(where, " AND "), args
 }
 
+const logSelect = `SELECT l.id, l.node_id, COALESCE(n.name,''), l.ts, l.level, l.logger, l.message, l.raw, l.event,
+	l.client_ip, l.user_id, l.host, l.port, l.bytes_tx, l.bytes_rx, l.duration_ms, l.error
+	FROM hy2_logs l LEFT JOIN nodes n ON n.id = l.node_id`
+
+type logScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanLogEntry(row logScanner) (model.LogEntry, error) {
+	var e model.LogEntry
+	var t string
+	if err := row.Scan(&e.ID, &e.NodeID, &e.NodeName, &t, &e.Level, &e.Logger, &e.Message, &e.Raw,
+		&e.Event, &e.ClientIP, &e.UserID, &e.Host, &e.Port, &e.BytesTx, &e.BytesRx, &e.DurationMS, &e.Error); err != nil {
+		return e, err
+	}
+	e.TS = parseTime(t)
+	return e, nil
+}
+
+// CountLogsFiltered returns the number of rows matching a log filter.
+func (s *Store) CountLogsFiltered(ctx context.Context, f model.LogFilter) (int, error) {
+	where, args := logWhere(f)
+	var total int
+	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM hy2_logs l WHERE `+where, args...).Scan(&total)
+	return total, err
+}
+
 // QueryLogs returns a page of parsed logs and the total count.
 func (s *Store) QueryLogs(ctx context.Context, f model.LogFilter) ([]model.LogEntry, int, error) {
 	if f.Page < 1 {
@@ -142,15 +169,11 @@ func (s *Store) QueryLogs(ctx context.Context, f model.LogFilter) ([]model.LogEn
 		f.Size = 50
 	}
 	where, args := logWhere(f)
-	var total int
-	countQ := `SELECT COUNT(*) FROM hy2_logs l WHERE ` + where
-	if err := s.DB.QueryRowContext(ctx, countQ, args...).Scan(&total); err != nil {
+	total, err := s.CountLogsFiltered(ctx, f)
+	if err != nil {
 		return nil, 0, err
 	}
-	q := `SELECT l.id, l.node_id, COALESCE(n.name,''), l.ts, l.level, l.logger, l.message, l.raw, l.event,
-		l.client_ip, l.user_id, l.host, l.port, l.bytes_tx, l.bytes_rx, l.duration_ms, l.error
-		FROM hy2_logs l LEFT JOIN nodes n ON n.id = l.node_id
-		WHERE ` + where + ` ORDER BY l.ts DESC, l.id DESC LIMIT ? OFFSET ?`
+	q := logSelect + ` WHERE ` + where + ` ORDER BY l.ts DESC, l.id DESC LIMIT ? OFFSET ?`
 	args = append(args, f.Size, (f.Page-1)*f.Size)
 	rows, err := s.DB.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -159,16 +182,41 @@ func (s *Store) QueryLogs(ctx context.Context, f model.LogFilter) ([]model.LogEn
 	defer rows.Close()
 	out := []model.LogEntry{}
 	for rows.Next() {
-		var e model.LogEntry
-		var t string
-		if err := rows.Scan(&e.ID, &e.NodeID, &e.NodeName, &t, &e.Level, &e.Logger, &e.Message, &e.Raw,
-			&e.Event, &e.ClientIP, &e.UserID, &e.Host, &e.Port, &e.BytesTx, &e.BytesRx, &e.DurationMS, &e.Error); err != nil {
+		e, err := scanLogEntry(rows)
+		if err != nil {
 			return nil, 0, err
 		}
-		e.TS = parseTime(t)
 		out = append(out, e)
 	}
 	return out, total, rows.Err()
+}
+
+// StreamLogs walks matching log rows newest first without loading them all
+// into memory. It stops after limit rows or when fn returns an error.
+func (s *Store) StreamLogs(ctx context.Context, f model.LogFilter, limit int, fn func(model.LogEntry) error) (int, error) {
+	if limit <= 0 || limit > 200000 {
+		limit = 100000
+	}
+	where, args := logWhere(f)
+	q := logSelect + ` WHERE ` + where + ` ORDER BY l.ts DESC, l.id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.DB.QueryContext(ctx, q, args...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		e, err := scanLogEntry(rows)
+		if err != nil {
+			return n, err
+		}
+		if err := fn(e); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, rows.Err()
 }
 
 func analysisWhere(o model.LogStatsOptions) (string, []any) {

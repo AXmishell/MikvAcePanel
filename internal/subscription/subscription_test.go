@@ -397,3 +397,44 @@ func TestDisabledInboundExcludedFromSubscriptions(t *testing.T) {
 		t.Fatalf("endpoints = %+v", eps)
 	}
 }
+
+func TestURIEchAndBuiltinRange(t *testing.T) {
+	u := &model.User{UserID: "alice", Password: "secret"}
+	n := model.Node{
+		ID: 7, Name: "ECH", IP: "203.0.113.7", Port: 443, TLSMode: "selfsigned",
+		HopInterval: "30s",
+		Hy2: model.Hy2Settings{
+			ECHConfig:       "AEz+DQBIAAAg",
+			ListenPortRange: "20000-50000",
+		},
+	}
+	eps := Endpoints(n)
+	if len(eps) != 2 {
+		t.Fatalf("endpoints = %d, want 2", len(eps))
+	}
+	raw := URI(u, n, eps[1])
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := parsed.Query()
+	if q.Get("ech") != "AEz+DQBIAAAg" {
+		t.Fatalf("ech = %q in %s", q.Get("ech"), raw)
+	}
+	if q.Get("mport") != "20000-50000" || q.Get("mportHopInt") != "30" {
+		t.Fatalf("built-in range not published: %s", raw)
+	}
+}
+
+func TestEndpointsSkipUnshareableModes(t *testing.T) {
+	realm := model.Node{ID: 1, Name: "Realm", IP: "203.0.113.1", Port: 443}
+	realm.Hy2.Realm = &model.Hy2Realm{URI: "realm://public@realm.hy2.io/my-server-8f3a"}
+	if eps := Endpoints(realm); len(eps) != 0 {
+		t.Fatalf("realm endpoints = %d, want 0", len(eps))
+	}
+	mimic := model.Node{ID: 2, Name: "Mimic", IP: "203.0.113.2", Port: 443}
+	mimic.Hy2.Mimic = &model.Hy2Mimic{Enabled: true}
+	if eps := Endpoints(mimic); len(eps) != 0 {
+		t.Fatalf("mimic endpoints = %d, want 0", len(eps))
+	}
+}

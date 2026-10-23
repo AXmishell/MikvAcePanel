@@ -178,7 +178,7 @@ PANEL_PUBLIC_URL=https://api.example.com \
 | 变量 | 说明 |
 |------|------|
 | `SERVE_WEB` | `false` 时只提供 API，不再返回内嵌前端（`/dashboard` 等） |
-| `FRONTEND_URL` | 前端公网地址，`/` 与 `/panel` 跳转使用 |
+| `FRONTEND_URL` | 前端公网地址，API-only 模式下 `/` 与 `/panel` 跳转使用 |
 | `CORS_ORIGINS` | 允许跨域的前端 Origin，必须精确匹配 |
 | `TRUSTED_PROXIES` | API 反向代理地址，用于客户端 IP 和登录限流 |
 | `PANEL_PUBLIC_URL` | API 公网地址，用于订阅链接和节点认证 |

@@ -54,6 +54,25 @@ docker run -d --name mikvace-node --restart unless-stopped \
 
 此时 Hysteria 容器使用 `tobyxdd/hysteria:latest`，挂载宿主机 `/var/lib/mikvace` 到 `/data`。Agent 在容器内看到的 `/data` 并不是宿主机路径，因此必须用 `HOST_DATA_DIR` 告诉它宿主机实际路径。
 
+### 在面板中选择运行方式
+
+节点编辑页的 **Agent 运行方式** 可以让每个节点独立选择：
+
+| 选项 | 说明 |
+| --- | --- |
+| 进程模式（`process`） | Agent 在自身容器/主机内直接启动 Hysteria 与 Xray 二进制，默认方式 |
+| Docker 模式（`docker`） | Agent 通过挂载的 Docker socket 管理独立的代理容器 |
+
+选择 Docker 模式后，面板生成的安装命令、`docker-compose.yml` 和 SSH 自动安装脚本都会自动加入：
+
+- `HY2_RUNTIME=docker`
+- `HOST_DATA_DIR=/var/lib/mikvace`
+- `-v /var/run/docker.sock:/var/run/docker.sock`
+
+修改运行方式不会远程切换正在运行的 Agent，需要点击 **安装** 重新执行命令或使用 **自动安装** 重建容器。节点卡片会显示所选模式和 Agent 实际回报的运行方式；两者不一致时会标记为需要重新安装。
+
+> 挂载 `/var/run/docker.sock` 等同于给 Agent 宿主机 root 权限，请只在受控节点上启用 Docker 模式。
+
 ### 方式 C：二进制 + systemd
 
 ```bash
@@ -116,10 +135,14 @@ WantedBy=multi-user.target
 ├── log/access.log         # Xray access log（Agent 自动 tail）
 ├── certs/cert.pem         # 自签名证书（selfsigned 模式）
 ├── certs/key.pem
+├── certs/ech.pem          # 可选的 ECH 私钥 + 客户端配置（面板下发）
+├── certs/client_ca.pem    # 可选的 mTLS 客户端 CA（面板下发）
 └── state/meta.json        # revision / protocol / port hopping 元信息
 ```
 
 进程模式下，Agent 会把配置中的 `/data/` 前缀改写为实际 `DATA_DIR`；Docker 模式下保持不变，因为 Hysteria 容器也把数据目录挂载到 `/data`。
+
+`ech.pem` 与 `client_ca.pem` 随 `config` 消息的 `files` 字段下发：`ech` 对应 `/data/certs/ech.pem`（0600），`clientCA` 对应 `/data/certs/client_ca.pem`（0644）。面板不会把 ECH 私钥返回给浏览器，只保留从 `ECH CONFIGS` 块提取的客户端配置列表。
 
 ---
 
@@ -220,6 +243,7 @@ xray run -c /data/config/config.json
 - 使用 root 或具备 Docker 权限的用户；
 - 首次连接会以 TOFU（首次信任）方式固定节点 SSH host key，后续安装会严格校验；也可以在节点 API/表单中预先填写 `sshHostKey`（authorized_keys 格式）来避免首次信任风险；
 - 可选自动执行 `get.docker.com` 安装 Docker；
+- 自动安装会使用节点所选的 **Agent 运行方式**；Docker 模式会额外检查并挂载 `/var/run/docker.sock`；
 - 私钥暂不支持 passphrase。
 
 ## 证书

@@ -13,7 +13,7 @@ import (
 	"github.com/axmishell/mikvacepanel/internal/model"
 )
 
-const userSelect = `SELECT id, user_id, username, password, subscription_token, xray_uuid, enabled,
+const userSelect = `SELECT id, user_id, username, password, login_password_hash, subscription_token, xray_uuid, enabled,
 	traffic_tx, traffic_rx, traffic_limit, max_devices, expire_at, last_seen_at,
 	created_at, updated_at FROM users`
 
@@ -47,7 +47,7 @@ func scanUser(row interface{ Scan(...any) error }) (*model.User, error) {
 	var enabled int
 	var expire, last sql.NullString
 	var created, updated string
-	err := row.Scan(&u.ID, &u.UserID, &u.Username, &u.Password, &u.SubscriptionToken, &u.XrayUUID, &enabled,
+	err := row.Scan(&u.ID, &u.UserID, &u.Username, &u.Password, &u.LoginPasswordHash, &u.SubscriptionToken, &u.XrayUUID, &enabled,
 		&u.TrafficTx, &u.TrafficRx, &u.TrafficLimit, &u.MaxDevices, &expire, &last,
 		&created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -83,10 +83,10 @@ func (s *Store) CreateUser(ctx context.Context, u *model.User, groupIDs, nodeIDs
 	nowT := now()
 	u.CreatedAt, u.UpdatedAt = nowT, nowT
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO users (user_id, username, password, subscription_token, xray_uuid, enabled,
+		`INSERT INTO users (user_id, username, password, login_password_hash, subscription_token, xray_uuid, enabled,
 		 traffic_tx, traffic_rx, traffic_limit, max_devices, expire_at, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		u.UserID, u.Username, u.Password, u.SubscriptionToken, u.XrayUUID, boolInt(u.Enabled),
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.UserID, u.Username, u.Password, u.LoginPasswordHash, u.SubscriptionToken, u.XrayUUID, boolInt(u.Enabled),
 		u.TrafficTx, u.TrafficRx, u.TrafficLimit, u.MaxDevices, tsPtr(u.ExpireAt), ts(nowT), ts(nowT))
 	if err != nil {
 		return nil, attr(err, "create user")
@@ -255,10 +255,22 @@ func (s *Store) UpdateUser(ctx context.Context, u *model.User, groupIDs, nodeIDs
 		}
 		password = old
 	}
+	loginHash := u.LoginPasswordHash
+	if loginHash == "" {
+		var old string
+		err := s.DB.QueryRowContext(ctx, `SELECT login_password_hash FROM users WHERE id = ?`, u.ID).Scan(&old)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
+		loginHash = old
+	}
 	res, err := s.DB.ExecContext(ctx,
-		`UPDATE users SET user_id = ?, username = ?, password = ?, xray_uuid = ?, enabled = ?, traffic_limit = ?,
+		`UPDATE users SET user_id = ?, username = ?, password = ?, login_password_hash = ?, xray_uuid = ?, enabled = ?, traffic_limit = ?,
 		 max_devices = ?, expire_at = ?, updated_at = ? WHERE id = ?`,
-		u.UserID, u.Username, password, u.XrayUUID, boolInt(u.Enabled), u.TrafficLimit,
+		u.UserID, u.Username, password, loginHash, u.XrayUUID, boolInt(u.Enabled), u.TrafficLimit,
 		u.MaxDevices, tsPtr(u.ExpireAt), ts(nowT), u.ID)
 	if err != nil {
 		return nil, attr(err, "update user")
@@ -320,11 +332,38 @@ func (s *Store) ResetUserSubscriptionToken(ctx context.Context, id int64) (strin
 	return token, nil
 }
 
-// ResetUserPassword sets a new auth password.
+// ResetUserPassword sets a new proxy connection password.
 func (s *Store) ResetUserPassword(ctx context.Context, id int64, password string) error {
 	res, err := s.DB.ExecContext(ctx, `UPDATE users SET password = ?, updated_at = ? WHERE id = ?`, password, ts(now()), id)
 	if err != nil {
 		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetUserLoginPasswordHash stores the bcrypt hash used by the user portal.
+func (s *Store) SetUserLoginPasswordHash(ctx context.Context, id int64, hash string) error {
+	res, err := s.DB.ExecContext(ctx, `UPDATE users SET login_password_hash = ?, updated_at = ? WHERE id = ?`, hash, ts(now()), id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetUserSubscriptionToken replaces the subscription path token. The caller
+// is responsible for validating its shape.
+func (s *Store) SetUserSubscriptionToken(ctx context.Context, id int64, token string) error {
+	res, err := s.DB.ExecContext(ctx, `UPDATE users SET subscription_token = ?, updated_at = ? WHERE id = ?`, token, ts(now()), id)
+	if err != nil {
+		return attr(err, "update subscription token")
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {

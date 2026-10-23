@@ -17,8 +17,8 @@
 <script setup>
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { api, setUnauthorizedHandler } from './api'
-import { auth, clearSession, setWarning, toasts, dismissToast } from './store'
+import { api, setPortalUnauthorizedHandler, setUnauthorizedHandler } from './api'
+import { auth, clearPortalSession, clearSession, setWarning, toasts, dismissToast } from './store'
 
 const router = useRouter()
 
@@ -26,6 +26,13 @@ setUnauthorizedHandler(() => {
   clearSession()
   if (router.currentRoute.value.name !== 'login') {
     router.push({ name: 'login', query: { redirect: router.currentRoute.value.fullPath } })
+  }
+})
+
+setPortalUnauthorizedHandler(() => {
+  clearPortalSession()
+  if (router.currentRoute.value.name !== 'portal-login') {
+    router.push({ name: 'portal-login', query: { redirect: router.currentRoute.value.fullPath } })
   }
 })
 

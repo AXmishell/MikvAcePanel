@@ -27,16 +27,18 @@ mkdocs build --strict # 输出 site/
 - **双核心节点**：同一节点可同时运行 Hysteria 2（QUIC/UDP）与 Xray（TCP），也可只运行其中一个。
 - **Xray 多协议入站**：VLESS / VMess / Trojan / Shadowsocks；TCP / WebSocket / gRPC / XHTTP / mKCP；REALITY / TLS / 无加密；管理员可在新建节点时按协议开关启用，一个节点可配置多个入站。
 - **订阅分发**：Clash/Mihomo YAML、sing-box JSON、Shadowrocket Base64、原始 URI 列表、Xray JSON；支持 HAPP 路由头与 providerid。
+- **终端用户中心**：用户使用 ID + 登录密码进入 `/portal`，查看订阅、流量、到期与设备；登录密码与连接密码相互独立，均可由用户或管理员修改；管理端可直接指定订阅 Token。
 - **Hysteria 2 认证**：节点把客户端认证请求转发到 `POST /api/auth`，支持启用/禁用、到期、流量限额、设备数限制（按唯一 IP + 宽限期）。
 - **节点管理**：面板生成 Hysteria / Xray 服务端配置，通过 WebSocket 实时下发；支持版本、运行状态、配置 revision、错误回报、启动/停止/重启。
 - **证书统一签发**：面板通过 ACME DNS-01 申请证书，Agent 提交 CSR、安装证书链（私钥不出节点）；节点自签 ACME 只使用 TLS-ALPN，不再占用 80 端口。
 - **两步验证（2FA）**：管理员可使用标准 TOTP 应用登录，提供一次性恢复码；2FA 密钥加密存储，支持自助关闭与恢复码重置。
-- **节点端 Docker 镜像**：单容器内置 Hysteria 2 + Xray + Agent，开箱即用；也支持 `HY2_RUNTIME=docker`，由 Agent 管理同机的代理容器。
+- **节点端 Docker 镜像**：单容器内置 Hysteria 2 + Xray + Agent，开箱即用；也可在节点表单中为每个节点选择 `HY2_RUNTIME=docker`，由 Agent 管理同机的代理容器。
 - **SSH 自动安装**：保存 SSH 凭据后可一键远程安装/重启节点容器（可选自动安装 Docker）。
 - **备份恢复**：本地 tar.gz 备份、自动备份保留策略、上传恢复（重启生效）。
 - **API Key 限流**：每个密钥独立速率限制与 `X-RateLimit-*` 响应头。
-- **端口跳跃**：Agent 自动维护 iptables UDP REDIRECT 规则。
-- **日志上报与分析**：采集 Hysteria/Xray 的 stdout/stderr 与 Xray access log，按批可靠上报；服务端解析时间、级别、事件、用户、客户端 IP、错误等字段，支持搜索、时间线、Top IP/用户、规则告警（暴力破解、未知用户、错误爆发、重启循环、TLS/ACME/REALITY 异常、配额耗尽等）。
+- **端口跳跃**：Agent 自动维护 iptables UDP REDIRECT 规则；也可改用 Hysteria 2.8+ 内置端口范围监听。
+- **Hysteria 2 深度调优**：QUIC 窗口、BBR/Reno 与 BBR 预设、带宽补偿、UDP 开关、DNS 解析器、协议嗅探、三种伪装模式、GeoIP/GeoSite ACL、直连绑定、Gecko 分片、mTLS 客户端 CA、ECH、Realms、mimic，以及受保留键保护的额外 YAML 覆盖；内置“官方默认 / 推荐均衡 / 高性能 / 抗审查 / 弱网优化”模板，新建节点默认应用推荐模板。
+- **日志上报与分析**：采集 Hysteria/Xray 的 stdout/stderr 与 Xray access log，按批可靠上报；服务端解析时间、级别、事件、用户、客户端 IP、错误等字段，支持搜索、时间线、Top IP/用户、规则告警（暴力破解、未知用户、错误爆发、重启循环、TLS/ACME/REALITY 异常、配额耗尽等），并可按当前筛选条件导出 `.log` / `.csv` / `.jsonl` 文件（最多 10 万行）。
 - **流量统计**：Agent 轮询 Hysteria `trafficStats` 与 Xray `StatsService`，按用户增量上报；服务端按 batch id 幂等入库，支持管理员重置用户流量。双核心节点的流量自动合并。
 - **API Key**：带 `users:read/write`、`nodes:read/write`、`stats:read`、`sync:write` 作用域的自动化凭据，支持过期时间和启停。
 - **单二进制部署**：Vue 构建产物通过 `go:embed` 嵌入服务端。
@@ -85,7 +87,7 @@ internal/logs       日志解析与规则分析
 internal/agent      Agent、运行时、证书、指标、流量轮询
 internal/certmanager 面板侧 ACME 签发、CSR 校验与证书下发
 web/                Vue 3 + Vite 前端
-docs/               API、节点、证书签发、2FA、日志分析文档
+docs/               API、用户中心、节点、证书签发、2FA、日志分析文档
 ```
 
 ---
@@ -97,7 +99,7 @@ cp .env.example .env       # 可选：修改端口/初始密码/公开地址
 docker compose up -d --build
 ```
 
-打开 `http://服务器IP:8080/dashboard`（访问 `/panel` 会自动跳转到 `/dashboard`）。
+打开 `http://服务器IP:8080/` 查看公开首页；管理员进入 `/dashboard` 登录控制台（旧地址 `/panel` 会自动跳转到 `/dashboard`）。终端用户入口是 `/portal`。
 
 管理员账号来自 `.env`：
 

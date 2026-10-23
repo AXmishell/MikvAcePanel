@@ -233,28 +233,7 @@ func (s *Server) renderSubPage(w http.ResponseWriter, r *http.Request, user *mod
 			locMap[key] = l
 			order = append(order, key)
 		}
-		if subscription.IsXray(n) {
-			for _, ep := range subscription.XrayEndpoints(n) {
-				uri := subscription.XrayURI(user, n, ep)
-				if uri == "" {
-					continue
-				}
-				name := strings.ToUpper(ep.Inbound.Protocol)
-				if name == "" {
-					name = "VLESS"
-				}
-				if tag := strings.TrimSpace(ep.Inbound.Tag); tag != "" {
-					name += " " + tag
-				}
-				l.Configs = append(l.Configs, subConfig{Name: name, URI: uri})
-			}
-		}
-		if !n.HasCore("hysteria") {
-			continue
-		}
-		for _, e := range subscription.Endpoints(n) {
-			l.Configs = append(l.Configs, subConfig{Name: e.Label, URI: subscription.URI(user, n, e)})
-		}
+		l.Configs = append(l.Configs, nodeConfigEntries(user, &n)...)
 	}
 	for _, key := range order {
 		data.Locations = append(data.Locations, subLocation{
@@ -271,6 +250,35 @@ func (s *Server) renderSubPage(w http.ResponseWriter, r *http.Request, user *mod
 	if err := subPageTemplate.Execute(w, data); err != nil {
 		s.log.Warn("render subscription page", "error", err)
 	}
+}
+
+// nodeConfigEntries renders every shareable endpoint of one node for a user.
+// It is shared by the subscription landing page and the user portal.
+func nodeConfigEntries(user *model.User, n *model.Node) []subConfig {
+	out := []subConfig{}
+	if subscription.IsXray(*n) {
+		for _, ep := range subscription.XrayEndpoints(*n) {
+			uri := subscription.XrayURI(user, *n, ep)
+			if uri == "" {
+				continue
+			}
+			name := strings.ToUpper(ep.Inbound.Protocol)
+			if name == "" {
+				name = "VLESS"
+			}
+			if tag := strings.TrimSpace(ep.Inbound.Tag); tag != "" {
+				name += " " + tag
+			}
+			out = append(out, subConfig{Name: name, URI: uri})
+		}
+	}
+	if !n.HasCore("hysteria") {
+		return out
+	}
+	for _, e := range subscription.Endpoints(*n) {
+		out = append(out, subConfig{Name: e.Label, URI: subscription.URI(user, *n, e)})
+	}
+	return out
 }
 
 func (s *Server) renderSubPageError(w http.ResponseWriter, r *http.Request, user *model.User, reason string) {
@@ -415,8 +423,8 @@ type subButton struct {
 }
 
 type subConfig struct {
-	Name string
-	URI  string
+	Name string `json:"name"`
+	URI  string `json:"uri"`
 }
 
 type subLocation struct {

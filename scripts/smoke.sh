@@ -357,6 +357,9 @@ step "API  hybrid node renders both cores"
 HYBRID_PAYLOAD="$(jq -nc --arg name "smoke-hybrid-$SUFFIX" '{
   name:$name, ip:"203.0.113.92", port:443,
   cores:["hysteria","xray"], tlsMode:"selfsigned", active:true,
+  hy2:{congestion:{type:"bbr",bbrProfile:"conservative"}, quic:{maxIdleTimeout:"45s"},
+       sniff:{enable:true,tcpPorts:"80,443"}, geoip:"/data/geoip.dat",
+       masquerade:{type:"string",content:"hello",statusCode:200}},
   xray:{apiPort:61001, inbounds:[
     {protocol:"vless",tag:"vless-in",port:8443,transport:"tcp",security:"reality",enabled:true}
   ]}
@@ -372,6 +375,11 @@ HYBRID_XRAY="$(jq -r '.configs.xray // empty' <<<"$BODY")"
 [ -n "$HY2_CONFIG" ] || fail "hybrid configs.hysteria is empty"
 [ -n "$HYBRID_XRAY" ] || fail "hybrid configs.xray is empty"
 assert_contains "$HYBRID_XRAY" '"protocol": "vless"' "hybrid xray config"
+assert_contains "$HY2_CONFIG" "bbrProfile: conservative" "hy2 congestion"
+assert_contains "$HY2_CONFIG" "maxIdleTimeout: 45s" "hy2 quic"
+assert_contains "$HY2_CONFIG" "tcpPorts: 80,443" "hy2 sniff"
+assert_contains "$HY2_CONFIG" "geoip: /data/geoip.dat" "hy2 geo database"
+assert_contains "$HY2_CONFIG" "type: string" "hy2 masquerade"
 ok "hybrid node $HYBRID_NODE_ID"
 
 step "API  cleanup"

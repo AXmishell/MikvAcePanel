@@ -40,7 +40,7 @@ docker compose up -d --build
 docker compose logs -f panel
 ```
 
-打开 `http://服务器IP:8080/dashboard`（旧地址 `/panel` 会自动跳转）。
+打开 `http://服务器IP:8080/` 查看公开首页，管理员进入 `/dashboard` 登录控制台（旧地址 `/panel` 会自动跳转）。
 
 ### 使用 GHCR 预构建镜像
 

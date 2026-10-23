@@ -53,7 +53,11 @@ type nodePayload struct {
 	ACL              []string           `json:"acl"`
 	Outbounds        []model.Outbound   `json:"outbounds"`
 	Xray             model.XraySettings `json:"xray"`
+	Hy2              model.Hy2Settings  `json:"hy2"`
+	ECHPEM           string             `json:"echPem"`
+	ClearECH         bool               `json:"clearEch"`
 	Cores            []string           `json:"cores"`
+	RuntimeMode      string             `json:"runtimeMode"`
 	MaxOnline        int                `json:"maxOnline"`
 	Ranking          float64            `json:"ranking"`
 	Active           *bool              `json:"active"`
@@ -80,6 +84,10 @@ func publicNode(n *model.Node) *model.Node {
 	c.Cores = n.EffectiveCores()
 	c.Xray = n.Xray
 	c.Xray.RealityPrivateKey = ""
+	c.Hy2 = n.Hy2
+	// ECH private keys must never leave the panel; only the client config list
+	// (Hy2.ECHConfig) is public.
+	c.Hy2.ECHPEM = ""
 	c.Xray.Inbounds = make([]model.XrayInbound, len(n.Xray.Inbounds))
 	for i := range n.Xray.Inbounds {
 		c.Xray.Inbounds[i] = n.Xray.Inbounds[i]
@@ -150,12 +158,19 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err, "node")
 		return
 	}
-	s.syncNodeConfig(r.Context(), created, false)
+	cfg, pushed := s.syncNodeConfig(r.Context(), created, false)
 	fresh, _ := s.store.GetNode(r.Context(), created.ID)
 	if fresh == nil {
 		fresh = created
 	}
-	writeJSON(w, http.StatusCreated, s.nodeResponse(fresh))
+	resp := s.nodeResponse(fresh)
+	resp["configRevision"] = cfg.Revision
+	resp["configChanged"] = cfg.Revision > 0
+	resp["pushed"] = pushed
+	if cfg.LastError != "" {
+		resp["configError"] = cfg.LastError
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +205,11 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := s.nodeResponse(saved)
 	resp["configRevision"] = cfg.Revision
+	resp["configChanged"] = cfg.Revision > existing.ConfigRevision
 	resp["pushed"] = pushed
+	if cfg.LastError != "" {
+		resp["configError"] = cfg.LastError
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -230,10 +249,20 @@ func (s *Server) handleResetNodeToken(w http.ResponseWriter, r *http.Request) {
 	}
 	s.hub.Disconnect(id)
 	n.Token = token
+	pub, _ := s.store.GetSetting(r.Context(), "public_url")
+	pub = strings.TrimRight(pub, "/")
+	if pub == "" {
+		pub = s.cfg.PublicURL
+	}
+	mode := nodeRuntime(n)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"token": token, "tokenPrefix": token[:12],
-		"installCommand": s.installCommand(n, "process"),
+		"token": token, "tokenPrefix": token[:12], "runtimeMode": mode,
+		"installScript": fmt.Sprintf("curl -fsSL %s/api/agent/install.sh | sudo bash -s -- --panel %q --token %q --runtime %s",
+			pub, pub, n.Token, mode),
+		"installCommand": s.installCommand(n, mode),
+		"processCommand": s.installCommand(n, "process"),
 		"dockerCommand":  s.installCommand(n, "docker"),
+		"compose":        s.installCompose(n, mode),
 	})
 }
 
@@ -248,11 +277,17 @@ func (s *Server) handleSyncNode(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err, "node")
 		return
 	}
+	before := n.ConfigRevision
 	cfg, pushed := s.syncNodeConfig(r.Context(), n, true)
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"ok": true, "revision": cfg.Revision, "pushed": pushed,
-		"connected": s.hub.Connected(id),
-	})
+		"configChanged": cfg.Revision > before,
+		"connected":     s.hub.Connected(id),
+	}
+	if cfg.LastError != "" {
+		resp["configError"] = cfg.LastError
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleSyncAll(w http.ResponseWriter, r *http.Request) {
@@ -332,6 +367,13 @@ func (s *Server) handleNodeConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func nodeRuntime(n *model.Node) string {
+	if n != nil && strings.EqualFold(strings.TrimSpace(n.RuntimeMode), "docker") {
+		return "docker"
+	}
+	return "process"
+}
+
 func (s *Server) handleNodeInstall(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err != nil {
@@ -348,13 +390,17 @@ func (s *Server) handleNodeInstall(w http.ResponseWriter, r *http.Request) {
 	if pub == "" {
 		pub = s.cfg.PublicURL
 	}
+	mode := nodeRuntime(n)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"token":          n.Token,
-		"publicUrl":      pub,
-		"installScript":  fmt.Sprintf("curl -fsSL %s/api/agent/install.sh | sudo bash -s -- --panel %q --token %q", pub, pub, n.Token),
-		"installCommand": s.installCommand(n, "process"),
+		"token":       n.Token,
+		"publicUrl":   pub,
+		"runtimeMode": mode,
+		"installScript": fmt.Sprintf("curl -fsSL %s/api/agent/install.sh | sudo bash -s -- --panel %q --token %q --runtime %s",
+			pub, pub, n.Token, mode),
+		"installCommand": s.installCommand(n, mode),
+		"processCommand": s.installCommand(n, "process"),
 		"dockerCommand":  s.installCommand(n, "docker"),
-		"compose":        s.installCompose(n),
+		"compose":        s.installCompose(n, mode),
 	})
 }
 
@@ -375,11 +421,29 @@ func (s *Server) installCommand(n *model.Node, runtime string) string {
   ghcr.io/axmishell/mikvacepanel-node:main`, pub, n.Token, runtime, extra)
 }
 
-func (s *Server) installCompose(n *model.Node) string {
+func (s *Server) installCompose(n *model.Node, runtime string) string {
 	pub, _ := s.store.GetSetting(context.Background(), "public_url")
 	pub = strings.TrimRight(pub, "/")
 	if pub == "" {
 		pub = s.cfg.PublicURL
+	}
+	if runtime == "docker" {
+		return fmt.Sprintf(`services:
+  node:
+    image: ghcr.io/axmishell/mikvacepanel-node:main
+    container_name: mikvace-node
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    environment:
+      PANEL_URL: %q
+      NODE_TOKEN: %q
+      HY2_RUNTIME: docker
+      HOST_DATA_DIR: /var/lib/mikvace
+    volumes:
+      - /var/lib/mikvace:/data
+      - /var/run/docker.sock:/var/run/docker.sock`, pub, n.Token)
 	}
 	return fmt.Sprintf(`services:
   node:
@@ -505,12 +569,30 @@ func (s *Server) nodeFromPayload(p *nodePayload, existing *model.Node) (*model.N
 		}
 		outbounds = append(outbounds, o)
 	}
+	hy2, err := normalizeHy2(p, existing)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateHy2(&hy2, existing, tlsMode, portRange, obfs, cores, p.Xray.Inbounds); err != nil {
+		return nil, err
+	}
 	sshPort := p.SSHPort
 	if sshPort == 0 {
 		sshPort = 22
 	}
 	if sshPort < 1 || sshPort > 65535 {
 		return nil, fmt.Errorf("SSH port must be between 1 and 65535")
+	}
+	runtimeMode := strings.ToLower(strings.TrimSpace(p.RuntimeMode))
+	if runtimeMode == "" {
+		if existing != nil && existing.RuntimeMode != "" {
+			runtimeMode = existing.RuntimeMode
+		} else {
+			runtimeMode = "process"
+		}
+	}
+	if runtimeMode != "process" && runtimeMode != "docker" {
+		return nil, fmt.Errorf("runtimeMode must be process or docker")
 	}
 	n := &model.Node{
 		Name: name, Type: nodeType, Flag: strings.TrimSpace(p.Flag),
@@ -523,7 +605,8 @@ func (s *Server) nodeFromPayload(p *nodePayload, existing *model.Node) (*model.N
 		TLSMode:          tlsMode, ACMEEmail: strings.TrimSpace(p.ACMEEmail),
 		BandwidthUp: strings.TrimSpace(p.BandwidthUp), BandwidthDown: strings.TrimSpace(p.BandwidthDown),
 		MasqueradeURL: strings.TrimSpace(p.MasqueradeURL), ACL: acl, Outbounds: outbounds,
-		Xray: p.Xray, Cores: cores, MaxOnline: p.MaxOnline, Ranking: ranking, Active: active,
+		Xray: p.Xray, Hy2: hy2, Cores: cores, MaxOnline: p.MaxOnline, Ranking: ranking, Active: active,
+		RuntimeMode: runtimeMode,
 	}
 	if n.HasCore("xray") {
 		if existing != nil && existing.HasCore("xray") {
@@ -578,13 +661,16 @@ func (s *Server) nodeFromPayload(p *nodePayload, existing *model.Node) (*model.N
 }
 
 func (s *Server) nodeResponse(n *model.Node) map[string]any {
+	mode := nodeRuntime(n)
 	return map[string]any{
 		"node":           publicNode(n),
 		"sshPasswordSet": n.SSHPassword != "",
 		"sshKeySet":      n.SSHKey != "",
-		"installCommand": s.installCommand(n, "process"),
+		"runtimeMode":    mode,
+		"installCommand": s.installCommand(n, mode),
+		"processCommand": s.installCommand(n, "process"),
 		"dockerCommand":  s.installCommand(n, "docker"),
-		"compose":        s.installCompose(n),
+		"compose":        s.installCompose(n, mode),
 		"connected":      s.hub.Connected(n.ID),
 	}
 }
@@ -630,12 +716,25 @@ func (s *Server) syncNodeConfig(ctx context.Context, n *model.Node, force bool) 
 		if host == "" {
 			host = n.IP
 		}
+		// The built-in Hysteria listen range, Realms mode and mimic replace
+		// the agent managed iptables port hopping.
+		agentPortRange := n.PortRange
+		if n.Hy2.ListenPortRange != "" || n.Hy2.IsRealm() || (n.Hy2.Mimic != nil && n.Hy2.Mimic.Enabled) {
+			agentPortRange = ""
+		}
+		files := map[string]string{}
+		if n.Hy2.ECHPEM != "" {
+			files["ech"] = n.Hy2.ECHPEM
+		}
+		if n.Hy2.ClientCA != "" {
+			files["clientCA"] = n.Hy2.ClientCA
+		}
 		if hasCapability(n.Capabilities, CapabilityMultiCore) {
-			pushed = s.hub.PushConfigBundle(n.ID, cfg.Revision, configs, cfg.Cores, n.TLSMode, n.Domain, host, n.PortRange, n.Port)
+			pushed = s.hub.PushConfigBundle(n.ID, cfg.Revision, configs, cfg.Cores, n.TLSMode, n.Domain, host, agentPortRange, n.Port, files)
 		} else {
 			// Older agents only understand a single core; keep them working
 			// with the node's primary core.
-			pushed = s.hub.PushConfig(n.ID, cfg.Revision, primary, configs[primary], n.TLSMode, n.Domain, host, n.PortRange, n.Port)
+			pushed = s.hub.PushConfig(n.ID, cfg.Revision, primary, configs[primary], n.TLSMode, n.Domain, host, agentPortRange, n.Port, files)
 		}
 	}
 	return cfg, pushed

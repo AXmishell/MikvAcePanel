@@ -27,6 +27,26 @@ export function clearSession() {
   localStorage.removeItem('mikvace_admin')
 }
 
+// Portal sessions are intentionally separate from administrator sessions.
+export const portalAuth = reactive({
+  token: localStorage.getItem('mikvace_portal_token') || '',
+  user: JSON.parse(localStorage.getItem('mikvace_portal_user') || 'null'),
+})
+
+export function setPortalSession(token, user) {
+  portalAuth.token = token
+  portalAuth.user = user || null
+  localStorage.setItem('mikvace_portal_token', token)
+  localStorage.setItem('mikvace_portal_user', JSON.stringify(user || null))
+}
+
+export function clearPortalSession() {
+  portalAuth.token = ''
+  portalAuth.user = null
+  localStorage.removeItem('mikvace_portal_token')
+  localStorage.removeItem('mikvace_portal_user')
+}
+
 export const toasts = reactive([])
 let toastSeq = 0
 

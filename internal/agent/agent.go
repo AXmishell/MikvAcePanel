@@ -668,6 +668,44 @@ func (a *Agent) logBatcher(ctx context.Context) {
 	}
 }
 
+// writeConfigFiles persists auxiliary TLS material pushed by the panel. ECH
+// keys and the mTLS client CA are written under the shared data directory so
+// both process and docker runtimes can read them at the canonical /data paths.
+func (a *Agent) writeConfigFiles(files map[string]string) error {
+	if len(files) == 0 {
+		return nil
+	}
+	dir := filepath.Join(a.cfg.DataDir, "certs")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create cert directory: %w", err)
+	}
+	for name, content := range files {
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		var filename string
+		var mode os.FileMode = 0o600
+		switch name {
+		case "ech":
+			filename = "ech.pem"
+		case "clientCA":
+			filename = "client_ca.pem"
+			mode = 0o644
+		default:
+			continue
+		}
+		path := filepath.Join(dir, filename)
+		tmp := path + ".tmp"
+		if err := os.WriteFile(tmp, []byte(content), mode); err != nil {
+			return fmt.Errorf("write %s: %w", filename, err)
+		}
+		if err := os.Rename(tmp, path); err != nil {
+			return fmt.Errorf("install %s: %w", filename, err)
+		}
+	}
+	return nil
+}
+
 func (a *Agent) handleConfig(raw json.RawMessage) {
 	var msg struct {
 		Revision  int64             `json:"revision"`
@@ -681,6 +719,7 @@ func (a *Agent) handleConfig(raw json.RawMessage) {
 		Host      string            `json:"host"`
 		Port      int               `json:"port"`
 		PortRange string            `json:"portRange"`
+		Files     map[string]string `json:"files"`
 	}
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		a.log.Warn("invalid config push")
@@ -722,6 +761,13 @@ func (a *Agent) handleConfig(raw json.RawMessage) {
 			cores = append(cores, core)
 		}
 		sort.Strings(cores)
+	}
+
+	if err := a.writeConfigFiles(msg.Files); err != nil {
+		a.write("config.ack", map[string]any{
+			"revision": msg.Revision, "ok": false, "error": err.Error(),
+		})
+		return
 	}
 
 	if strings.EqualFold(strings.TrimSpace(msg.TLSMode), "managed") {
