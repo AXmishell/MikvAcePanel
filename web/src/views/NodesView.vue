@@ -414,6 +414,7 @@ const tab = ref('basic')
 const editing = ref(null)
 const saving = ref(false)
 const formError = ref('')
+let inboundKey = 1
 const form = reactive(emptyForm())
 
 const sshBusy = ref(0)
@@ -451,7 +452,6 @@ const configText = computed(() => {
   return info.yaml || ''
 })
 
-let inboundKey = 1
 function emptyInbound() {
   return {
     _key: inboundKey++,
