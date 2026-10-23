@@ -25,7 +25,7 @@ mkdocs build --strict # 输出 site/
 
 - **中文 Web 面板**：仪表盘、用户、节点、服务器组、日志分析、设置。
 - **双核心节点**：同一节点可同时运行 Hysteria 2（QUIC/UDP）与 Xray（TCP），也可只运行其中一个。
-- **Xray 多协议入站**：VLESS / VMess / Trojan / Shadowsocks；TCP / WebSocket / gRPC / XHTTP / mKCP；REALITY / TLS / 无加密；一个节点可配置多个入站。
+- **Xray 多协议入站**：VLESS / VMess / Trojan / Shadowsocks；TCP / WebSocket / gRPC / XHTTP / mKCP；REALITY / TLS / 无加密；管理员可在新建节点时按协议开关启用，一个节点可配置多个入站。
 - **订阅分发**：Clash/Mihomo YAML、sing-box JSON、Shadowrocket Base64、原始 URI 列表、Xray JSON；支持 HAPP 路由头与 providerid。
 - **Hysteria 2 认证**：节点把客户端认证请求转发到 `POST /api/auth`，支持启用/禁用、到期、流量限额、设备数限制（按唯一 IP + 宽限期）。
 - **节点管理**：面板生成 Hysteria / Xray 服务端配置，通过 WebSocket 实时下发；支持版本、运行状态、配置 revision、错误回报、启动/停止/重启。

@@ -136,10 +136,14 @@ func Normalize(n *model.Node) error {
 	}
 	seenTags := map[string]bool{}
 	seenPorts := map[int]bool{x.APIPort: true}
+	enabled := 0
 	for i := range x.Inbounds {
 		ib := &x.Inbounds[i]
 		if err := normalizeInbound(n, ib, i); err != nil {
 			return err
+		}
+		if ib.IsEnabled() {
+			enabled++
 		}
 		if seenPorts[ib.Port] {
 			return fmt.Errorf("Xray inbound port %d is used more than once", ib.Port)
@@ -149,6 +153,9 @@ func Normalize(n *model.Node) error {
 			return fmt.Errorf("Xray inbound tag %q is used more than once", ib.Tag)
 		}
 		seenTags[ib.Tag] = true
+	}
+	if enabled == 0 {
+		return fmt.Errorf("at least one Xray inbound must be enabled")
 	}
 	// Keep the legacy fields in sync with the first inbound so old agents,
 	// exports and the panel's compatibility views keep working.
@@ -294,6 +301,9 @@ func Render(n *model.Node, users []model.User) (string, string, error) {
 	}
 	x := n.Xray
 	for _, ib := range x.Inbounds {
+		if !ib.IsEnabled() {
+			continue
+		}
 		if ib.Security == "reality" && (ib.RealityPrivateKey == "" || len(ib.RealityShortIDs) == 0) {
 			return "", "", fmt.Errorf("Xray inbound %q is missing REALITY key material; save the node again", ib.Tag)
 		}
@@ -309,14 +319,20 @@ func Render(n *model.Node, users []model.User) (string, string, error) {
 		"settings": map[string]any{"address": "127.0.0.1"}, "tag": "API_INBOUND",
 	}
 	inbounds := []map[string]any{apiInbound}
-	tags := []string{}
+	enabled := 0
 	for _, ib := range x.Inbounds {
+		if !ib.IsEnabled() {
+			continue
+		}
 		inbound, err := renderInbound(n, ib, users, nowT)
 		if err != nil {
 			return "", "", err
 		}
 		inbounds = append(inbounds, inbound)
-		tags = append(tags, ib.Tag)
+		enabled++
+	}
+	if enabled == 0 {
+		return "", "", fmt.Errorf("at least one Xray inbound must be enabled")
 	}
 
 	rules := []map[string]any{{
@@ -484,6 +500,9 @@ func ListenPorts(n *model.Node) []int {
 	seen := map[int]bool{}
 	out := []int{}
 	for _, ib := range n.Xray.EffectiveInbounds() {
+		if !ib.IsEnabled() {
+			continue
+		}
 		port := ib.Port
 		if port == 0 {
 			port = n.Port

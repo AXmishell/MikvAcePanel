@@ -95,6 +95,10 @@ type XrayInbound struct {
 	Tag      string `json:"tag"`
 	Listen   string `json:"listen"`
 	Port     int    `json:"port"`
+	// Enabled controls whether the inbound is rendered and published. A nil
+	// value means enabled, so nodes created before selective protocol support
+	// keep working unchanged.
+	Enabled *bool `json:"enabled,omitempty"`
 
 	Transport string `json:"transport"`
 	Security  string `json:"security"`
@@ -118,6 +122,12 @@ type XrayInbound struct {
 	XHTTPMode       string `json:"xhttpMode,omitempty"`
 	KCPSeed         string `json:"kcpSeed,omitempty"`
 	SSMethod        string `json:"ssMethod,omitempty"`
+}
+
+// IsEnabled reports whether the inbound is active. Missing enabled values are
+// treated as enabled for backward compatibility.
+func (ib XrayInbound) IsEnabled() bool {
+	return ib.Enabled == nil || *ib.Enabled
 }
 
 // XraySettings holds the Xray inbounds of a node. The legacy single-inbound

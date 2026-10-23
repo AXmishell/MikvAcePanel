@@ -159,6 +159,7 @@ WantedBy=multi-user.target
 | 字段 | 说明 |
 | --- | --- |
 | `protocol` | `vless` / `vmess` / `trojan` / `shadowsocks` |
+| `enabled` | 是否启用；缺省为 `true`，禁用后保留端口/密钥但不渲染、不下发订阅 |
 | `port` / `listen` | 入站端口和监听地址；端口留空使用节点端口 |
 | `transport` | `tcp` / `ws` / `grpc` / `xhttp` / `mkcp` |
 | `security` | `reality` / `tls` / `none`；Shadowsocks 固定 `none` |

@@ -168,3 +168,40 @@ func TestSSPasswordLengths(t *testing.T) {
 		}
 	}
 }
+
+func boolPtr(v bool) *bool { return &v }
+
+func TestDisabledInboundIsSkipped(t *testing.T) {
+	n := &model.Node{ID: 11, Type: "xray", IP: "203.0.113.11", Port: 443, Xray: model.XraySettings{
+		Inbounds: []model.XrayInbound{
+			{Protocol: "vless", Tag: "vless-in", Port: 443, Transport: "tcp", Security: "reality"},
+			{Protocol: "vmess", Tag: "vmess-in", Port: 8443, Transport: "ws", Security: "tls", Enabled: boolPtr(false)},
+		},
+	}}
+	if err := Normalize(n); err != nil {
+		t.Fatal(err)
+	}
+	text, _, err := Render(n, []model.User{{UserID: "alice", XrayUUID: "11111111-1111-4111-8111-111111111111", Enabled: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, `"protocol": "vmess"`) || !strings.Contains(text, `"protocol": "vless"`) {
+		t.Fatalf("disabled inbound was rendered:\n%s", text)
+	}
+	var cfg map[string]any
+	_ = json.Unmarshal([]byte(text), &cfg)
+	if got := len(cfg["inbounds"].([]any)); got != 2 {
+		t.Fatalf("inbounds = %d, want API + vless", got)
+	}
+}
+
+func TestNormalizeRejectsAllDisabledInbounds(t *testing.T) {
+	n := &model.Node{ID: 12, Type: "xray", IP: "203.0.113.12", Port: 443, Xray: model.XraySettings{
+		Inbounds: []model.XrayInbound{
+			{Protocol: "vless", Tag: "vless-in", Port: 443, Transport: "tcp", Security: "none", Enabled: boolPtr(false)},
+		},
+	}}
+	if err := Normalize(n); err == nil {
+		t.Fatal("expected an error when every inbound is disabled")
+	}
+}

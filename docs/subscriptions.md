@@ -14,7 +14,7 @@ Token 可以在用户页查看、重置。重置后旧链接立即失效。
 
 - 用户启用的节点 / 分组；
 - 节点启用的核心（Hysteria 2 / Xray，可同时启用）；
-- 节点上的每个 Xray 入站（VLESS / VMess / Trojan / Shadowsocks）；
+- 节点上的每个已启用 Xray 入站（VLESS / VMess / Trojan / Shadowsocks）；禁用的入站不会出现在订阅中；
 - 请求的 User-Agent 或 `format` 参数；
 - 面板订阅设置（标题、更新间隔、支持链接、HAPP 路由）。
 

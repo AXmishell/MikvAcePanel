@@ -92,6 +92,23 @@
           </div>
           <span class="hint">可同时启用两个核心；第一个为核心类型，订阅会自动合并两个核心的入站。</span>
         </div>
+        <div v-if="hasXray" class="field full">
+          <label>Xray 协议</label>
+          <div class="chip-list">
+            <button v-for="p in XRAY_PROTOCOLS" :key="p.id" type="button" class="chip" :class="{ on: protocolEnabled(p.id) }" @click="toggleProtocol(p.id)">{{ p.label }}</button>
+          </div>
+          <span class="hint">勾选即启用；取消只禁用，端口、REALITY 密钥和传输配置会保留。</span>
+        </div>
+        <div v-if="hasXray" class="field full">
+          <label>快速预设</label>
+          <div class="flex" style="gap: 8px; flex-wrap: wrap">
+            <button v-for="p in XRAY_PRESETS" :key="p.id" type="button" class="btn btn-sm" @click="applyPreset(p.protocols)">{{ p.label }}</button>
+          </div>
+          <span class="hint">预设会自动创建缺失的入站并启用对应协议，仍可在“TLS 与传输”中调整参数。</span>
+        </div>
+        <div v-if="hasXray && enabledInboundCount() === 0" class="field full">
+          <div class="banner banner-danger" style="margin: 0">至少启用一个 Xray 入站，否则无法保存。</div>
+        </div>
         <div class="field"><label>名称</label><input v-model="form.name" type="text" placeholder="Tokyo Edge" /></div>
         <div class="field"><label>国旗 Emoji</label><input v-model="form.flag" type="text" placeholder="🇯🇵" maxlength="8" /></div>
         <div class="field"><label>公网 IP / 主机名</label><input v-model="form.ip" type="text" placeholder="203.0.113.10" /></div>
@@ -190,9 +207,12 @@
           </div>
           <span class="hint">每个入站可独立选择协议、端口、传输和安全方式。</span>
         </div>
-        <div v-for="(ib, idx) in form.xray.inbounds" :key="ib._key" class="card" style="grid-column: 1 / -1; padding: 12px; margin-bottom: 8px">
+        <div v-for="(ib, idx) in form.xray.inbounds" :key="ib._key" class="card" :style="'grid-column: 1 / -1; padding: 12px; margin-bottom: 8px;' + (ib.enabled === false ? ' opacity: .55' : '')">
           <div class="flex" style="justify-content: space-between; align-items: center; margin-bottom: 8px">
-            <strong>#{{ idx + 1 }} {{ ib.protocol }} : {{ ib.port }}</strong>
+            <div class="flex" style="gap: 10px; align-items: center">
+              <label class="checkbox" style="margin: 0"><input v-model="ib.enabled" type="checkbox" /> 启用</label>
+              <strong>#{{ idx + 1 }} {{ ib.protocol }} : {{ ib.port }}</strong>
+            </div>
             <button class="icon-btn danger" type="button" :disabled="form.xray.inbounds.length === 1" @click="removeInbound(idx)"><X :size="15" /></button>
           </div>
           <div class="form-grid">
@@ -455,6 +475,7 @@ const configText = computed(() => {
 function emptyInbound() {
   return {
     _key: inboundKey++,
+    enabled: true,
     protocol: 'vless', tag: 'vless-in', listen: '', port: 443,
     transport: 'tcp', security: 'reality', flow: 'xtls-rprx-vision', fingerprint: 'chrome',
     alpn: [], realityDest: 'www.cloudflare.com:443', realitySni: [], realityPrivateKey: '',
@@ -470,6 +491,7 @@ function inboundsFromNode(n) {
   if (Array.isArray(x.inbounds) && x.inbounds.length) {
     return x.inbounds.map((ib) => ({
       ...emptyInbound(), ...ib,
+      enabled: ib.enabled !== false,
       port: ib.port || n.port || 443,
       sniText: (ib.realitySni || []).join(','),
       alpnText: (ib.alpn || []).join(','),
@@ -503,20 +525,101 @@ function emptyForm() {
 }
 function resetForm() { Object.assign(form, emptyForm()) }
 function splitList(v) { return String(v || '').split(',').map((s) => s.trim()).filter(Boolean) }
+
+const XRAY_PROTOCOLS = [
+  { id: 'vless', label: 'VLESS' },
+  { id: 'vmess', label: 'VMess' },
+  { id: 'trojan', label: 'Trojan' },
+  { id: 'shadowsocks', label: 'Shadowsocks' },
+]
+const XRAY_PRESETS = [
+  { id: 'vless', label: 'VLESS only', protocols: ['vless'] },
+  { id: 'vless-vmess', label: 'VLESS + VMess', protocols: ['vless', 'vmess'] },
+  { id: 'all', label: '全协议', protocols: ['vless', 'vmess', 'trojan', 'shadowsocks'] },
+]
+function protocolDefaults(proto) {
+  switch (proto) {
+    case 'vmess':
+      return { tag: 'vmess-in', port: 8443, transport: 'ws', security: 'tls', wsPath: '/vm', flow: '' }
+    case 'trojan':
+      return { tag: 'trojan-in', port: 8444, transport: 'grpc', security: 'tls', grpcServiceName: 'trojan', flow: '' }
+    case 'shadowsocks':
+      return { tag: 'ss-in', port: 8445, transport: 'tcp', security: 'none', ssMethod: '2022-blake3-aes-128-gcm', flow: '' }
+    default:
+      return { tag: 'vless-in', port: 443, transport: 'tcp', security: 'reality', flow: 'xtls-rprx-vision' }
+  }
+}
+function protocolInbounds(proto) { return form.xray.inbounds.filter((ib) => ib.protocol === proto) }
+function protocolEnabled(proto) { return protocolInbounds(proto).some((ib) => ib.enabled !== false) }
+function enabledInboundCount() { return form.xray.inbounds.filter((ib) => ib.enabled !== false).length }
+function usedXrayPorts() {
+  const used = new Set()
+  for (const ib of form.xray.inbounds) {
+    const p = Number(ib.port)
+    if (p) used.add(p)
+  }
+  const api = Number(form.xray.apiPort)
+  if (api) used.add(api)
+  return used
+}
+function allocatePort(start) {
+  const used = usedXrayPorts()
+  let port = Math.max(1, Number(start) || 443)
+  while (port <= 65535 && used.has(port)) port++
+  return port <= 65535 ? port : 443
+}
+function uniqueTag(base) {
+  let tag = base
+  let i = 2
+  while (form.xray.inbounds.some((ib) => ib.tag === tag)) tag = `${base}-${i++}`
+  return tag
+}
+function makeInbound(proto) {
+  const d = protocolDefaults(proto)
+  const ib = { ...emptyInbound(), protocol: proto, ...d }
+  ib.port = allocatePort(d.port)
+  ib.tag = uniqueTag(d.tag)
+  ib.enabled = true
+  normalizeInbound(ib)
+  return ib
+}
+function setProtocolEnabled(proto, on) {
+  const list = protocolInbounds(proto)
+  if (on) {
+    if (!list.length) form.xray.inbounds.push(makeInbound(proto))
+    else list.forEach((ib) => { ib.enabled = true })
+  } else {
+    list.forEach((ib) => { ib.enabled = false })
+  }
+}
+function toggleProtocol(proto) { setProtocolEnabled(proto, !protocolEnabled(proto)) }
+function applyPreset(protocols) {
+  if (!form.cores.includes('xray')) {
+    form.cores.push('xray')
+    form.type = form.cores[0]
+  }
+  for (const p of XRAY_PROTOCOLS) setProtocolEnabled(p.id, protocols.includes(p.id))
+}
+
 function toggleCore(core) {
   const i = form.cores.indexOf(core)
   if (i >= 0) {
     if (form.cores.length > 1) form.cores.splice(i, 1)
   } else {
     form.cores.push(core)
+    if (core === 'xray' && enabledInboundCount() === 0) {
+      if (!form.xray.inbounds.length) form.xray.inbounds.push(makeInbound('vless'))
+      else form.xray.inbounds[0].enabled = true
+    }
   }
   form.type = form.cores[0]
   if (form.type !== 'xray' && tab.value === 'advanced' && !form.cores.includes('hysteria')) tab.value = 'tls'
 }
 function addInbound() {
   const ib = emptyInbound()
-  ib.port = (Number(form.xray.inbounds[form.xray.inbounds.length - 1]?.port) || Number(form.port) || 443) + 1
-  ib.tag = `${ib.protocol}-in-${form.xray.inbounds.length + 1}`
+  const last = Number(form.xray.inbounds[form.xray.inbounds.length - 1]?.port) || Number(form.port) || 443
+  ib.port = allocatePort(last + 1)
+  ib.tag = uniqueTag(`${ib.protocol}-in`)
   form.xray.inbounds.push(ib)
 }
 function removeInbound(idx) {
@@ -686,6 +789,10 @@ async function save() {
   formError.value = ''
   saving.value = true
   try {
+    if (form.cores.includes('xray') && enabledInboundCount() === 0) {
+      formError.value = '至少启用一个 Xray 入站'
+      return
+    }
     const payload = {
       type: form.cores[0],
       cores: form.cores.slice(),
@@ -707,6 +814,7 @@ async function save() {
           const { _key, sniText, alpnText, sidText, ...rest } = ib
           return {
             ...rest,
+            enabled: rest.enabled !== false,
             port: Number(rest.port) || 443,
             realitySni: splitList(sniText),
             alpn: splitList(alpnText),

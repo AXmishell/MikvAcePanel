@@ -795,3 +795,57 @@ func TestHybridNodeRendersBothCores(t *testing.T) {
 		t.Fatalf("xray config missing vmess/ws:\n%s", xray)
 	}
 }
+
+func TestSelectiveXrayProtocols(t *testing.T) {
+	env := newTestEnv(t)
+	nodeResp := decode[map[string]any](t, env.do(t, "POST", "/api/nodes", env.token, map[string]any{
+		"name": "Selective", "flag": "US", "ip": "203.0.113.30", "port": 443,
+		"cores": []string{"xray"}, "tlsMode": "selfsigned", "active": true,
+		"xray": map[string]any{
+			"apiPort": 61000,
+			"inbounds": []map[string]any{
+				{"protocol": "vless", "tag": "vless-in", "port": 443, "transport": "tcp", "security": "reality", "enabled": true},
+				{"protocol": "vmess", "tag": "vmess-in", "port": 8443, "transport": "ws", "security": "tls", "enabled": false},
+			},
+		},
+	}))
+	nodeObj := nodeResp["node"].(map[string]any)
+	nodeID := int64(nodeObj["id"].(float64))
+	user := decode[map[string]any](t, env.do(t, "POST", "/api/users", env.token, map[string]any{
+		"userId": "selective", "password": "secretpass", "enabled": true,
+	}))
+	subToken := user["subscriptionToken"].(string)
+
+	env.app.syncXrayNodes(context.Background())
+	cfg := decode[map[string]any](t, env.do(t, "GET", "/api/nodes/"+itoa(nodeID)+"/config", env.token, nil))
+	body := cfg["yaml"].(string)
+	if !strings.Contains(body, `"protocol": "vless"`) || strings.Contains(body, `"protocol": "vmess"`) {
+		t.Fatalf("config did not respect enabled flags:\n%s", body)
+	}
+
+	req, _ := http.NewRequest("GET", env.srv.URL+"/api/files/"+subToken+"?format=uri", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(sub), "vless://") || strings.Contains(string(sub), "vmess://") {
+		t.Fatalf("subscription did not respect enabled flags:\n%s", sub)
+	}
+
+	// Disabling every inbound must be rejected.
+	bad := env.do(t, "POST", "/api/nodes", env.token, map[string]any{
+		"name": "NoProtocol", "ip": "203.0.113.31", "port": 443,
+		"cores": []string{"xray"}, "tlsMode": "selfsigned", "active": true,
+		"xray": map[string]any{
+			"inbounds": []map[string]any{
+				{"protocol": "vless", "tag": "vless-in", "port": 443, "transport": "tcp", "security": "none", "enabled": false},
+			},
+		},
+	})
+	defer bad.Body.Close()
+	if bad.StatusCode != http.StatusBadRequest {
+		t.Fatalf("all-disabled create status = %d", bad.StatusCode)
+	}
+}

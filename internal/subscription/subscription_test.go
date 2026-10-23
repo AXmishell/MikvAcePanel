@@ -374,3 +374,26 @@ func TestHybridNodeEmitsBothCores(t *testing.T) {
 		t.Fatalf("hybrid subscription missing a core:\n%s", list)
 	}
 }
+
+func TestDisabledInboundExcludedFromSubscriptions(t *testing.T) {
+	enabled := true
+	disabled := false
+	n := model.Node{
+		ID: 9, Type: "xray", Name: "Selective", IP: "203.0.113.9", Port: 443,
+		Xray: model.XraySettings{Inbounds: []model.XrayInbound{
+			{Protocol: "vless", Tag: "vless-in", Port: 443, Transport: "tcp", Security: "reality", Enabled: &enabled, RealitySNI: []string{"www.example.com"}, RealityPublicKey: "pk", RealityShortIDs: []string{"abcd"}},
+			{Protocol: "vmess", Tag: "vmess-in", Port: 8443, Transport: "ws", Security: "tls", Enabled: &disabled},
+		}},
+	}
+	u := &model.User{UserID: "alice", Password: "secret", XrayUUID: "11111111-1111-4111-8111-111111111111", Enabled: true}
+	list := URIList(u, []model.Node{n})
+	if !strings.Contains(list, "vless://") {
+		t.Fatalf("enabled inbound missing:\n%s", list)
+	}
+	if strings.Contains(list, "vmess://") {
+		t.Fatalf("disabled inbound leaked into subscription:\n%s", list)
+	}
+	if eps := XrayEndpoints(n); len(eps) != 1 || eps[0].Inbound.Protocol != "vless" {
+		t.Fatalf("endpoints = %+v", eps)
+	}
+}

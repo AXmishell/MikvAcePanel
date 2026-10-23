@@ -573,8 +573,14 @@ type XrayEndpoint struct {
 
 // XrayEndpoints expands the inbounds of an Xray node into client endpoints.
 func XrayEndpoints(n model.Node) []XrayEndpoint {
-	ibs := n.Xray.EffectiveInbounds()
-	if nodeHost(n) == "" {
+	all := n.Xray.EffectiveInbounds()
+	ibs := make([]model.XrayInbound, 0, len(all))
+	for _, ib := range all {
+		if ib.IsEnabled() {
+			ibs = append(ibs, ib)
+		}
+	}
+	if len(ibs) == 0 || nodeHost(n) == "" {
 		return nil
 	}
 	multi := len(ibs) > 1

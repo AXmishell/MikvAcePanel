@@ -42,7 +42,7 @@
 节点可以选择一个或两个**运行核心**；同时启用时 Agent 会在同一台机器上并行运行两个核心，订阅会自动合并所有入站。
 
 - **Hysteria 2**：QUIC/UDP，支持 obfs、端口跳跃、带宽限制、ACL、masquerade；
-- **Xray**：TCP，支持多个入站；每个入站可独立选择协议（VLESS / VMess / Trojan / Shadowsocks）、端口、传输（TCP / WebSocket / gRPC / XHTTP / mKCP）和安全方式（REALITY / TLS / 无加密）。
+- **Xray**：TCP，支持多个入站；每个入站可独立选择协议（VLESS / VMess / Trojan / Shadowsocks）、端口、传输（TCP / WebSocket / gRPC / XHTTP / mKCP）和安全方式（REALITY / TLS / 无加密）。新建节点时可用协议开关或预设快速启用，取消勾选只禁用、不丢失配置。
 
 ### TLS 模式
 
