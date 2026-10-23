@@ -8,7 +8,7 @@ LDFLAGS := -s -w \
 	-X github.com/axmishell/mikvacepanel/internal/version.Commit=$(COMMIT) \
 	-X github.com/axmishell/mikvacepanel/internal/version.BuildDate=$(BUILD_DATE)
 
-.PHONY: all web server server-api node client build test fmt vet clean docker docker-node dev docs docs-serve
+.PHONY: all web server server-api node client build test fmt vet clean docker docker-node dev docs docs-serve smoke
 
 all: build
 
@@ -43,6 +43,10 @@ fmt:
 
 vet:
 	go vet ./...
+
+# L0/L1 + temporary panel API smoke test.
+smoke:
+	./scripts/smoke.sh
 
 dev:
 	go run ./cmd/server -addr :8080 -data ./data
