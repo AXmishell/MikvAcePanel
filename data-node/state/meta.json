@@ -1,9 +1,0 @@
-{
-  "revision": 2,
-  "protocol": "hysteria",
-  "tlsMode": "selfsigned",
-  "domain": "",
-  "host": "127.0.0.1",
-  "port": 8443,
-  "portRange": ""
-}

@@ -8,10 +8,19 @@ site/
 
 # runtime data
 data/
+data-node/
+data-node.*/
 *.db
 *.db-shm
 *.db-wal
 *.log
+
+# certificates and private keys
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
 
 # frontend deps (dist is committed so `go build` works without npm)
 web/node_modules/
