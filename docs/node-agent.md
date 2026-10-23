@@ -123,40 +123,93 @@ WantedBy=multi-user.target
 
 ---
 
-## Xray / VLESS / REALITY
+## Xray：多协议 / 多入站
 
 节点设置中的 `xray` 对象：
 
+```json
+{
+  "apiPort": 61000,
+  "inbounds": [
+    {
+      "protocol": "vless",
+      "tag": "vless-in",
+      "port": 443,
+      "transport": "tcp",
+      "security": "reality",
+      "realityDest": "www.cloudflare.com:443",
+      "realitySni": ["www.cloudflare.com"],
+      "realityPublicKey": "...",
+      "realityShortIds": ["ab12cd34"]
+    },
+    {
+      "protocol": "vmess",
+      "tag": "vmess-ws",
+      "port": 8443,
+      "transport": "ws",
+      "security": "tls",
+      "wsPath": "/vm"
+    }
+  ]
+}
+```
+
+`inbounds[]` 每个条目的主要字段：
+
 | 字段 | 说明 |
 | --- | --- |
-| `transport` | `tcp` / `ws` / `grpc` |
-| `security` | `reality` / `tls` / `none` |
-| `flow` | TCP + REALITY/TLS 使用 `xtls-rprx-vision` |
+| `protocol` | `vless` / `vmess` / `trojan` / `shadowsocks` |
+| `port` / `listen` | 入站端口和监听地址；端口留空使用节点端口 |
+| `transport` | `tcp` / `ws` / `grpc` / `xhttp` / `mkcp` |
+| `security` | `reality` / `tls` / `none`；Shadowsocks 固定 `none` |
+| `flow` | VLESS + TCP 使用 `xtls-rprx-vision` |
 | `fingerprint` | uTLS 指纹，默认 `chrome` |
 | `alpn` | TLS ALPN，默认 `h2,http/1.1` |
-| `realityDest` | REALITY 伪装目标，默认 `www.cloudflare.com:443` |
-| `realitySni` | REALITY serverNames 数组 |
-| `realityPrivateKey` / `realityPublicKey` | 面板生成/保存的 x25519 密钥 |
-| `realityShortIds` | REALITY short id 数组 |
-| `wsPath` / `wsHost` | WebSocket 传输参数 |
+| `realityDest` / `realitySni` | REALITY 伪装目标与 serverNames |
+| `realityPrivateKey` / `realityPublicKey` | x25519 密钥；面板生成，私钥不回传浏览器 |
+| `realityShortIds` / `realitySpiderX` | REALITY short id 与 spiderX |
+| `wsPath` / `wsHost` | WebSocket 参数 |
 | `grpcServiceName` | gRPC 服务名 |
-| `apiPort` | Xray StatsService 本地端口，默认 61000 |
-| `inboundTag` | VLESS 入站标签，默认 `vless-in` |
+| `xhttpPath` / `xhttpHost` / `xhttpMode` | XHTTP 参数 |
+| `kcpSeed` | mKCP seed |
+| `ssMethod` | Shadowsocks 2022 加密方式（支持多用户与按用户统计） |
 
+`apiPort` 是 Xray StatsService 的本地端口，默认 `61000`，只监听 `127.0.0.1`。
 
-
-节点类型选择 Xray 后，面板生成包含全部授权用户的 `config.json`，Agent 运行：
+节点启用 Xray 后，面板生成包含全部授权用户的 `config.json`，Agent 运行：
 
 ```bash
 xray run -c /data/config/config.json
 ```
 
-- 支持 TCP、WebSocket、gRPC；
-- 支持 REALITY、TLS（使用 Agent 生成的自签名证书）和无加密；
-- REALITY 的 x25519 密钥与 short id 由面板生成；
+- 客户端凭据：VLESS/VMess 使用用户 UUID，Trojan 使用用户密码，Shadowsocks 使用由 UUID 派生的 2022 密钥；
 - Xray access log 写入 `/data/log/access.log`，Agent 自动 tail 并上报；
-- 用户流量通过 `xray api statsquery` 获取，按 email（userId）聚合；
-- 新增/修改/禁用用户后，面板会重新渲染并下发所有 Xray 节点配置；定时任务和流量批次也会移除已过期或超流量的用户。
+- 用户流量通过 `xray api statsquery` 获取，按 email（userId）聚合；Docker 模式通过 `docker exec` 调用；
+- 配置下发前 Agent 会执行 `xray run -test` 预检，失败时恢复上一份配置；
+- 新增/修改/禁用用户后，面板会重新渲染并下发所有 Xray 节点配置。
+
+## 双核心节点
+
+节点保存 `cores: ["hysteria", "xray"]` 时，面板生成一份 Hysteria YAML 和一份 Xray JSON，并通过同一条 `config` 消息的 `configs` 映射下发：
+
+```json
+{
+  "revision": 12,
+  "cores": ["hysteria", "xray"],
+  "configs": { "hysteria": "...", "xray": "..." },
+  "tlsMode": "managed",
+  "domain": "node.example.com",
+  "host": "node.example.com",
+  "port": 443,
+  "portRange": ""
+}
+```
+
+- Agent 为每个核心维护独立 runtime、配置文件和统计轮询器；
+- Docker 模式下两个核心分别运行在 `mikvace-hysteria` 与 `mikvace-hysteria-xray` 容器；
+- 端口跳跃只作用于 Hysteria（UDP），Xray 入站使用自己的 TCP 端口；
+- 在线数与流量为两个核心之和；日志统一上报；
+- Agent 通过 `multi-core.v1` capability 协商，旧 Agent 只接收主核心配置。
 
 ## SSH 自动安装
 

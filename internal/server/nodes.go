@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -19,6 +20,10 @@ import (
 )
 
 var portRangePattern = regexp.MustCompile(`^[0-9]{1,5}(-[0-9]{1,5})?(,[0-9]{1,5}(-[0-9]{1,5})?)*$`)
+
+// CapabilityMultiCore is advertised by agents that can apply several core
+// configs in one push.
+const CapabilityMultiCore = "multi-core.v1"
 
 type nodePayload struct {
 	Name             string             `json:"name"`
@@ -48,6 +53,7 @@ type nodePayload struct {
 	ACL              []string           `json:"acl"`
 	Outbounds        []model.Outbound   `json:"outbounds"`
 	Xray             model.XraySettings `json:"xray"`
+	Cores            []string           `json:"cores"`
 	MaxOnline        int                `json:"maxOnline"`
 	Ranking          float64            `json:"ranking"`
 	Active           *bool              `json:"active"`
@@ -64,6 +70,24 @@ func (p *nodePayload) groups() []int64 {
 	return out
 }
 
+// publicNode returns a copy safe to send to the browser: REALITY private keys
+// stay on the panel and are preserved on update by matching inbound tags.
+func publicNode(n *model.Node) *model.Node {
+	if n == nil {
+		return nil
+	}
+	c := *n
+	c.Cores = n.EffectiveCores()
+	c.Xray = n.Xray
+	c.Xray.RealityPrivateKey = ""
+	c.Xray.Inbounds = make([]model.XrayInbound, len(n.Xray.Inbounds))
+	for i := range n.Xray.Inbounds {
+		c.Xray.Inbounds[i] = n.Xray.Inbounds[i]
+		c.Xray.Inbounds[i].RealityPrivateKey = ""
+	}
+	return &c
+}
+
 func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 	nodes, err := s.store.ListNodes(r.Context())
 	if err != nil {
@@ -73,14 +97,15 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 	metrics, _ := s.store.LatestMetrics(r.Context())
 	items := make([]map[string]any, 0, len(nodes))
 	for _, n := range nodes {
-		item := map[string]any{"node": n, "connected": s.hub.Connected(n.ID)}
+		pub := publicNode(&n)
+		item := map[string]any{"node": pub, "connected": s.hub.Connected(n.ID)}
 		// Flatten the node fields for convenient table/card rendering while
 		// keeping a nested object for clients that prefer the old shape.
-		b, _ := json.Marshal(n)
+		b, _ := json.Marshal(pub)
 		if err := json.Unmarshal(b, &item); err != nil {
-			item = map[string]any{"node": n, "connected": s.hub.Connected(n.ID)}
+			item = map[string]any{"node": pub, "connected": s.hub.Connected(n.ID)}
 		}
-		item["node"] = n
+		item["node"] = pub
 		item["connected"] = s.hub.Connected(n.ID)
 		item["sshPasswordSet"] = n.SSHPassword != ""
 		item["sshKeySet"] = n.SSHKey != ""
@@ -103,7 +128,7 @@ func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err, "node")
 		return
 	}
-	writeJSON(w, http.StatusOK, n)
+	writeJSON(w, http.StatusOK, publicNode(n))
 }
 
 func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
@@ -290,12 +315,18 @@ func (s *Server) handleNodeConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	cores := []string{"hysteria"}
 	protocol := "hysteria"
 	if n, nerr := s.store.GetNode(r.Context(), id); nerr == nil {
-		protocol = n.Type
+		protocol = n.PrimaryCore()
+		cores = n.EffectiveCores()
+	}
+	if len(cfg.Configs) == 0 {
+		cfg.Configs = map[string]string{protocol: cfg.YAML}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": cfg.ID, "nodeId": cfg.NodeID, "revision": cfg.Revision, "yaml": cfg.YAML,
+		"configs": cfg.Configs, "cores": cores,
 		"hash": cfg.Hash, "createdAt": cfg.CreatedAt, "appliedAt": cfg.AppliedAt,
 		"lastError": cfg.LastError, "protocol": protocol,
 	})
@@ -373,7 +404,9 @@ func (s *Server) nodeFromPayload(p *nodePayload, existing *model.Node) (*model.N
 	}
 	nodeType := strings.ToLower(strings.TrimSpace(p.Type))
 	if nodeType == "" {
-		if existing != nil && existing.Type != "" {
+		if len(p.Cores) > 0 {
+			nodeType = strings.ToLower(strings.TrimSpace(p.Cores[0]))
+		} else if existing != nil && existing.Type != "" {
 			nodeType = existing.Type
 		} else {
 			nodeType = "hysteria"
@@ -382,6 +415,25 @@ func (s *Server) nodeFromPayload(p *nodePayload, existing *model.Node) (*model.N
 	if nodeType != "hysteria" && nodeType != "xray" {
 		return nil, fmt.Errorf("node type must be hysteria or xray")
 	}
+	cores := []string{}
+	seenCores := map[string]bool{}
+	for _, core := range p.Cores {
+		core = strings.ToLower(strings.TrimSpace(core))
+		if core == "" || seenCores[core] {
+			continue
+		}
+		if !model.ValidCore(core) {
+			return nil, fmt.Errorf("unsupported core %q", core)
+		}
+		seenCores[core] = true
+		cores = append(cores, core)
+	}
+	if len(cores) == 0 {
+		cores = []string{nodeType}
+	}
+	// The first core is the node's primary type; it keeps legacy endpoints and
+	// the Type column meaningful while Cores drives multi-core rendering.
+	nodeType = cores[0]
 	port := p.Port
 	if port == 0 {
 		port = 443
@@ -471,10 +523,10 @@ func (s *Server) nodeFromPayload(p *nodePayload, existing *model.Node) (*model.N
 		TLSMode:          tlsMode, ACMEEmail: strings.TrimSpace(p.ACMEEmail),
 		BandwidthUp: strings.TrimSpace(p.BandwidthUp), BandwidthDown: strings.TrimSpace(p.BandwidthDown),
 		MasqueradeURL: strings.TrimSpace(p.MasqueradeURL), ACL: acl, Outbounds: outbounds,
-		Xray: p.Xray, MaxOnline: p.MaxOnline, Ranking: ranking, Active: active,
+		Xray: p.Xray, Cores: cores, MaxOnline: p.MaxOnline, Ranking: ranking, Active: active,
 	}
-	if nodeType == "xray" {
-		if existing != nil && existing.Type == "xray" {
+	if n.HasCore("xray") {
+		if existing != nil && existing.HasCore("xray") {
 			if n.Xray.RealityPrivateKey == "" && existing.Xray.RealityPrivateKey != "" {
 				n.Xray.RealityPrivateKey = existing.Xray.RealityPrivateKey
 				n.Xray.RealityPublicKey = existing.Xray.RealityPublicKey
@@ -482,17 +534,27 @@ func (s *Server) nodeFromPayload(p *nodePayload, existing *model.Node) (*model.N
 			if len(n.Xray.RealityShortIDs) == 0 {
 				n.Xray.RealityShortIDs = existing.Xray.RealityShortIDs
 			}
+			// Preserve REALITY material of inbounds that were left unchanged.
+			for i := range n.Xray.Inbounds {
+				for _, old := range existing.Xray.EffectiveInbounds() {
+					if old.Tag == n.Xray.Inbounds[i].Tag && n.Xray.Inbounds[i].RealityPrivateKey == "" {
+						n.Xray.Inbounds[i].RealityPrivateKey = old.RealityPrivateKey
+						n.Xray.Inbounds[i].RealityPublicKey = old.RealityPublicKey
+						n.Xray.Inbounds[i].RealityShortIDs = old.RealityShortIDs
+					}
+				}
+			}
 		}
 		if err := xrayconfig.Normalize(n); err != nil {
 			return nil, err
 		}
-		if n.Xray.Security == "tls" && n.TLSMode == "acme" {
-			// Xray has no built-in ACME in this panel; node-side ACME is not
-			// available, but panel-issued managed certificates are.
+		if n.Xray.Security == "tls" && n.TLSMode == "acme" && len(cores) == 1 {
+			// A pure-Xray node has no built-in ACME in this panel; panel-issued
+			// managed certificates are the supported option.
 			n.TLSMode = "selfsigned"
 		}
-		if n.Port == 0 {
-			n.Port = 443
+		if len(cores) == 1 {
+			n.Port = n.Xray.Inbounds[0].Port
 		}
 	}
 	if existing != nil {
@@ -517,7 +579,7 @@ func (s *Server) nodeFromPayload(p *nodePayload, existing *model.Node) (*model.N
 
 func (s *Server) nodeResponse(n *model.Node) map[string]any {
 	return map[string]any{
-		"node":           n,
+		"node":           publicNode(n),
 		"sshPasswordSet": n.SSHPassword != "",
 		"sshKeySet":      n.SSHKey != "",
 		"installCommand": s.installCommand(n, "process"),
@@ -539,46 +601,99 @@ func (s *Server) syncNodeConfig(ctx context.Context, n *model.Node, force bool) 
 	if pub == "" {
 		pub = s.cfg.PublicURL
 	}
-	var yamlText, hash string
-	var err error
-	protocol := n.Type
-	if protocol == "" {
-		protocol = "hysteria"
-	}
-	if protocol == "xray" {
-		users, uerr := s.store.UsersForNode(ctx, n.ID)
-		if uerr != nil {
-			err = uerr
-		} else {
-			yamlText, hash, err = xrayconfig.Render(n, users)
-		}
-	} else {
-		yamlText, hash, err = hy2config.Render(n, pub)
-	}
+	configs, hash, err := s.renderNodeConfigs(ctx, n, pub)
 	if err != nil {
 		_ = s.store.SetNodeConfigError(ctx, n.ID, err.Error())
 		s.store.AddEvent(ctx, "node.config_error", n.ID, "error", "配置生成失败："+err.Error())
 		return &model.NodeConfig{NodeID: n.ID, Revision: n.ConfigRevision, LastError: err.Error()}, false
+	}
+	primary := n.PrimaryCore()
+	if len(n.EffectiveCores()) > 1 && s.hub.Connected(n.ID) && !hasCapability(n.Capabilities, CapabilityMultiCore) {
+		msg := "node agent does not support multi-core; upgrade the agent first"
+		_ = s.store.SetNodeConfigError(ctx, n.ID, msg)
+		return &model.NodeConfig{NodeID: n.ID, Revision: n.ConfigRevision, LastError: msg}, false
 	}
 	if strings.EqualFold(n.TLSMode, "managed") && s.hub.Connected(n.ID) && !hasCapability(n.Capabilities, certmanager.CapabilityCSR) {
 		msg := "node agent does not support panel-issued certificates; upgrade the agent first"
 		_ = s.store.SetNodeConfigError(ctx, n.ID, msg)
 		return &model.NodeConfig{NodeID: n.ID, Revision: n.ConfigRevision, LastError: msg}, false
 	}
-	cfg, created, err := s.store.SaveNodeConfig(ctx, n.ID, yamlText, hash)
+	cfg, created, err := s.store.SaveNodeConfigBundle(ctx, n.ID, configs[primary], configs, hash)
 	if err != nil {
 		s.log.Error("save node config", "node", n.ID, "error", err)
 		return &model.NodeConfig{NodeID: n.ID, Revision: n.ConfigRevision}, false
 	}
+	cfg.Cores = n.EffectiveCores()
 	pushed := false
 	if s.hub.Connected(n.ID) && (force || created || n.AppliedRevision < cfg.Revision) {
 		host := n.Domain
 		if host == "" {
 			host = n.IP
 		}
-		pushed = s.hub.PushConfig(n.ID, cfg.Revision, protocol, cfg.YAML, n.TLSMode, n.Domain, host, n.PortRange, n.Port)
+		if hasCapability(n.Capabilities, CapabilityMultiCore) {
+			pushed = s.hub.PushConfigBundle(n.ID, cfg.Revision, configs, cfg.Cores, n.TLSMode, n.Domain, host, n.PortRange, n.Port)
+		} else {
+			// Older agents only understand a single core; keep them working
+			// with the node's primary core.
+			pushed = s.hub.PushConfig(n.ID, cfg.Revision, primary, configs[primary], n.TLSMode, n.Domain, host, n.PortRange, n.Port)
+		}
 	}
 	return cfg, pushed
+}
+
+// renderNodeConfigs renders one configuration per enabled core.
+func (s *Server) renderNodeConfigs(ctx context.Context, n *model.Node, publicURL string) (map[string]string, string, error) {
+	configs := map[string]string{}
+	for _, core := range n.EffectiveCores() {
+		switch core {
+		case "hysteria":
+			text, _, err := hy2config.Render(n, publicURL)
+			if err != nil {
+				return nil, "", fmt.Errorf("hysteria config: %w", err)
+			}
+			configs[core] = text
+		case "xray":
+			users, err := s.store.UsersForNode(ctx, n.ID)
+			if err != nil {
+				return nil, "", err
+			}
+			text, _, err := xrayconfig.Render(n, users)
+			if err != nil {
+				return nil, "", fmt.Errorf("xray config: %w", err)
+			}
+			configs[core] = text
+		default:
+			return nil, "", fmt.Errorf("unsupported core %q", core)
+		}
+	}
+	if len(configs) == 0 {
+		return nil, "", fmt.Errorf("node has no enabled cores")
+	}
+	if len(configs) == 1 {
+		// Keep the single-core hash stable across the multi-core upgrade so
+		// existing nodes are not needlessly restarted.
+		for _, text := range configs {
+			sum := sha256.Sum256([]byte(text))
+			return configs, hex.EncodeToString(sum[:]), nil
+		}
+	}
+	return configs, hashConfigs(configs), nil
+}
+
+func hashConfigs(configs map[string]string) string {
+	cores := make([]string, 0, len(configs))
+	for core := range configs {
+		cores = append(cores, core)
+	}
+	sort.Strings(cores)
+	h := sha256.New()
+	for _, core := range cores {
+		h.Write([]byte(core))
+		h.Write([]byte{0})
+		h.Write([]byte(configs[core]))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // syncXrayNodes re-renders every active Xray node so user membership changes
@@ -589,7 +704,7 @@ func (s *Server) syncXrayNodes(ctx context.Context) {
 		return
 	}
 	for i := range nodes {
-		if nodes[i].Type == "xray" {
+		if nodes[i].HasCore("xray") {
 			s.syncNodeConfig(ctx, &nodes[i], false)
 		}
 	}

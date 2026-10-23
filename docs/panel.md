@@ -39,8 +39,10 @@
 
 ### 节点类型
 
+节点可以选择一个或两个**运行核心**；同时启用时 Agent 会在同一台机器上并行运行两个核心，订阅会自动合并所有入站。
+
 - **Hysteria 2**：QUIC/UDP，支持 obfs、端口跳跃、带宽限制、ACL、masquerade；
-- **Xray VLESS**：TCP / WebSocket / gRPC，支持 REALITY、TLS、无加密。
+- **Xray**：TCP，支持多个入站；每个入站可独立选择协议（VLESS / VMess / Trojan / Shadowsocks）、端口、传输（TCP / WebSocket / gRPC / XHTTP / mKCP）和安全方式（REALITY / TLS / 无加密）。
 
 ### TLS 模式
 
@@ -75,7 +77,7 @@
 - 上行/下行带宽；
 - ACL 规则与自定义出站；
 - masquerade URL；
-- Xray：传输方式、REALITY 密钥、SNI、short id、uTLS 指纹、ALPN、API 端口、入站标签。
+- Xray：入站列表（协议、端口、传输）、REALITY 密钥、SNI、short id、uTLS 指纹、ALPN、API 端口、入站标签、XHTTP/mKCP 参数。
 
 ## 日志
 

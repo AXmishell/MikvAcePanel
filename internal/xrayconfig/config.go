@@ -1,5 +1,6 @@
-// Package xrayconfig renders Xray-core server configuration for VLESS
-// inbounds (REALITY, TLS or plain text) and embeds the panel user list.
+// Package xrayconfig renders Xray-core server configuration for VLESS, VMess,
+// Trojan and Shadowsocks inbounds (REALITY, TLS or plaintext) and embeds the
+// panel user list.
 package xrayconfig
 
 import (
@@ -10,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +24,10 @@ const (
 	AccessLog  = "/data/log/access.log"
 	APIPort    = 61000
 	InboundTag = "vless-in"
+
+	// DefaultSSMethod is used when a Shadowsocks inbound does not specify one.
+	// 2022 methods are required for per-user passwords and traffic statistics.
+	DefaultSSMethod = "2022-blake3-aes-128-gcm"
 )
 
 // GenerateRealityKeypair creates an X25519 keypair in the encoding expected by
@@ -42,73 +48,239 @@ func GenerateShortID() string {
 	return hex.EncodeToString(b)
 }
 
+// SSKeyLen returns the key length used by a Shadowsocks 2022 method.
+func SSKeyLen(method string) int {
+	switch strings.ToLower(strings.TrimSpace(method)) {
+	case "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305":
+		return 32
+	default:
+		return 16
+	}
+}
+
+// SSPassword derives a stable per-user Shadowsocks password from the user's
+// Xray UUID. It is used by both the server config and client subscriptions.
+func SSPassword(u *model.User, method string) string {
+	seed := u.XrayUUID
+	if seed == "" {
+		seed = u.UserID
+	}
+	sum := sha256.Sum256([]byte("mikvace-ss:" + seed))
+	n := SSKeyLen(method)
+	return base64.StdEncoding.EncodeToString(sum[:n])
+}
+
+// SSServerKey derives the Shadowsocks-2022 server key for an inbound. It is
+// never shared with clients, but Xray requires it in the server settings.
+func SSServerKey(n *model.Node, tag, method string) string {
+	sum := sha256.Sum256([]byte("mikvace-ss-server:" + strconv.FormatInt(n.ID, 10) + ":" + tag))
+	return base64.StdEncoding.EncodeToString(sum[:SSKeyLen(method)])
+}
+
+// ClientPassword returns the password a user sends to a Trojan/SS inbound.
+func ClientPassword(u *model.User) string {
+	if u.Password != "" {
+		return u.Password
+	}
+	return u.UserID
+}
+
+// foldLegacyInbounds expands the legacy single-inbound fields without
+// generating or persisting new key material. Render uses it so it never emits a
+// config whose REALITY key differs from what subscriptions advertise.
+func foldLegacyInbounds(n *model.Node) {
+	ibs := n.Xray.EffectiveInbounds()
+	port := n.Port
+	if port == 0 {
+		port = 443
+	}
+	for i := range ibs {
+		if ibs[i].Port == 0 {
+			ibs[i].Port = port
+		}
+	}
+	n.Xray.Inbounds = ibs
+}
+
 // Normalize fills defaults for an Xray node. It also guarantees that REALITY
-// key material and at least one short id exist.
+// key material and at least one short id exist and folds the legacy
+// single-inbound fields into Inbounds.
 func Normalize(n *model.Node) error {
 	x := &n.Xray
-	x.Transport = strings.ToLower(strings.TrimSpace(x.Transport))
-	if x.Transport == "" {
-		x.Transport = "tcp"
-	}
-	switch x.Transport {
-	case "tcp", "ws", "grpc":
-	default:
-		return fmt.Errorf("unsupported Xray transport %q", x.Transport)
-	}
-	x.Security = strings.ToLower(strings.TrimSpace(x.Security))
-	if x.Security == "" {
-		x.Security = "reality"
-	}
-	switch x.Security {
-	case "reality", "tls", "none":
-	default:
-		return fmt.Errorf("unsupported Xray security %q", x.Security)
-	}
-	if x.Transport == "tcp" && x.Security != "none" && x.Flow == "" {
-		x.Flow = "xtls-rprx-vision"
-	}
-	if x.Fingerprint == "" {
-		x.Fingerprint = "chrome"
-	}
-	if x.WSPath == "" {
-		x.WSPath = "/"
-	}
-	if x.GRPCServiceName == "" {
-		x.GRPCServiceName = "grpc"
+	// Fold legacy fields into a single inbound when the node predates
+	// multi-inbound support.
+	if len(x.Inbounds) == 0 {
+		port := n.Port
+		if port == 0 {
+			port = 443
+		}
+		tag := strings.TrimSpace(x.InboundTag)
+		if tag == "" {
+			tag = InboundTag
+		}
+		x.Inbounds = []model.XrayInbound{{
+			Protocol: "vless", Tag: tag, Port: port,
+			Transport: x.Transport, Security: x.Security, Flow: x.Flow,
+			Fingerprint: x.Fingerprint, ALPN: x.ALPN,
+			RealityDest: x.RealityDest, RealitySNI: x.RealitySNI,
+			RealityPrivateKey: x.RealityPrivateKey, RealityPublicKey: x.RealityPublicKey,
+			RealityShortIDs: x.RealityShortIDs, RealitySpiderX: x.RealitySpiderX,
+			WSPath: x.WSPath, WSHost: x.WSHost, GRPCServiceName: x.GRPCServiceName,
+		}}
 	}
 	if x.APIPort == 0 {
 		x.APIPort = APIPort
 	}
-	if x.InboundTag == "" {
-		x.InboundTag = InboundTag
+	if x.APIPort < 1 || x.APIPort > 65535 {
+		return fmt.Errorf("Xray API port must be between 1 and 65535")
 	}
-	if x.Security == "reality" {
-		if x.RealityDest == "" {
-			x.RealityDest = "www.cloudflare.com:443"
+	seenTags := map[string]bool{}
+	seenPorts := map[int]bool{x.APIPort: true}
+	for i := range x.Inbounds {
+		ib := &x.Inbounds[i]
+		if err := normalizeInbound(n, ib, i); err != nil {
+			return err
 		}
-		if len(x.RealitySNI) == 0 {
-			host := strings.Split(x.RealityDest, ":")[0]
-			x.RealitySNI = []string{host}
+		if seenPorts[ib.Port] {
+			return fmt.Errorf("Xray inbound port %d is used more than once", ib.Port)
 		}
-		if x.RealityPrivateKey == "" || x.RealityPublicKey == "" {
+		seenPorts[ib.Port] = true
+		if seenTags[ib.Tag] {
+			return fmt.Errorf("Xray inbound tag %q is used more than once", ib.Tag)
+		}
+		seenTags[ib.Tag] = true
+	}
+	// Keep the legacy fields in sync with the first inbound so old agents,
+	// exports and the panel's compatibility views keep working.
+	first := x.Inbounds[0]
+	x.Transport, x.Security, x.Flow = first.Transport, first.Security, first.Flow
+	x.Fingerprint, x.ALPN = first.Fingerprint, append([]string{}, first.ALPN...)
+	x.RealityDest, x.RealitySNI = first.RealityDest, append([]string{}, first.RealitySNI...)
+	x.RealityPrivateKey, x.RealityPublicKey = first.RealityPrivateKey, first.RealityPublicKey
+	x.RealityShortIDs = append([]string{}, first.RealityShortIDs...)
+	x.RealitySpiderX = first.RealitySpiderX
+	x.WSPath, x.WSHost, x.GRPCServiceName = first.WSPath, first.WSHost, first.GRPCServiceName
+	if first.Tag != "" {
+		x.InboundTag = first.Tag
+	}
+	return nil
+}
+
+func normalizeInbound(n *model.Node, ib *model.XrayInbound, index int) error {
+	ib.Protocol = strings.ToLower(strings.TrimSpace(ib.Protocol))
+	if ib.Protocol == "" {
+		ib.Protocol = "vless"
+	}
+	switch ib.Protocol {
+	case "vless", "vmess", "trojan", "shadowsocks":
+	default:
+		return fmt.Errorf("unsupported Xray inbound protocol %q", ib.Protocol)
+	}
+	if ib.Port == 0 {
+		ib.Port = n.Port
+	}
+	if ib.Port == 0 {
+		ib.Port = 443
+	}
+	if ib.Port < 1 || ib.Port > 65535 {
+		return fmt.Errorf("Xray inbound port must be between 1 and 65535")
+	}
+	ib.Listen = strings.TrimSpace(ib.Listen)
+	if ib.Listen == "" {
+		ib.Listen = strings.TrimSpace(n.Listen)
+	}
+	ib.Transport = strings.ToLower(strings.TrimSpace(ib.Transport))
+	if ib.Transport == "" {
+		ib.Transport = "tcp"
+	}
+	switch ib.Transport {
+	case "tcp", "ws", "grpc", "xhttp", "mkcp":
+	default:
+		return fmt.Errorf("unsupported Xray transport %q", ib.Transport)
+	}
+	ib.Security = strings.ToLower(strings.TrimSpace(ib.Security))
+	if ib.Security == "" {
+		if ib.Protocol == "shadowsocks" {
+			ib.Security = "none"
+		} else {
+			ib.Security = "reality"
+		}
+	}
+	switch ib.Security {
+	case "reality", "tls", "none":
+	default:
+		return fmt.Errorf("unsupported Xray security %q", ib.Security)
+	}
+	if ib.Protocol == "shadowsocks" && ib.Security != "none" {
+		return fmt.Errorf("Shadowsocks inbounds only support security=none")
+	}
+	if ib.Security == "reality" && ib.Transport != "tcp" && ib.Transport != "xhttp" && ib.Transport != "grpc" {
+		return fmt.Errorf("REALITY only supports the TCP, XHTTP and gRPC transports")
+	}
+	if ib.Protocol != "vless" {
+		ib.Flow = ""
+	}
+	if ib.Protocol == "vless" && ib.Transport == "tcp" && ib.Security != "none" && ib.Flow == "" {
+		ib.Flow = "xtls-rprx-vision"
+	}
+	if ib.Transport != "tcp" {
+		ib.Flow = ""
+	}
+	if ib.Fingerprint == "" {
+		ib.Fingerprint = "chrome"
+	}
+	if ib.WSPath == "" {
+		ib.WSPath = "/"
+	}
+	if ib.GRPCServiceName == "" {
+		ib.GRPCServiceName = "grpc"
+	}
+	if ib.XHTTPPath == "" {
+		ib.XHTTPPath = "/"
+	}
+	if ib.XHTTPMode == "" {
+		ib.XHTTPMode = "auto"
+	}
+	if ib.Protocol == "shadowsocks" {
+		ib.SSMethod = strings.ToLower(strings.TrimSpace(ib.SSMethod))
+		if ib.SSMethod == "" {
+			ib.SSMethod = DefaultSSMethod
+		}
+		switch ib.SSMethod {
+		case "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm":
+		default:
+			return fmt.Errorf("unsupported Shadowsocks method %q (multi-user supports blake3-aes-*-gcm only)", ib.SSMethod)
+		}
+	}
+	if len(ib.ALPN) == 0 && ib.Security != "none" {
+		ib.ALPN = []string{"h2", "http/1.1"}
+	}
+	if ib.Security == "reality" {
+		if ib.RealityDest == "" {
+			ib.RealityDest = "www.cloudflare.com:443"
+		}
+		if len(ib.RealitySNI) == 0 {
+			host := strings.Split(ib.RealityDest, ":")[0]
+			ib.RealitySNI = []string{host}
+		}
+		if ib.RealityPrivateKey == "" || ib.RealityPublicKey == "" {
 			priv, pub, err := GenerateRealityKeypair()
 			if err != nil {
 				return err
 			}
-			x.RealityPrivateKey, x.RealityPublicKey = priv, pub
+			ib.RealityPrivateKey, ib.RealityPublicKey = priv, pub
 		}
-		if len(x.RealityShortIDs) == 0 {
-			x.RealityShortIDs = []string{GenerateShortID()}
-		}
-	}
-	if x.Security == "tls" {
-		if len(x.ALPN) == 0 {
-			x.ALPN = []string{"h2", "http/1.1"}
+		if len(ib.RealityShortIDs) == 0 {
+			ib.RealityShortIDs = []string{GenerateShortID()}
 		}
 	}
-	if len(x.ALPN) == 0 && x.Security == "reality" {
-		x.ALPN = []string{"h2", "http/1.1"}
+	if strings.TrimSpace(ib.Tag) == "" {
+		ib.Tag = ib.Protocol + "-in"
+		if index > 0 {
+			ib.Tag = fmt.Sprintf("%s-%d", ib.Tag, index+1)
+		}
 	}
+	ib.Tag = strings.TrimSpace(ib.Tag)
 	return nil
 }
 
@@ -117,75 +289,39 @@ func Render(n *model.Node, users []model.User) (string, string, error) {
 	if n == nil {
 		return "", "", fmt.Errorf("nil node")
 	}
+	if len(n.Xray.Inbounds) == 0 {
+		foldLegacyInbounds(n)
+	}
 	x := n.Xray
-	if x.RealityPrivateKey == "" && x.Security == "reality" {
-		return "", "", fmt.Errorf("REALITY private key is not configured")
+	for _, ib := range x.Inbounds {
+		if ib.Security == "reality" && (ib.RealityPrivateKey == "" || len(ib.RealityShortIDs) == 0) {
+			return "", "", fmt.Errorf("Xray inbound %q is missing REALITY key material; save the node again", ib.Tag)
+		}
 	}
 	apiPort := x.APIPort
 	if apiPort == 0 {
 		apiPort = APIPort
 	}
-	inboundTag := x.InboundTag
-	if inboundTag == "" {
-		inboundTag = InboundTag
-	}
 	nowT := time.Now().UTC()
-	clients := []map[string]any{}
-	for _, u := range users {
-		if !u.Enabled || u.XrayUUID == "" || u.Expired(nowT) || u.TrafficExceeded() {
-			continue
-		}
-		c := map[string]any{"id": u.XrayUUID, "email": u.UserID, "level": 0}
-		if x.Transport == "tcp" && x.Security != "none" && x.Flow != "" {
-			c["flow"] = x.Flow
-		}
-		clients = append(clients, c)
+
+	apiInbound := map[string]any{
+		"listen": "127.0.0.1", "port": apiPort, "protocol": "dokodemo-door",
+		"settings": map[string]any{"address": "127.0.0.1"}, "tag": "API_INBOUND",
 	}
-	stream := map[string]any{"network": x.Transport}
-	switch x.Security {
-	case "reality":
-		rs := map[string]any{
-			"dest":        x.RealityDest,
-			"serverNames": x.RealitySNI,
-			"privateKey":  x.RealityPrivateKey,
-			"shortIds":    x.RealityShortIDs,
+	inbounds := []map[string]any{apiInbound}
+	tags := []string{}
+	for _, ib := range x.Inbounds {
+		inbound, err := renderInbound(n, ib, users, nowT)
+		if err != nil {
+			return "", "", err
 		}
-		if x.RealitySpiderX != "" {
-			rs["spiderX"] = x.RealitySpiderX
-		}
-		stream["security"] = "reality"
-		stream["realitySettings"] = rs
-	case "tls":
-		serverName := ""
-		if len(x.RealitySNI) > 0 {
-			serverName = x.RealitySNI[0]
-		}
-		if serverName == "" {
-			serverName = n.Domain
-		}
-		stream["security"] = "tls"
-		stream["tlsSettings"] = map[string]any{
-			"serverName": serverName,
-			"minVersion": "1.2",
-			"alpn":       x.ALPN,
-			"certificates": []map[string]any{{
-				"certificateFile": CertPath,
-				"keyFile":         KeyPath,
-			}},
-		}
-	default:
-		stream["security"] = "none"
+		inbounds = append(inbounds, inbound)
+		tags = append(tags, ib.Tag)
 	}
-	switch x.Transport {
-	case "ws":
-		headers := map[string]any{}
-		if x.WSHost != "" {
-			headers["Host"] = x.WSHost
-		}
-		stream["wsSettings"] = map[string]any{"path": x.WSPath, "headers": headers}
-	case "grpc":
-		stream["grpcSettings"] = map[string]any{"serviceName": x.GRPCServiceName}
-	}
+
+	rules := []map[string]any{{
+		"type": "field", "inboundTag": []string{"API_INBOUND"}, "outboundTag": "API",
+	}}
 	config := map[string]any{
 		"log":   map[string]any{"loglevel": "warning", "access": AccessLog, "error": ""},
 		"api":   map[string]any{"tag": "API", "services": []string{"HandlerService", "StatsService"}},
@@ -199,27 +335,14 @@ func Render(n *model.Node, users []model.User) (string, string, error) {
 				"statsOutboundUplink": true, "statsOutboundDownlink": true,
 			},
 		},
-		"inbounds": []map[string]any{
-			{
-				"listen": "127.0.0.1", "port": apiPort, "protocol": "dokodemo-door",
-				"settings": map[string]any{"address": "127.0.0.1"}, "tag": "API_INBOUND",
-			},
-			{
-				"listen": "0.0.0.0", "port": n.Port, "protocol": "vless", "tag": inboundTag,
-				"settings":       map[string]any{"clients": clients, "decryption": "none"},
-				"streamSettings": stream,
-				"sniffing":       map[string]any{"enabled": true, "destOverride": []string{"http", "tls", "quic"}, "routeOnly": true},
-			},
-		},
+		"inbounds": inbounds,
 		"outbounds": []map[string]any{
 			{"protocol": "freedom", "tag": "direct"},
 			{"protocol": "blackhole", "tag": "block"},
 		},
 		"routing": map[string]any{
 			"domainStrategy": "IPIfNonMatch",
-			"rules": []map[string]any{{
-				"type": "field", "inboundTag": []string{"API_INBOUND"}, "outboundTag": "API",
-			}},
+			"rules":          rules,
 		},
 	}
 	b, err := json.MarshalIndent(config, "", "  ")
@@ -228,4 +351,166 @@ func Render(n *model.Node, users []model.User) (string, string, error) {
 	}
 	sum := sha256.Sum256(b)
 	return string(b), hex.EncodeToString(sum[:]), nil
+}
+
+func renderInbound(n *model.Node, ib model.XrayInbound, users []model.User, nowT time.Time) (map[string]any, error) {
+	inbound := map[string]any{
+		"listen": firstNonEmpty(ib.Listen, "0.0.0.0"),
+		"port":   ib.Port, "protocol": ib.Protocol, "tag": ib.Tag,
+		"streamSettings": streamSettings(n, ib),
+		"sniffing":       map[string]any{"enabled": true, "destOverride": []string{"http", "tls", "quic"}, "routeOnly": true},
+	}
+	switch ib.Protocol {
+	case "vless":
+		clients := []map[string]any{}
+		for _, u := range users {
+			if !userActive(u, nowT) {
+				continue
+			}
+			c := map[string]any{"id": u.XrayUUID, "email": u.UserID, "level": 0}
+			if ib.Transport == "tcp" && ib.Security != "none" && ib.Flow != "" {
+				c["flow"] = ib.Flow
+			}
+			clients = append(clients, c)
+		}
+		inbound["settings"] = map[string]any{"clients": clients, "decryption": "none"}
+	case "vmess":
+		clients := []map[string]any{}
+		for _, u := range users {
+			if !userActive(u, nowT) {
+				continue
+			}
+			clients = append(clients, map[string]any{"id": u.XrayUUID, "alterId": 0, "email": u.UserID, "level": 0})
+		}
+		inbound["settings"] = map[string]any{"clients": clients}
+	case "trojan":
+		clients := []map[string]any{}
+		for _, u := range users {
+			if !userActive(u, nowT) {
+				continue
+			}
+			clients = append(clients, map[string]any{"password": ClientPassword(&u), "email": u.UserID, "level": 0})
+		}
+		inbound["settings"] = map[string]any{"clients": clients}
+	case "shadowsocks":
+		method := ib.SSMethod
+		if method == "" {
+			method = DefaultSSMethod
+		}
+		clients := []map[string]any{}
+		for _, u := range users {
+			if !userActive(u, nowT) {
+				continue
+			}
+			clients = append(clients, map[string]any{"password": SSPassword(&u, method), "email": u.UserID, "level": 0})
+		}
+		inbound["settings"] = map[string]any{"method": method, "password": SSServerKey(n, ib.Tag, method), "clients": clients}
+	}
+	return inbound, nil
+}
+
+func userActive(u model.User, nowT time.Time) bool {
+	return u.Enabled && u.XrayUUID != "" && !u.Expired(nowT) && !u.TrafficExceeded()
+}
+
+func streamSettings(n *model.Node, ib model.XrayInbound) map[string]any {
+	stream := map[string]any{"network": ib.Transport}
+	switch ib.Security {
+	case "reality":
+		rs := map[string]any{
+			"dest":        ib.RealityDest,
+			"serverNames": ib.RealitySNI,
+			"privateKey":  ib.RealityPrivateKey,
+			"shortIds":    ib.RealityShortIDs,
+		}
+		if ib.RealitySpiderX != "" {
+			rs["spiderX"] = ib.RealitySpiderX
+		}
+		stream["security"] = "reality"
+		stream["realitySettings"] = rs
+	case "tls":
+		serverName := ""
+		if len(ib.RealitySNI) > 0 {
+			serverName = ib.RealitySNI[0]
+		}
+		if serverName == "" {
+			serverName = n.Domain
+		}
+		stream["security"] = "tls"
+		stream["tlsSettings"] = map[string]any{
+			"serverName": serverName,
+			"minVersion": "1.2",
+			"alpn":       ib.ALPN,
+			"certificates": []map[string]any{{
+				"certificateFile": CertPath,
+				"keyFile":         KeyPath,
+			}},
+		}
+	default:
+		stream["security"] = "none"
+	}
+	switch ib.Transport {
+	case "ws":
+		headers := map[string]any{}
+		if ib.WSHost != "" {
+			headers["Host"] = ib.WSHost
+		}
+		stream["wsSettings"] = map[string]any{"path": firstNonEmpty(ib.WSPath, "/"), "headers": headers}
+	case "grpc":
+		stream["grpcSettings"] = map[string]any{"serviceName": firstNonEmpty(ib.GRPCServiceName, "grpc")}
+	case "xhttp":
+		headers := map[string]any{}
+		if ib.XHTTPHost != "" {
+			headers["Host"] = ib.XHTTPHost
+		}
+		stream["xhttpSettings"] = map[string]any{
+			"path":    firstNonEmpty(ib.XHTTPPath, "/"),
+			"host":    ib.XHTTPHost,
+			"mode":    firstNonEmpty(ib.XHTTPMode, "auto"),
+			"headers": headers,
+		}
+	case "mkcp":
+		kcp := map[string]any{}
+		if ib.KCPSeed != "" {
+			kcp["seed"] = ib.KCPSeed
+		}
+		stream["kcpSettings"] = kcp
+	}
+	return stream
+}
+
+// ListenPorts returns the public TCP/UDP ports an Xray node listens on.
+func ListenPorts(n *model.Node) []int {
+	seen := map[int]bool{}
+	out := []int{}
+	for _, ib := range n.Xray.EffectiveInbounds() {
+		port := ib.Port
+		if port == 0 {
+			port = n.Port
+		}
+		if port > 0 && !seen[port] {
+			seen[port] = true
+			out = append(out, port)
+		}
+	}
+	return out
+}
+
+// PortList returns the inbounds' ports as a comma separated list.
+func PortList(n *model.Node) string {
+	ports := ListenPorts(n)
+	parts := make([]string, 0, len(ports))
+	for _, p := range ports {
+		parts = append(parts, strconv.Itoa(p))
+	}
+	return strings.Join(parts, ",")
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }

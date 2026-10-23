@@ -295,13 +295,23 @@ func (s *Server) routes() http.Handler {
 	})
 
 	if s.cfg.ServeWeb {
-		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "/panel/", http.StatusFound)
-		})
-		r.Get("/panel", func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "/panel/", http.StatusFound)
-		})
-		r.Get("/panel/*", s.serveSPA)
+		// The SPA lives at the site root: /login, /dashboard, /users, ...
+		// Keep the legacy /panel prefix working with a redirect that preserves
+		// deep links (for example /panel/users -> /users).
+		redirectPanel := func(w http.ResponseWriter, r *http.Request) {
+			target := strings.TrimPrefix(r.URL.Path, "/panel")
+			if target == "" || target == "/" {
+				target = "/dashboard"
+			}
+			if r.URL.RawQuery != "" {
+				target += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, target, http.StatusFound)
+		}
+		r.Get("/", redirectPanel)
+		r.Get("/panel", redirectPanel)
+		r.Get("/panel/*", redirectPanel)
+		r.Get("/assets/*", s.serveSPA)
 		r.Get("/favicon.ico", s.serveSPA)
 		r.NotFound(s.serveSPA)
 	} else {
@@ -314,11 +324,18 @@ func (s *Server) routes() http.Handler {
 // frontend is deployed separately (for example behind a CDN).
 func (s *Server) registerAPIOnlyRoutes(r chi.Router) {
 	redirectToFrontend := func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.FrontendURL != "" {
-			http.Redirect(w, r, s.cfg.FrontendURL, http.StatusFound)
+		if s.cfg.FrontendURL == "" {
+			writeError(w, http.StatusNotFound, "frontend is served separately")
 			return
 		}
-		writeError(w, http.StatusNotFound, "frontend is served separately")
+		target := strings.TrimPrefix(r.URL.Path, "/panel")
+		if target == "" || target == "/" {
+			target = "/dashboard"
+		}
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, s.cfg.FrontendURL+target, http.StatusFound)
 	}
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.FrontendURL != "" {
@@ -482,32 +499,33 @@ func (s *Server) originAllowed(origin string) bool {
 }
 
 func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
+	// Never answer unknown API paths with the SPA shell.
+	if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
 	dist := webui.FS()
-	upath := strings.TrimPrefix(r.URL.Path, "/panel")
-	upath = strings.TrimPrefix(upath, "/")
-	if upath == "" || upath == "index.html" {
+	upath := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+	if upath == "" || upath == "." || upath == "index.html" {
 		upath = "index.html"
 	}
-	if strings.HasPrefix(upath, "assets/") {
-		if b, err := fs.ReadFile(dist, upath); err == nil {
+	if upath != "index.html" {
+		b, err := fs.ReadFile(dist, upath)
+		if err == nil && !strings.HasSuffix(upath, "/") {
 			ct := mime.TypeByExtension(path.Ext(upath))
 			if ct == "" {
 				ct = "application/octet-stream"
 			}
 			w.Header().Set("Content-Type", ct)
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			if strings.HasPrefix(upath, "assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			}
 			_, _ = w.Write(b)
 			return
 		}
-	}
-	if upath != "index.html" {
-		if b, err := fs.ReadFile(dist, upath); err == nil && !strings.HasSuffix(upath, "/") {
-			ct := mime.TypeByExtension(path.Ext(upath))
-			if ct == "" {
-				ct = "application/octet-stream"
-			}
-			w.Header().Set("Content-Type", ct)
-			_, _ = w.Write(b)
+		// Missing static files should 404 instead of returning the SPA shell.
+		if path.Ext(upath) != "" {
+			http.NotFound(w, r)
 			return
 		}
 	}

@@ -114,15 +114,49 @@ func tailFile(ctx context.Context, path string, sink func(LogLine)) {
 // ---- Xray stats API via the xray CLI --------------------------------------
 
 type xrayStatsPoller struct {
-	bin     string
-	mu      sync.RWMutex
-	server  string
-	totalTx atomic.Int64
-	totalRx atomic.Int64
+	bin       string
+	docker    bool
+	container string
+	mu        sync.RWMutex
+	server    string
+	totalTx   atomic.Int64
+	totalRx   atomic.Int64
 }
 
-func newXrayStatsPoller(bin string) *xrayStatsPoller {
-	return &xrayStatsPoller{bin: bin}
+func newXrayStatsPoller(cfg Config) *xrayStatsPoller {
+	return &xrayStatsPoller{
+		bin: cfg.XrayBin, docker: cfg.Runtime == "docker",
+		container: containerName(cfg, "xray"),
+	}
+}
+
+func (x *xrayStatsPoller) command(ctx context.Context, args ...string) *exec.Cmd {
+	if x.docker {
+		full := append([]string{"exec", x.container, x.bin}, args...)
+		return exec.CommandContext(ctx, "docker", full...)
+	}
+	return exec.CommandContext(ctx, x.bin, args...)
+}
+
+// ValidateXrayConfig runs `xray run -test` so a broken config never replaces a
+// working process.
+func ValidateXrayConfig(cfg Config, configPath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var cmd *exec.Cmd
+	if cfg.Runtime == "docker" {
+		containerPath := "/data/" + strings.TrimPrefix(configPath, filepath.Clean(cfg.DataDir)+string(os.PathSeparator))
+		cmd = exec.CommandContext(ctx, "docker", "run", "--rm",
+			"-v", cfg.HostDataDir+":/data",
+			cfg.XrayImage, "run", "-test", "-c", containerPath)
+	} else {
+		cmd = exec.CommandContext(ctx, cfg.XrayBin, "run", "-test", "-c", configPath)
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("xray config test failed: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func (x *xrayStatsPoller) Configure(configText string) {
@@ -158,7 +192,7 @@ func (x *xrayStatsPoller) Poll(ctx context.Context) *model.StatsBatch {
 	if server == "" {
 		return nil
 	}
-	cmd := exec.CommandContext(ctx, x.bin, "api", "statsquery", "--server="+server, "-pattern=", "-reset")
+	cmd := x.command(ctx, "api", "statsquery", "--server="+server, "-pattern=", "-reset")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil

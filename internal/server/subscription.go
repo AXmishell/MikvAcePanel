@@ -234,9 +234,22 @@ func (s *Server) renderSubPage(w http.ResponseWriter, r *http.Request, user *mod
 			order = append(order, key)
 		}
 		if subscription.IsXray(n) {
-			if uri := subscription.VLESSURI(user, n); uri != "" {
-				l.Configs = append(l.Configs, subConfig{Name: "VLESS", URI: uri})
+			for _, ep := range subscription.XrayEndpoints(n) {
+				uri := subscription.XrayURI(user, n, ep)
+				if uri == "" {
+					continue
+				}
+				name := strings.ToUpper(ep.Inbound.Protocol)
+				if name == "" {
+					name = "VLESS"
+				}
+				if tag := strings.TrimSpace(ep.Inbound.Tag); tag != "" {
+					name += " " + tag
+				}
+				l.Configs = append(l.Configs, subConfig{Name: name, URI: uri})
 			}
+		}
+		if !n.HasCore("hysteria") {
 			continue
 		}
 		for _, e := range subscription.Endpoints(n) {

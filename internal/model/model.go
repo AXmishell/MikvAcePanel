@@ -2,7 +2,10 @@
 // the node agent and the command line client.
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Admin is a panel operator account.
 type Admin struct {
@@ -85,24 +88,98 @@ func (u *User) TrafficExceeded() bool {
 	return u.TrafficLimit > 0 && u.TrafficUsed() >= u.TrafficLimit
 }
 
-// XraySettings describes the VLESS inbound of an Xray node.
+// XrayInbound describes one Xray inbound. A node may expose several inbounds
+// with different protocols, ports and transports.
+type XrayInbound struct {
+	Protocol string `json:"protocol"`
+	Tag      string `json:"tag"`
+	Listen   string `json:"listen"`
+	Port     int    `json:"port"`
+
+	Transport string `json:"transport"`
+	Security  string `json:"security"`
+	Flow      string `json:"flow"`
+
+	Fingerprint string   `json:"fingerprint"`
+	ALPN        []string `json:"alpn,omitempty"`
+
+	RealityDest       string   `json:"realityDest,omitempty"`
+	RealitySNI        []string `json:"realitySni,omitempty"`
+	RealityPrivateKey string   `json:"realityPrivateKey,omitempty"`
+	RealityPublicKey  string   `json:"realityPublicKey,omitempty"`
+	RealityShortIDs   []string `json:"realityShortIds,omitempty"`
+	RealitySpiderX    string   `json:"realitySpiderX,omitempty"`
+
+	WSPath          string `json:"wsPath,omitempty"`
+	WSHost          string `json:"wsHost,omitempty"`
+	GRPCServiceName string `json:"grpcServiceName,omitempty"`
+	XHTTPPath       string `json:"xhttpPath,omitempty"`
+	XHTTPHost       string `json:"xhttpHost,omitempty"`
+	XHTTPMode       string `json:"xhttpMode,omitempty"`
+	KCPSeed         string `json:"kcpSeed,omitempty"`
+	SSMethod        string `json:"ssMethod,omitempty"`
+}
+
+// XraySettings holds the Xray inbounds of a node. The legacy single-inbound
+// fields are kept so that nodes created before multi-inbound support keep
+// working; Normalize folds them into Inbounds.
 type XraySettings struct {
-	Transport         string   `json:"transport"`
-	Security          string   `json:"security"`
-	Flow              string   `json:"flow"`
-	Fingerprint       string   `json:"fingerprint"`
-	ALPN              []string `json:"alpn"`
-	RealityDest       string   `json:"realityDest"`
-	RealitySNI        []string `json:"realitySni"`
-	RealityPrivateKey string   `json:"realityPrivateKey"`
-	RealityPublicKey  string   `json:"realityPublicKey"`
-	RealityShortIDs   []string `json:"realityShortIds"`
-	RealitySpiderX    string   `json:"realitySpiderX"`
-	WSPath            string   `json:"wsPath"`
-	WSHost            string   `json:"wsHost"`
-	GRPCServiceName   string   `json:"grpcServiceName"`
-	APIPort           int      `json:"apiPort"`
-	InboundTag        string   `json:"inboundTag"`
+	Transport         string        `json:"transport"`
+	Security          string        `json:"security"`
+	Flow              string        `json:"flow"`
+	Fingerprint       string        `json:"fingerprint"`
+	ALPN              []string      `json:"alpn"`
+	RealityDest       string        `json:"realityDest"`
+	RealitySNI        []string      `json:"realitySni"`
+	RealityPrivateKey string        `json:"realityPrivateKey"`
+	RealityPublicKey  string        `json:"realityPublicKey"`
+	RealityShortIDs   []string      `json:"realityShortIds"`
+	RealitySpiderX    string        `json:"realitySpiderX"`
+	WSPath            string        `json:"wsPath"`
+	WSHost            string        `json:"wsHost"`
+	GRPCServiceName   string        `json:"grpcServiceName"`
+	APIPort           int           `json:"apiPort"`
+	InboundTag        string        `json:"inboundTag"`
+	Inbounds          []XrayInbound `json:"inbounds,omitempty"`
+}
+
+// EffectiveInbounds returns the configured inbounds, or a single inbound
+// derived from the legacy fields.
+func (x XraySettings) EffectiveInbounds() []XrayInbound {
+	if len(x.Inbounds) > 0 {
+		return x.Inbounds
+	}
+	proto := "vless"
+	tag := x.InboundTag
+	if tag == "" {
+		tag = "vless-in"
+	}
+	transport := x.Transport
+	if transport == "" {
+		transport = "tcp"
+	}
+	security := x.Security
+	if security == "" {
+		security = "reality"
+	}
+	fingerprint := x.Fingerprint
+	if fingerprint == "" {
+		fingerprint = "chrome"
+	}
+	alpn := x.ALPN
+	if len(alpn) == 0 && security != "none" {
+		alpn = []string{"h2", "http/1.1"}
+	}
+	return []XrayInbound{{
+		Protocol: proto, Tag: tag, Port: 0,
+		Transport: transport, Security: security, Flow: x.Flow,
+		Fingerprint: fingerprint, ALPN: alpn,
+		RealityDest: x.RealityDest, RealitySNI: x.RealitySNI,
+		RealityPrivateKey: x.RealityPrivateKey, RealityPublicKey: x.RealityPublicKey,
+		RealityShortIDs: x.RealityShortIDs, RealitySpiderX: x.RealitySpiderX,
+		WSPath: x.WSPath, WSHost: x.WSHost, GRPCServiceName: x.GRPCServiceName,
+		SSMethod: "2022-blake3-aes-128-gcm",
+	}}
 }
 
 // Outbound is a custom proxy usable from ACL rules.
@@ -146,6 +223,7 @@ type Node struct {
 	ACL              []string     `json:"acl"`
 	Outbounds        []Outbound   `json:"outbounds"`
 	Xray             XraySettings `json:"xray"`
+	Cores            []string     `json:"cores"`
 	Groups           []Group      `json:"groups"`
 	MaxOnline        int          `json:"maxOnline"`
 	Ranking          float64      `json:"ranking"`
@@ -157,6 +235,7 @@ type Node struct {
 	OS               string       `json:"os"`
 	Arch             string       `json:"arch"`
 	Hy2Version       string       `json:"hy2Version"`
+	XrayVersion      string       `json:"xrayVersion"`
 	Runtime          string       `json:"runtime"`
 	Capabilities     []string     `json:"capabilities,omitempty"`
 	CertFingerprint  string       `json:"certFingerprint,omitempty"`
@@ -172,16 +251,71 @@ type Node struct {
 	UpdatedAt        time.Time    `json:"updatedAt"`
 }
 
-// NodeConfig is a generated Hysteria server configuration revision.
+// ValidCore reports whether name is a proxy core managed by the agent.
+func ValidCore(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "hysteria", "xray":
+		return true
+	}
+	return false
+}
+
+// EffectiveCores returns the cores a node should run. Nodes created before
+// multi-core support fall back to their legacy Type.
+func (n *Node) EffectiveCores() []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, core := range n.Cores {
+		core = strings.ToLower(strings.TrimSpace(core))
+		if !ValidCore(core) || seen[core] {
+			continue
+		}
+		seen[core] = true
+		out = append(out, core)
+	}
+	if len(out) == 0 {
+		core := strings.ToLower(strings.TrimSpace(n.Type))
+		if !ValidCore(core) {
+			core = "hysteria"
+		}
+		out = []string{core}
+	}
+	return out
+}
+
+// HasCore reports whether the node runs the given core.
+func (n *Node) HasCore(core string) bool {
+	core = strings.ToLower(strings.TrimSpace(core))
+	for _, c := range n.EffectiveCores() {
+		if c == core {
+			return true
+		}
+	}
+	return false
+}
+
+// PrimaryCore is the first configured core; it keeps legacy API/UI fields
+// (Type, YAML) meaningful.
+func (n *Node) PrimaryCore() string {
+	cores := n.EffectiveCores()
+	if len(cores) == 0 {
+		return "hysteria"
+	}
+	return cores[0]
+}
+
+// NodeConfig is a generated configuration revision for one or more cores.
 type NodeConfig struct {
-	ID        int64      `json:"id"`
-	NodeID    int64      `json:"nodeId"`
-	Revision  int64      `json:"revision"`
-	YAML      string     `json:"yaml,omitempty"`
-	Hash      string     `json:"hash"`
-	CreatedAt time.Time  `json:"createdAt"`
-	AppliedAt *time.Time `json:"appliedAt"`
-	LastError string     `json:"lastError"`
+	ID        int64             `json:"id"`
+	NodeID    int64             `json:"nodeId"`
+	Revision  int64             `json:"revision"`
+	YAML      string            `json:"yaml,omitempty"`
+	Configs   map[string]string `json:"configs,omitempty"`
+	Cores     []string          `json:"cores,omitempty"`
+	Hash      string            `json:"hash"`
+	CreatedAt time.Time         `json:"createdAt"`
+	AppliedAt *time.Time        `json:"appliedAt"`
+	LastError string            `json:"lastError"`
 }
 
 // LogEntry is a parsed Hysteria 2 log line stored by the panel.

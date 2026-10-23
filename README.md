@@ -24,10 +24,11 @@ mkdocs build --strict # 输出 site/
 ## 功能
 
 - **中文 Web 面板**：仪表盘、用户、节点、服务器组、日志分析、设置。
-- **双协议节点**：Hysteria 2（QUIC/UDP）与 Xray VLESS（TCP / WebSocket / gRPC，REALITY / TLS / 无加密）。
+- **双核心节点**：同一节点可同时运行 Hysteria 2（QUIC/UDP）与 Xray（TCP），也可只运行其中一个。
+- **Xray 多协议入站**：VLESS / VMess / Trojan / Shadowsocks；TCP / WebSocket / gRPC / XHTTP / mKCP；REALITY / TLS / 无加密；一个节点可配置多个入站。
 - **订阅分发**：Clash/Mihomo YAML、sing-box JSON、Shadowrocket Base64、原始 URI 列表、Xray JSON；支持 HAPP 路由头与 providerid。
 - **Hysteria 2 认证**：节点把客户端认证请求转发到 `POST /api/auth`，支持启用/禁用、到期、流量限额、设备数限制（按唯一 IP + 宽限期）。
-- **节点管理**：面板生成 Hysteria 服务端配置，通过 WebSocket 实时下发；支持版本、运行状态、配置 revision、错误回报、启动/停止/重启。
+- **节点管理**：面板生成 Hysteria / Xray 服务端配置，通过 WebSocket 实时下发；支持版本、运行状态、配置 revision、错误回报、启动/停止/重启。
 - **证书统一签发**：面板通过 ACME DNS-01 申请证书，Agent 提交 CSR、安装证书链（私钥不出节点）；节点自签 ACME 只使用 TLS-ALPN，不再占用 80 端口。
 - **两步验证（2FA）**：管理员可使用标准 TOTP 应用登录，提供一次性恢复码；2FA 密钥加密存储，支持自助关闭与恢复码重置。
 - **节点端 Docker 镜像**：单容器内置 Hysteria 2 + Xray + Agent，开箱即用；也支持 `HY2_RUNTIME=docker`，由 Agent 管理同机的代理容器。
@@ -36,7 +37,7 @@ mkdocs build --strict # 输出 site/
 - **API Key 限流**：每个密钥独立速率限制与 `X-RateLimit-*` 响应头。
 - **端口跳跃**：Agent 自动维护 iptables UDP REDIRECT 规则。
 - **日志上报与分析**：采集 Hysteria/Xray 的 stdout/stderr 与 Xray access log，按批可靠上报；服务端解析时间、级别、事件、用户、客户端 IP、错误等字段，支持搜索、时间线、Top IP/用户、规则告警（暴力破解、未知用户、错误爆发、重启循环、TLS/ACME/REALITY 异常、配额耗尽等）。
-- **流量统计**：Agent 轮询 Hysteria `trafficStats` API，按用户增量上报；服务端按 batch id 幂等入库，支持管理员重置用户流量。
+- **流量统计**：Agent 轮询 Hysteria `trafficStats` 与 Xray `StatsService`，按用户增量上报；服务端按 batch id 幂等入库，支持管理员重置用户流量。双核心节点的流量自动合并。
 - **API Key**：带 `users:read/write`、`nodes:read/write`、`stats:read`、`sync:write` 作用域的自动化凭据，支持过期时间和启停。
 - **单二进制部署**：Vue 构建产物通过 `go:embed` 嵌入服务端。
 - **SQLite**：无需额外数据库，WAL 模式，数据默认位于 `/data`。
@@ -96,7 +97,7 @@ cp .env.example .env       # 可选：修改端口/初始密码/公开地址
 docker compose up -d --build
 ```
 
-打开 `http://服务器IP:8080/panel/`。
+打开 `http://服务器IP:8080/dashboard`（访问 `/panel` 会自动跳转到 `/dashboard`）。
 
 管理员账号来自 `.env`：
 
@@ -155,7 +156,7 @@ go run ./cmd/server -addr :8080 -data ./data
 
 # 终端 2：前端（Vite，自动代理 /api 到 8080）
 cd web && npm install && npm run dev
-# 打开 http://localhost:5173/panel/
+# 打开 http://localhost:5173/dashboard
 ```
 
 构建单二进制：
@@ -189,6 +190,8 @@ VITE_BASE_PATH=/panel/
 VITE_API_BASE_URL=https://api.example.com/api
 ```
 
+> 面板默认使用根路径（`/login`、`/dashboard` 等）。访问旧的 `/panel` 会被 302 到 `/dashboard`，因此升级后无需修改已收藏的链接。
+
 **2. 启动纯 API 服务**
 
 ```bash
@@ -218,7 +221,7 @@ API 域名的 Nginx 示例见 [`deploy/nginx-api.conf`](deploy/nginx-api.conf)�
 
 | 变量 | 说明 |
 |------|------|
-| `SERVE_WEB` | `true` 时由 Go 提供内嵌 `/panel/`；CDN 部署设为 `false` |
+| `SERVE_WEB` | `true` 时由 Go 提供内嵌前端（`/login`、`/dashboard` 等）；CDN 部署设为 `false` |
 | `FRONTEND_URL` | 前端公网地址，`SERVE_WEB=false` 时根路径跳转使用 |
 | `CORS_ORIGINS` | 允许跨域访问 API 的前端 Origin，必须精确匹配 |
 | `TRUSTED_PROXIES` | 反向代理 IP/CIDR，用于正确获取客户端 IP 和登录限流 |
@@ -413,7 +416,7 @@ go build -o mikvace-client ./cmd/client
 
 ## 当前范围与后续方向
 
-当前版本已实现 Hysteria 2 与 Xray VLESS/REALITY、HAPP 路由头、API Key 限流、SSH 自动安装、本地备份恢复。尚未实现 CELERITY 中的级联拓扑、浏览器 SSH 终端、支付/工单、S3 备份、MCP 等。订阅接口、认证接口和节点控制协议已按可扩展方式拆分：`internal/hy2config` 与 `internal/xrayconfig` 分别生成两种核心配置。
+当前版本已实现 Hysteria 2、Xray 多协议入站（VLESS / VMess / Trojan / Shadowsocks）、同节点双核心、HAPP 路由头、API Key 限流、SSH 自动安装、本地备份恢复。尚未实现 CELERITY 中的级联拓扑、浏览器 SSH 终端、支付/工单、S3 备份、MCP 等。订阅接口、认证接口和节点控制协议已按可扩展方式拆分：`internal/hy2config` 与 `internal/xrayconfig` 分别生成两种核心配置，Agent 通过 `configs` 映射一次应用多个核心。
 
 ---
 

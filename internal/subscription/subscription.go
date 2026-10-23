@@ -16,6 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/axmishell/mikvacepanel/internal/model"
+	"github.com/axmishell/mikvacepanel/internal/xrayconfig"
 )
 
 // Endpoint is one client-facing Hysteria 2 endpoint derived from a node.
@@ -198,15 +199,19 @@ func URIList(u *model.User, nodes []model.Node) string {
 	lines := []string{}
 	for _, n := range nodes {
 		if IsXray(n) {
-			uri := VLESSURI(u, n)
-			if uri == "" {
-				continue
+			for _, ep := range XrayEndpoints(n) {
+				uri := XrayURI(u, n, ep)
+				if uri == "" {
+					continue
+				}
+				name := l.next(ep.Label)
+				if idx := strings.LastIndex(uri, "#"); idx >= 0 {
+					uri = uri[:idx+1] + url.PathEscape(name)
+				}
+				lines = append(lines, uri)
 			}
-			name := l.next(endpointLabel(n))
-			if idx := strings.LastIndex(uri, "#"); idx >= 0 {
-				uri = uri[:idx+1] + url.PathEscape(name)
-			}
-			lines = append(lines, uri)
+		}
+		if !n.HasCore("hysteria") {
 			continue
 		}
 		for _, e := range Endpoints(n) {
@@ -248,25 +253,6 @@ type clashGroup struct {
 	Proxies []string `yaml:"proxies"`
 }
 
-type clashVlessProxy struct {
-	Name              string            `yaml:"name"`
-	Type              string            `yaml:"type"`
-	Server            string            `yaml:"server"`
-	Port              int               `yaml:"port"`
-	UUID              string            `yaml:"uuid"`
-	UDP               bool              `yaml:"udp,omitempty"`
-	Network           string            `yaml:"network,omitempty"`
-	TLS               bool              `yaml:"tls,omitempty"`
-	Flow              string            `yaml:"flow,omitempty"`
-	Servername        string            `yaml:"servername,omitempty"`
-	SkipCertVerify    bool              `yaml:"skip-cert-verify,omitempty"`
-	ClientFingerprint string            `yaml:"client-fingerprint,omitempty"`
-	ALPN              []string          `yaml:"alpn,omitempty"`
-	RealityOpts       map[string]string `yaml:"reality-opts,omitempty"`
-	WSOpts            map[string]any    `yaml:"ws-opts,omitempty"`
-	GRPCOpts          map[string]any    `yaml:"grpc-opts,omitempty"`
-}
-
 type clashConfig struct {
 	Proxies     []any        `yaml:"proxies"`
 	ProxyGroups []clashGroup `yaml:"proxy-groups"`
@@ -281,45 +267,18 @@ func Clash(u *model.User, nodes []model.Node) (string, error) {
 	names := []string{}
 	for _, n := range nodes {
 		if IsXray(n) {
-			name := l.next(endpointLabel(n))
-			p := clashVlessProxy{
-				Name: name, Type: "vless", Server: nodeHost(n), Port: n.Port,
-				UUID: u.XrayUUID, UDP: true, Network: firstNonEmpty(n.Xray.Transport, "tcp"),
+			for _, ep := range XrayEndpoints(n) {
+				p := clashXrayProxy(u, n, ep)
+				if p == nil {
+					continue
+				}
+				name := l.next(ep.Label)
+				p["name"] = name
+				proxies = append(proxies, p)
+				names = append(names, name)
 			}
-			switch strings.ToLower(n.Xray.Security) {
-			case "reality":
-				p.TLS = true
-				p.Servername = firstNonEmpty(firstOf(n.Xray.RealitySNI), nodeHost(n))
-				p.ClientFingerprint = firstNonEmpty(n.Xray.Fingerprint, "chrome")
-				p.RealityOpts = map[string]string{
-					"public-key": n.Xray.RealityPublicKey,
-					"short-id":   firstOf(n.Xray.RealityShortIDs),
-				}
-				if n.Xray.Transport == "tcp" && n.Xray.Flow != "" {
-					p.Flow = n.Xray.Flow
-				}
-			case "tls":
-				p.TLS = true
-				p.Servername = firstNonEmpty(firstOf(n.Xray.RealitySNI), n.Domain, nodeHost(n))
-				p.SkipCertVerify = !(strings.EqualFold(n.TLSMode, "managed") && n.Domain != "")
-				p.ClientFingerprint = firstNonEmpty(n.Xray.Fingerprint, "chrome")
-				p.ALPN = n.Xray.ALPN
-				if n.Xray.Transport == "tcp" && n.Xray.Flow != "" {
-					p.Flow = n.Xray.Flow
-				}
-			}
-			switch n.Xray.Transport {
-			case "ws":
-				headers := map[string]any{}
-				if n.Xray.WSHost != "" {
-					headers["Host"] = n.Xray.WSHost
-				}
-				p.WSOpts = map[string]any{"path": firstNonEmpty(n.Xray.WSPath, "/"), "headers": headers}
-			case "grpc":
-				p.GRPCOpts = map[string]any{"grpc-service-name": firstNonEmpty(n.Xray.GRPCServiceName, "grpc")}
-			}
-			proxies = append(proxies, p)
-			names = append(names, name)
+		}
+		if !n.HasCore("hysteria") {
 			continue
 		}
 		for _, e := range Endpoints(n) {
@@ -388,44 +347,18 @@ func Singbox(u *model.User, nodes []model.Node) (string, error) {
 	tags := []string{}
 	for _, n := range nodes {
 		if IsXray(n) {
-			tag := l.next(endpointLabel(n))
-			tls := map[string]any{"enabled": true}
-			switch strings.ToLower(n.Xray.Security) {
-			case "reality":
-				tls["server_name"] = firstNonEmpty(firstOf(n.Xray.RealitySNI), nodeHost(n))
-				tls["utls"] = map[string]any{"enabled": true, "fingerprint": firstNonEmpty(n.Xray.Fingerprint, "chrome")}
-				tls["reality"] = map[string]any{
-					"enabled": true, "public_key": n.Xray.RealityPublicKey,
-					"short_id": firstOf(n.Xray.RealityShortIDs),
+			for _, ep := range XrayEndpoints(n) {
+				ob := singboxXrayOutbound(u, n, ep)
+				if ob == nil {
+					continue
 				}
-			case "tls":
-				tls["server_name"] = firstNonEmpty(firstOf(n.Xray.RealitySNI), n.Domain, nodeHost(n))
-				tls["insecure"] = !(strings.EqualFold(n.TLSMode, "managed") && n.Domain != "")
-				if len(n.Xray.ALPN) > 0 {
-					tls["alpn"] = n.Xray.ALPN
-				}
-			default:
-				tls = map[string]any{"enabled": false}
+				tag := l.next(ep.Label)
+				ob["tag"] = tag
+				outbounds = append(outbounds, ob)
+				tags = append(tags, tag)
 			}
-			ob := map[string]any{
-				"type": "vless", "tag": tag, "server": nodeHost(n), "server_port": n.Port,
-				"uuid": u.XrayUUID, "tls": tls,
-			}
-			if n.Xray.Transport == "tcp" && n.Xray.Security != "none" && n.Xray.Flow != "" {
-				ob["flow"] = n.Xray.Flow
-			}
-			switch n.Xray.Transport {
-			case "ws":
-				tr := map[string]any{"type": "ws", "path": firstNonEmpty(n.Xray.WSPath, "/")}
-				if n.Xray.WSHost != "" {
-					tr["headers"] = map[string]any{"Host": n.Xray.WSHost}
-				}
-				ob["transport"] = tr
-			case "grpc":
-				ob["transport"] = map[string]any{"type": "grpc", "service_name": firstNonEmpty(n.Xray.GRPCServiceName, "grpc")}
-			}
-			outbounds = append(outbounds, ob)
-			tags = append(tags, tag)
+		}
+		if !n.HasCore("hysteria") {
 			continue
 		}
 		for _, e := range Endpoints(n) {
@@ -507,42 +440,14 @@ func Xray(u *model.User, nodes []model.Node) (string, error) {
 	outbounds := []map[string]any{}
 	for _, n := range nodes {
 		if IsXray(n) {
-			tag := l.next(endpointLabel(n))
-			stream := map[string]any{"network": firstNonEmpty(n.Xray.Transport, "tcp")}
-			switch strings.ToLower(n.Xray.Security) {
-			case "reality":
-				stream["security"] = "reality"
-				stream["realitySettings"] = map[string]any{
-					"fingerprint": firstNonEmpty(n.Xray.Fingerprint, "chrome"),
-					"serverName":  firstNonEmpty(firstOf(n.Xray.RealitySNI), nodeHost(n)),
-					"publicKey":   n.Xray.RealityPublicKey,
-					"shortId":     firstOf(n.Xray.RealityShortIDs),
-					"spiderX":     n.Xray.RealitySpiderX,
-				}
-			case "tls":
-				stream["security"] = "tls"
-				stream["tlsSettings"] = map[string]any{
-					"serverName":    firstNonEmpty(firstOf(n.Xray.RealitySNI), n.Domain, nodeHost(n)),
-					"allowInsecure": !(strings.EqualFold(n.TLSMode, "managed") && n.Domain != ""),
-				}
+			for _, ep := range XrayEndpoints(n) {
+				tag := l.next(ep.Label)
+				ob := xrayJSONOutbound(u, n, ep)
+				ob["tag"] = tag
+				outbounds = append(outbounds, ob)
 			}
-			switch n.Xray.Transport {
-			case "ws":
-				stream["wsSettings"] = map[string]any{"path": firstNonEmpty(n.Xray.WSPath, "/"), "headers": map[string]any{"Host": n.Xray.WSHost}}
-			case "grpc":
-				stream["grpcSettings"] = map[string]any{"serviceName": firstNonEmpty(n.Xray.GRPCServiceName, "grpc")}
-			}
-			vnextUser := map[string]any{"id": u.XrayUUID, "encryption": "none"}
-			if n.Xray.Transport == "tcp" && n.Xray.Security != "none" && n.Xray.Flow != "" {
-				vnextUser["flow"] = n.Xray.Flow
-			}
-			outbounds = append(outbounds, map[string]any{
-				"tag": tag, "protocol": "vless",
-				"settings": map[string]any{"vnext": []map[string]any{{
-					"address": nodeHost(n), "port": n.Port, "users": []map[string]any{vnextUser},
-				}}},
-				"streamSettings": stream,
-			})
+		}
+		if !n.HasCore("hysteria") {
 			continue
 		}
 		for _, e := range Endpoints(n) {
@@ -649,8 +554,8 @@ func SortNodes(nodes []model.Node) {
 	})
 }
 
-// IsXray reports whether a node uses the Xray/VLESS protocol.
-func IsXray(n model.Node) bool { return strings.EqualFold(n.Type, "xray") }
+// IsXray reports whether a node runs the Xray core.
+func IsXray(n model.Node) bool { return n.HasCore("xray") }
 
 func nodeHost(n model.Node) string {
 	if strings.TrimSpace(n.Domain) != "" {
@@ -659,82 +564,454 @@ func nodeHost(n model.Node) string {
 	return strings.TrimSpace(n.IP)
 }
 
-// VLESSURI builds a vless:// link for an Xray node.
-func VLESSURI(u *model.User, n model.Node) string {
-	host, uri, ok := vlessParts(u, n)
-	if !ok {
-		return ""
-	}
-	return uri + "#" + encodeFragment(host)
+// XrayEndpoint is one client-facing Xray inbound of a node.
+type XrayEndpoint struct {
+	Inbound model.XrayInbound
+	Port    int
+	Label   string
 }
 
-func vlessParts(u *model.User, n model.Node) (label, uri string, ok bool) {
+// XrayEndpoints expands the inbounds of an Xray node into client endpoints.
+func XrayEndpoints(n model.Node) []XrayEndpoint {
+	ibs := n.Xray.EffectiveInbounds()
+	if nodeHost(n) == "" {
+		return nil
+	}
+	multi := len(ibs) > 1
+	out := make([]XrayEndpoint, 0, len(ibs))
+	for i, ib := range ibs {
+		port := ib.Port
+		if port == 0 {
+			port = n.Port
+		}
+		if port == 0 {
+			continue
+		}
+		label := endpointLabel(n)
+		if multi {
+			tag := strings.TrimSpace(ib.Tag)
+			if tag == "" {
+				tag = fmt.Sprintf("%s-%d", ib.Protocol, i+1)
+			}
+			label = strings.TrimSpace(label + " " + tag)
+		}
+		out = append(out, XrayEndpoint{Inbound: ib, Port: port, Label: label})
+	}
+	return out
+}
+
+// VLESSURI builds a vless:// link for the first VLESS inbound of an Xray node.
+func VLESSURI(u *model.User, n model.Node) string {
+	for _, ep := range XrayEndpoints(n) {
+		if ep.Inbound.Protocol == "vless" || ep.Inbound.Protocol == "" {
+			return XrayURI(u, n, ep)
+		}
+	}
+	return ""
+}
+
+// XrayURI builds the share link for an Xray endpoint.
+func XrayURI(u *model.User, n model.Node, ep XrayEndpoint) string {
 	host := nodeHost(n)
-	if host == "" || u.XrayUUID == "" || n.Port == 0 {
-		return "", "", false
+	if host == "" {
+		return ""
 	}
-	x := n.Xray
+	ib := ep.Inbound
+	proto := strings.ToLower(strings.TrimSpace(ib.Protocol))
+	if proto == "" {
+		proto = "vless"
+	}
+	switch proto {
+	case "vless":
+		if u.XrayUUID == "" {
+			return ""
+		}
+		q := xrayQuery(n, ib)
+		q.Set("encryption", "none")
+		if ib.Transport == "tcp" && ib.Security != "none" && ib.Flow != "" {
+			q.Set("flow", ib.Flow)
+		}
+		return fmt.Sprintf("vless://%s@%s:%d?%s#%s", u.XrayUUID, host, ep.Port, q.Encode(), encodeFragment(ep.Label))
+	case "vmess":
+		if u.XrayUUID == "" {
+			return ""
+		}
+		obj := map[string]any{
+			"v": "2", "ps": ep.Label, "add": host, "port": ep.Port,
+			"id": u.XrayUUID, "aid": 0, "scy": "auto", "type": "none",
+			"net": firstNonEmpty(ib.Transport, "tcp"),
+		}
+		if ib.Security != "" && ib.Security != "none" {
+			obj["tls"] = ib.Security
+		}
+		applyShareParams(obj, n, ib)
+		b, err := json.Marshal(obj)
+		if err != nil {
+			return ""
+		}
+		return "vmess://" + base64.StdEncoding.EncodeToString(b)
+	case "trojan":
+		pw := xrayconfig.ClientPassword(u)
+		q := xrayQuery(n, ib)
+		return fmt.Sprintf("trojan://%s@%s:%d?%s#%s", url.PathEscape(pw), host, ep.Port, q.Encode(), encodeFragment(ep.Label))
+	case "shadowsocks":
+		method := firstNonEmpty(ib.SSMethod, xrayconfig.DefaultSSMethod)
+		pw := xrayconfig.SSPassword(u, method)
+		userinfo := base64.RawURLEncoding.EncodeToString([]byte(method + ":" + pw))
+		return fmt.Sprintf("ss://%s@%s:%d#%s", userinfo, host, ep.Port, encodeFragment(ep.Label))
+	}
+	return ""
+}
+
+func xrayQuery(n model.Node, ib model.XrayInbound) url.Values {
 	q := url.Values{}
-	q.Set("encryption", "none")
-	q.Set("type", x.Transport)
-	if q.Get("type") == "" {
-		q.Set("type", "tcp")
-	}
-	security := strings.ToLower(x.Security)
+	q.Set("type", firstNonEmpty(ib.Transport, "tcp"))
+	security := strings.ToLower(strings.TrimSpace(ib.Security))
 	if security == "" {
-		security = "reality"
+		security = "none"
 	}
 	q.Set("security", security)
 	switch security {
 	case "reality":
-		sni := host
-		if len(x.RealitySNI) > 0 && x.RealitySNI[0] != "" {
-			sni = x.RealitySNI[0]
+		sni := nodeHost(n)
+		if len(ib.RealitySNI) > 0 && ib.RealitySNI[0] != "" {
+			sni = ib.RealitySNI[0]
 		}
 		q.Set("sni", sni)
-		q.Set("fp", firstNonEmpty(x.Fingerprint, "chrome"))
-		if x.RealityPublicKey != "" {
-			q.Set("pbk", x.RealityPublicKey)
+		q.Set("fp", firstNonEmpty(ib.Fingerprint, "chrome"))
+		if ib.RealityPublicKey != "" {
+			q.Set("pbk", ib.RealityPublicKey)
 		}
-		if len(x.RealityShortIDs) > 0 {
-			q.Set("sid", x.RealityShortIDs[0])
+		if len(ib.RealityShortIDs) > 0 {
+			q.Set("sid", ib.RealityShortIDs[0])
 		}
-		if x.RealitySpiderX != "" {
-			q.Set("spx", x.RealitySpiderX)
+		if ib.RealitySpiderX != "" {
+			q.Set("spx", ib.RealitySpiderX)
 		}
 	case "tls":
 		sni := n.Domain
-		if len(x.RealitySNI) > 0 && x.RealitySNI[0] != "" {
-			sni = x.RealitySNI[0]
+		if len(ib.RealitySNI) > 0 && ib.RealitySNI[0] != "" {
+			sni = ib.RealitySNI[0]
 		}
 		if sni != "" {
 			q.Set("sni", sni)
 		}
-		q.Set("fp", firstNonEmpty(x.Fingerprint, "chrome"))
-		// Only fall back to skipping verification when the node has no
-		// panel-issued certificate for its domain.
-		if !(strings.EqualFold(n.TLSMode, "managed") && n.Domain != "") {
+		q.Set("fp", firstNonEmpty(ib.Fingerprint, "chrome"))
+		if !hasManagedCert(n) {
 			q.Set("allowInsecure", "1")
 		}
-		if len(x.ALPN) > 0 {
-			q.Set("alpn", strings.Join(x.ALPN, ","))
+		if len(ib.ALPN) > 0 {
+			q.Set("alpn", strings.Join(ib.ALPN, ","))
 		}
 	}
-	switch x.Transport {
+	switch ib.Transport {
 	case "ws":
-		q.Set("path", firstNonEmpty(x.WSPath, "/"))
-		if x.WSHost != "" {
-			q.Set("host", x.WSHost)
+		q.Set("path", firstNonEmpty(ib.WSPath, "/"))
+		if ib.WSHost != "" {
+			q.Set("host", ib.WSHost)
 		}
 	case "grpc":
-		q.Set("serviceName", firstNonEmpty(x.GRPCServiceName, "grpc"))
+		q.Set("serviceName", firstNonEmpty(ib.GRPCServiceName, "grpc"))
+	case "xhttp":
+		q.Set("path", firstNonEmpty(ib.XHTTPPath, "/"))
+		if ib.XHTTPHost != "" {
+			q.Set("host", ib.XHTTPHost)
+		}
+		if ib.XHTTPMode != "" {
+			q.Set("mode", ib.XHTTPMode)
+		}
+	case "mkcp":
+		if ib.KCPSeed != "" {
+			q.Set("seed", ib.KCPSeed)
+		}
 	}
-	if x.Transport == "tcp" && security != "none" && x.Flow != "" {
-		q.Set("flow", x.Flow)
+	return q
+}
+
+func applyShareParams(obj map[string]any, n model.Node, ib model.XrayInbound) {
+	switch ib.Transport {
+	case "ws":
+		obj["path"] = firstNonEmpty(ib.WSPath, "/")
+		if ib.WSHost != "" {
+			obj["host"] = ib.WSHost
+		}
+	case "grpc":
+		obj["path"] = firstNonEmpty(ib.GRPCServiceName, "grpc")
+	case "xhttp":
+		obj["path"] = firstNonEmpty(ib.XHTTPPath, "/")
+		obj["host"] = ib.XHTTPHost
+		obj["mode"] = firstNonEmpty(ib.XHTTPMode, "auto")
+	case "mkcp":
+		obj["path"] = ib.KCPSeed
 	}
-	label = strings.TrimSpace(strings.Join([]string{n.Flag, n.Name}, " "))
-	uri = fmt.Sprintf("vless://%s@%s:%d?%s", u.XrayUUID, host, n.Port, q.Encode())
-	return label, uri, true
+	switch ib.Security {
+	case "reality":
+		if len(ib.RealitySNI) > 0 {
+			obj["sni"] = ib.RealitySNI[0]
+		}
+		obj["fp"] = firstNonEmpty(ib.Fingerprint, "chrome")
+		obj["pbk"] = ib.RealityPublicKey
+		if len(ib.RealityShortIDs) > 0 {
+			obj["sid"] = ib.RealityShortIDs[0]
+		}
+		if ib.RealitySpiderX != "" {
+			obj["spx"] = ib.RealitySpiderX
+		}
+	case "tls":
+		obj["sni"] = firstNonEmpty(firstOf(ib.RealitySNI), n.Domain, nodeHost(n))
+		obj["fp"] = firstNonEmpty(ib.Fingerprint, "chrome")
+		if len(ib.ALPN) > 0 {
+			obj["alpn"] = strings.Join(ib.ALPN, ",")
+		}
+	}
+}
+
+func clashXrayProxy(u *model.User, n model.Node, ep XrayEndpoint) map[string]any {
+	ib := ep.Inbound
+	proto := strings.ToLower(strings.TrimSpace(ib.Protocol))
+	if proto == "" {
+		proto = "vless"
+	}
+	transport := clashNetwork(ib.Transport)
+	if strings.EqualFold(ib.Transport, "mkcp") {
+		// Clash/Mihomo has no mKCP transport.
+		return nil
+	}
+	p := map[string]any{
+		"name": ep.Label, "server": nodeHost(n), "port": ep.Port,
+		"udp": true, "network": transport,
+	}
+	switch proto {
+	case "vless":
+		p["type"] = "vless"
+		p["uuid"] = u.XrayUUID
+		if ib.Transport == "tcp" && ib.Security != "none" && ib.Flow != "" {
+			p["flow"] = ib.Flow
+		}
+	case "vmess":
+		p["type"] = "vmess"
+		p["uuid"] = u.XrayUUID
+		p["alterId"] = 0
+		p["cipher"] = "auto"
+	case "trojan":
+		p["type"] = "trojan"
+		p["password"] = xrayconfig.ClientPassword(u)
+	case "shadowsocks":
+		method := firstNonEmpty(ib.SSMethod, xrayconfig.DefaultSSMethod)
+		p["type"] = "ss"
+		p["cipher"] = method
+		p["password"] = xrayconfig.SSPassword(u, method)
+		return p
+	}
+	switch strings.ToLower(ib.Security) {
+	case "reality":
+		p["tls"] = true
+		p["servername"] = firstNonEmpty(firstOf(ib.RealitySNI), nodeHost(n))
+		p["client-fingerprint"] = firstNonEmpty(ib.Fingerprint, "chrome")
+		p["reality-opts"] = map[string]string{
+			"public-key": ib.RealityPublicKey,
+			"short-id":   firstOf(ib.RealityShortIDs),
+		}
+	case "tls":
+		p["tls"] = true
+		p["servername"] = firstNonEmpty(firstOf(ib.RealitySNI), n.Domain, nodeHost(n))
+		p["skip-cert-verify"] = !hasManagedCert(n)
+		p["client-fingerprint"] = firstNonEmpty(ib.Fingerprint, "chrome")
+		if len(ib.ALPN) > 0 {
+			p["alpn"] = ib.ALPN
+		}
+	}
+	switch transport {
+	case "ws":
+		headers := map[string]any{}
+		if ib.WSHost != "" {
+			headers["Host"] = ib.WSHost
+		}
+		p["ws-opts"] = map[string]any{"path": firstNonEmpty(ib.WSPath, "/"), "headers": headers}
+	case "grpc":
+		p["grpc-opts"] = map[string]any{"grpc-service-name": firstNonEmpty(ib.GRPCServiceName, "grpc")}
+	case "xhttp":
+		opts := map[string]any{
+			"path": firstNonEmpty(ib.XHTTPPath, "/"),
+			"mode": firstNonEmpty(ib.XHTTPMode, "auto"),
+		}
+		if ib.XHTTPHost != "" {
+			opts["host"] = ib.XHTTPHost
+		}
+		p["xhttp-opts"] = opts
+	case "http":
+		opts := map[string]any{"path": []string{firstNonEmpty(ib.XHTTPPath, "/")}}
+		if ib.XHTTPHost != "" {
+			opts["headers"] = map[string]any{"Host": []string{ib.XHTTPHost}}
+		}
+		p["h2-opts"] = opts
+	}
+	return p
+}
+
+func clashNetwork(transport string) string {
+	switch strings.ToLower(transport) {
+	case "ws":
+		return "ws"
+	case "grpc":
+		return "grpc"
+	case "xhttp":
+		return "xhttp"
+	default:
+		return "tcp"
+	}
+}
+
+func singboxXrayOutbound(u *model.User, n model.Node, ep XrayEndpoint) map[string]any {
+	ib := ep.Inbound
+	proto := strings.ToLower(strings.TrimSpace(ib.Protocol))
+	if proto == "" {
+		proto = "vless"
+	}
+	if strings.EqualFold(ib.Transport, "mkcp") {
+		// sing-box has no mKCP transport; Xray/v2rayN clients can use it.
+		return nil
+	}
+	ob := map[string]any{"server": nodeHost(n), "server_port": ep.Port}
+	switch proto {
+	case "vless":
+		ob["type"] = "vless"
+		ob["uuid"] = u.XrayUUID
+		if ib.Transport == "tcp" && ib.Security != "none" && ib.Flow != "" {
+			ob["flow"] = ib.Flow
+		}
+	case "vmess":
+		ob["type"] = "vmess"
+		ob["uuid"] = u.XrayUUID
+		ob["security"] = "auto"
+		ob["alter_id"] = 0
+	case "trojan":
+		ob["type"] = "trojan"
+		ob["password"] = xrayconfig.ClientPassword(u)
+	case "shadowsocks":
+		method := firstNonEmpty(ib.SSMethod, xrayconfig.DefaultSSMethod)
+		ob["type"] = "shadowsocks"
+		ob["method"] = method
+		ob["password"] = xrayconfig.SSPassword(u, method)
+		return ob
+	}
+	ob["tls"] = singboxTLS(n, ib)
+	switch strings.ToLower(ib.Transport) {
+	case "ws":
+		tr := map[string]any{"type": "ws", "path": firstNonEmpty(ib.WSPath, "/")}
+		if ib.WSHost != "" {
+			tr["headers"] = map[string]any{"Host": ib.WSHost}
+		}
+		ob["transport"] = tr
+	case "grpc":
+		ob["transport"] = map[string]any{"type": "grpc", "service_name": firstNonEmpty(ib.GRPCServiceName, "grpc")}
+	case "xhttp":
+		tr := map[string]any{"type": "xhttp", "path": firstNonEmpty(ib.XHTTPPath, "/")}
+		if ib.XHTTPHost != "" {
+			tr["host"] = ib.XHTTPHost
+		}
+		if ib.XHTTPMode != "" {
+			tr["mode"] = ib.XHTTPMode
+		}
+		ob["transport"] = tr
+	}
+	return ob
+}
+
+func singboxTLS(n model.Node, ib model.XrayInbound) map[string]any {
+	switch strings.ToLower(ib.Security) {
+	case "reality":
+		sni := firstNonEmpty(firstOf(ib.RealitySNI), nodeHost(n))
+		return map[string]any{
+			"enabled": true, "server_name": sni,
+			"utls":    map[string]any{"enabled": true, "fingerprint": firstNonEmpty(ib.Fingerprint, "chrome")},
+			"reality": map[string]any{"enabled": true, "public_key": ib.RealityPublicKey, "short_id": firstOf(ib.RealityShortIDs)},
+		}
+	case "tls":
+		tls := map[string]any{
+			"enabled":     true,
+			"server_name": firstNonEmpty(firstOf(ib.RealitySNI), n.Domain, nodeHost(n)),
+			"insecure":    !hasManagedCert(n),
+		}
+		if len(ib.ALPN) > 0 {
+			tls["alpn"] = ib.ALPN
+		}
+		return tls
+	default:
+		return map[string]any{"enabled": false}
+	}
+}
+
+func xrayJSONOutbound(u *model.User, n model.Node, ep XrayEndpoint) map[string]any {
+	ib := ep.Inbound
+	proto := strings.ToLower(strings.TrimSpace(ib.Protocol))
+	if proto == "" {
+		proto = "vless"
+	}
+	stream := map[string]any{"network": firstNonEmpty(ib.Transport, "tcp")}
+	switch strings.ToLower(ib.Security) {
+	case "reality":
+		stream["security"] = "reality"
+		stream["realitySettings"] = map[string]any{
+			"fingerprint": firstNonEmpty(ib.Fingerprint, "chrome"),
+			"serverName":  firstNonEmpty(firstOf(ib.RealitySNI), nodeHost(n)),
+			"publicKey":   ib.RealityPublicKey,
+			"shortId":     firstOf(ib.RealityShortIDs),
+			"spiderX":     ib.RealitySpiderX,
+		}
+	case "tls":
+		stream["security"] = "tls"
+		stream["tlsSettings"] = map[string]any{
+			"serverName":    firstNonEmpty(firstOf(ib.RealitySNI), n.Domain, nodeHost(n)),
+			"allowInsecure": !hasManagedCert(n),
+		}
+	}
+	switch ib.Transport {
+	case "ws":
+		stream["wsSettings"] = map[string]any{"path": firstNonEmpty(ib.WSPath, "/"), "headers": map[string]any{"Host": ib.WSHost}}
+	case "grpc":
+		stream["grpcSettings"] = map[string]any{"serviceName": firstNonEmpty(ib.GRPCServiceName, "grpc")}
+	case "xhttp":
+		stream["xhttpSettings"] = map[string]any{"path": firstNonEmpty(ib.XHTTPPath, "/"), "host": ib.XHTTPHost, "mode": firstNonEmpty(ib.XHTTPMode, "auto")}
+	case "mkcp":
+		stream["kcpSettings"] = map[string]any{"seed": ib.KCPSeed}
+	}
+	address := nodeHost(n)
+	ob := map[string]any{"streamSettings": stream}
+	switch proto {
+	case "vless":
+		vnextUser := map[string]any{"id": u.XrayUUID, "encryption": "none"}
+		if ib.Transport == "tcp" && ib.Security != "none" && ib.Flow != "" {
+			vnextUser["flow"] = ib.Flow
+		}
+		ob["protocol"] = "vless"
+		ob["settings"] = map[string]any{"vnext": []map[string]any{{
+			"address": address, "port": ep.Port, "users": []map[string]any{vnextUser},
+		}}}
+	case "vmess":
+		ob["protocol"] = "vmess"
+		ob["settings"] = map[string]any{"vnext": []map[string]any{{
+			"address": address, "port": ep.Port,
+			"users": []map[string]any{{"id": u.XrayUUID, "alterId": 0, "security": "auto"}},
+		}}}
+	case "trojan":
+		ob["protocol"] = "trojan"
+		ob["settings"] = map[string]any{"servers": []map[string]any{{
+			"address": address, "port": ep.Port, "password": xrayconfig.ClientPassword(u),
+		}}}
+	case "shadowsocks":
+		method := firstNonEmpty(ib.SSMethod, xrayconfig.DefaultSSMethod)
+		ob["protocol"] = "shadowsocks"
+		ob["settings"] = map[string]any{"servers": []map[string]any{{
+			"address": address, "port": ep.Port, "method": method,
+			"password": xrayconfig.SSPassword(u, method),
+		}}}
+	}
+	return ob
+}
+
+func hasManagedCert(n model.Node) bool {
+	return strings.EqualFold(n.TLSMode, "managed") && n.Domain != ""
 }
 
 func endpointLabel(n model.Node) string {

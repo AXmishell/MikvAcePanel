@@ -13,7 +13,8 @@ Token 可以在用户页查看、重置。重置后旧链接立即失效。
 订阅内容取决于：
 
 - 用户启用的节点 / 分组；
-- 节点类型（Hysteria 2 / Xray）；
+- 节点启用的核心（Hysteria 2 / Xray，可同时启用）；
+- 节点上的每个 Xray 入站（VLESS / VMess / Trojan / Shadowsocks）；
 - 请求的 User-Agent 或 `format` 参数；
 - 面板订阅设置（标题、更新间隔、支持链接、HAPP 路由）。
 
@@ -25,7 +26,7 @@ Token 可以在用户页查看、重置。重置后旧链接立即失效。
 | `shadowrocket` | Base64 编码的 URI 列表 |
 | `hiddify` / `sing-box` / `nekobox` / `karing` | sing-box JSON |
 | `clash` / `stash` / `surge` / `loon` | Clash / Mihomo YAML |
-| 其他 | 原始 `hysteria2://` / `vless://` 列表 |
+| 其他 | 原始 `hysteria2://` / `vless://` / `vmess://` / `trojan://` / `ss://` 列表 |
 
 强制指定：
 
@@ -112,9 +113,11 @@ hysteria2://userId:password@node.example.com:443?sni=node.example.com&insecure=0
 
 ### Xray / v2rayN
 
+- 一个 Xray 节点可以有多个入站，订阅会为每个入站生成一条独立的代理；
+- 协议：VLESS、VMess、Trojan、Shadowsocks（2022 加密方式）；
 - REALITY：使用面板生成的公钥、short id、SNI、fingerprint；
 - TLS：`managed` 模式下可校验证书，自签名模式需要允许不安全；
-- 传输支持 TCP / WebSocket / gRPC。
+- 传输支持 TCP / WebSocket / gRPC / XHTTP / mKCP；Clash 与 sing-box 没有 mKCP，会跳过对应入站，请使用 Xray/v2rayN 客户端连接。
 
 ## 订阅故障排查
 

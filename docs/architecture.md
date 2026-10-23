@@ -63,7 +63,7 @@ Agent 断线重连时：
 
 | 消息 | 内容 |
 | --- | --- |
-| `config` | YAML/JSON、revision、TLS 模式、域名、端口、端口跳跃 |
+| `config` | `configs` 映射（每个核心一份 YAML/JSON）、`cores`、revision、TLS 模式、域名、端口、端口跳跃 |
 | `command` | start / stop / restart |
 | `cert.push` | 证书链、指纹、有效期；上传模式含私钥 |
 | `cert.error` | 签发失败原因 |

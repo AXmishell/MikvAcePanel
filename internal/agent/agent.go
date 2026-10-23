@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,8 +28,8 @@ type Agent struct {
 	log *slog.Logger
 
 	runtimeMu sync.RWMutex
-	runtime   Runtime
-	protocol  string
+	runtimes  map[string]Runtime
+	cores     []string
 
 	stats        *statsPoller
 	xrayStats    *xrayStatsPoller
@@ -51,6 +52,7 @@ type Agent struct {
 
 	configMu        sync.Mutex
 	currentConfig   string
+	currentConfigs  map[string]string
 	currentRevision int64
 	appliedRevision int64
 	meta            nodeMeta
@@ -63,13 +65,14 @@ type Agent struct {
 }
 
 type nodeMeta struct {
-	Revision  int64  `json:"revision"`
-	Protocol  string `json:"protocol"`
-	TLSMode   string `json:"tlsMode"`
-	Domain    string `json:"domain"`
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	PortRange string `json:"portRange"`
+	Revision  int64    `json:"revision"`
+	Protocol  string   `json:"protocol"`
+	Cores     []string `json:"cores,omitempty"`
+	TLSMode   string   `json:"tlsMode"`
+	Domain    string   `json:"domain"`
+	Host      string   `json:"host"`
+	Port      int      `json:"port"`
+	PortRange string   `json:"portRange"`
 
 	CertFingerprint string `json:"certFingerprint,omitempty"`
 	CertNotAfter    int64  `json:"certNotAfter,omitempty"`
@@ -85,101 +88,162 @@ type wsMessage struct {
 func New(cfg Config, logger *slog.Logger) (*Agent, error) {
 	a := &Agent{
 		cfg: cfg, log: logger,
-		logCh:        make(chan LogLine, 2048),
-		xrayOnline:   map[string]time.Time{},
-		pendingLogs:  map[string]*model.LogBatch{},
-		pendingStats: map[string]*model.StatsBatch{},
+		runtimes:       map[string]Runtime{},
+		currentConfigs: map[string]string{},
+		logCh:          make(chan LogLine, 2048),
+		xrayOnline:     map[string]time.Time{},
+		pendingLogs:    map[string]*model.LogBatch{},
+		pendingStats:   map[string]*model.StatsBatch{},
 	}
 	a.loadLocalState()
 	a.loadCertMeta()
-	protocol := a.meta.Protocol
-	if protocol != "" {
-		rt, err := NewRuntime(cfg, protocol, a.enqueueLog)
+	cores := a.meta.Cores
+	if len(cores) == 0 && a.meta.Protocol != "" {
+		cores = []string{a.meta.Protocol}
+	}
+	for _, core := range cores {
+		rt, err := NewRuntime(cfg, core, a.enqueueLog)
 		if err != nil {
-			return nil, err
+			logger.Warn("core runtime unavailable", "core", core, "error", err)
+			continue
 		}
-		a.runtimeMu.Lock()
-		a.runtime = rt
-		a.protocol = protocol
-		a.runtimeMu.Unlock()
+		a.runtimes[core] = rt
+		a.cores = append(a.cores, core)
 	}
 	a.stats = newStatsPoller("", "127.0.0.1:9999")
-	a.xrayStats = newXrayStatsPoller(cfg.XrayBin)
+	a.xrayStats = newXrayStatsPoller(cfg)
 	return a, nil
 }
 
-// runtimeState returns the active runtime and protocol. Callers must not hold
-// runtimeMu.
+// runtimeState returns the primary runtime and core for compatibility with
+// single-core callers. Callers must not hold runtimeMu.
 func (a *Agent) runtimeState() (Runtime, string) {
 	a.runtimeMu.RLock()
 	defer a.runtimeMu.RUnlock()
-	return a.runtime, a.protocol
+	core := ""
+	if len(a.cores) > 0 {
+		core = a.cores[0]
+	}
+	return a.runtimes[core], core
 }
 
-func (a *Agent) ensureRuntime(protocol string) error {
-	if protocol == "" {
-		protocol = "hysteria"
+// runtimesState returns a copy of the active runtime map and core list.
+func (a *Agent) runtimesState() (map[string]Runtime, []string) {
+	a.runtimeMu.RLock()
+	defer a.runtimeMu.RUnlock()
+	out := make(map[string]Runtime, len(a.runtimes))
+	for core, rt := range a.runtimes {
+		out[core] = rt
 	}
-	// Serialize runtime switches: they are rare and Close can block while the
-	// old proxy process shuts down.
+	return out, append([]string{}, a.cores...)
+}
+
+func (a *Agent) hasCore(core string) bool {
+	a.runtimeMu.RLock()
+	defer a.runtimeMu.RUnlock()
+	for _, c := range a.cores {
+		if c == core {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureRuntimes creates runtimes for the requested cores and closes runtimes
+// for cores that are no longer used.
+func (a *Agent) ensureRuntimes(cores []string) error {
 	a.runtimeMu.Lock()
 	defer a.runtimeMu.Unlock()
-	if a.runtime != nil && a.protocol == protocol {
-		return nil
+	want := map[string]bool{}
+	for _, core := range cores {
+		core = strings.ToLower(strings.TrimSpace(core))
+		if !model.ValidCore(core) {
+			return fmt.Errorf("unsupported core %q", core)
+		}
+		want[core] = true
 	}
-	if a.runtime != nil {
-		a.runtime.Close()
+	for core, rt := range a.runtimes {
+		if !want[core] {
+			rt.Close()
+			delete(a.runtimes, core)
+		}
 	}
-	rt, err := NewRuntime(a.cfg, protocol, a.enqueueLog)
-	if err != nil {
-		return err
+	active := []string{}
+	for _, core := range cores {
+		core = strings.ToLower(strings.TrimSpace(core))
+		if !want[core] {
+			continue
+		}
+		delete(want, core)
+		if _, ok := a.runtimes[core]; !ok {
+			rt, err := NewRuntime(a.cfg, core, a.enqueueLog)
+			if err != nil {
+				return err
+			}
+			a.runtimes[core] = rt
+		}
+		active = append(active, core)
 	}
-	a.runtime = rt
-	a.protocol = protocol
+	a.cores = active
 	return nil
+}
+
+func (a *Agent) ensureRuntime(core string) error {
+	return a.ensureRuntimes([]string{core})
 }
 
 // Run starts the node agent and blocks until the context is cancelled.
 func (a *Agent) Run(ctx context.Context) error {
-	rt, protocol := a.runtimeState()
-	if rt != nil {
-		defer rt.Close()
-	}
+	runtimes, cores := a.runtimesState()
+	defer func() {
+		for _, rt := range runtimes {
+			rt.Close()
+		}
+	}()
 	defer a.stopAccessTail()
 	go a.logBatcher(ctx)
 	go a.retransmitLoop(ctx)
 	go a.certRetryLoop(ctx)
 	a.configMu.Lock()
-	currentConfig := a.currentConfig
+	configs := make(map[string]string, len(a.currentConfigs))
+	for core, text := range a.currentConfigs {
+		configs[core] = text
+	}
 	meta := a.meta
 	a.configMu.Unlock()
-	if currentConfig != "" && rt != nil {
+	for _, core := range cores {
+		text := configs[core]
+		rt := runtimes[core]
+		if text == "" || rt == nil {
+			continue
+		}
 		blocked := false
-		if a.requiresManagedCert(protocol, currentConfig, meta.TLSMode) {
+		if a.requiresManagedCert(core, text, meta.TLSMode) {
 			host := meta.Host
 			if host == "" {
 				host = meta.Domain
 			}
 			if _, err := a.managedCertStatus(host); err != nil {
-				a.log.Warn("waiting for a panel certificate before starting", "error", err)
+				a.log.Warn("waiting for a panel certificate before starting", "core", core, "error", err)
 				blocked = true
 			}
 		}
-		if !blocked {
-			if protocol == "xray" {
-				a.xrayStats.Configure(currentConfig)
-				a.startAccessTail(a.accessLogPath())
-			} else {
-				a.stats.Configure(currentConfig)
-				if meta.PortRange != "" {
-					if err := SetupPortHopping(meta.Port, meta.PortRange); err != nil {
-						a.log.Warn("port hopping setup", "error", err)
-					}
+		if blocked {
+			continue
+		}
+		if core == "xray" {
+			a.xrayStats.Configure(text)
+			a.startAccessTail(a.accessLogPath())
+		} else {
+			a.stats.Configure(text)
+			if meta.PortRange != "" {
+				if err := SetupPortHopping(meta.Port, meta.PortRange); err != nil {
+					a.log.Warn("port hopping setup", "error", err)
 				}
 			}
-			if err := rt.Start(); err != nil {
-				a.log.Warn("start "+protocol+" from local config", "error", err)
-			}
+		}
+		if err := rt.Start(); err != nil {
+			a.log.Warn("start "+core+" from local config", "error", err)
 		}
 	}
 	backoff := time.Second
@@ -334,9 +398,21 @@ func (a *Agent) session(ctx context.Context) error {
 }
 
 func (a *Agent) sendHello() {
-	version, runtimeName := "unknown", "unknown"
-	if rt, _ := a.runtimeState(); rt != nil {
-		version, runtimeName = rt.Version(), rt.Name()
+	runtimes, cores := a.runtimesState()
+	hy2Version, xrayVersion, runtimeName := "unknown", "", "unknown"
+	for core, rt := range runtimes {
+		if v := rt.Version(); v != "" {
+			if core == "xray" {
+				xrayVersion = v
+			} else {
+				hy2Version = v
+			}
+		}
+	}
+	if len(cores) > 0 {
+		if rt := runtimes[cores[0]]; rt != nil {
+			runtimeName = rt.Name()
+		}
 	}
 	a.configMu.Lock()
 	certFP := a.meta.CertFingerprint
@@ -344,9 +420,10 @@ func (a *Agent) sendHello() {
 	a.configMu.Unlock()
 	a.write("hello", map[string]any{
 		"version": a.cfg.Version, "os": osName(), "arch": archName(),
-		"hy2Version": version, "runtime": runtimeName,
+		"hy2Version": hy2Version, "xrayVersion": xrayVersion, "cores": cores,
+		"runtime":      runtimeName,
 		"onlineUsers":  a.onlineCount(),
-		"capabilities": []string{CapabilityCSR},
+		"capabilities": []string{CapabilityCSR, CapabilityMultiCore},
 		"cert": map[string]any{
 			"fingerprint": certFP,
 			"notAfter":    certAfter,
@@ -355,15 +432,13 @@ func (a *Agent) sendHello() {
 }
 
 func (a *Agent) onlineCount() int {
-	rt, protocol := a.runtimeState()
-	if rt == nil {
-		return 0
+	n := 0
+	if a.hasCore("hysteria") {
+		n += a.stats.OnlineCount()
 	}
-	if protocol == "xray" {
+	if a.hasCore("xray") {
 		a.xrayOnlineMu.Lock()
-		defer a.xrayOnlineMu.Unlock()
 		cutoff := time.Now().Add(-2 * time.Minute)
-		n := 0
 		for uid, seen := range a.xrayOnline {
 			if seen.After(cutoff) {
 				n++
@@ -371,17 +446,24 @@ func (a *Agent) onlineCount() int {
 				delete(a.xrayOnline, uid)
 			}
 		}
-		return n
+		a.xrayOnlineMu.Unlock()
 	}
-	return a.stats.OnlineCount()
+	return n
 }
 
 func (a *Agent) trafficTotals() (int64, int64) {
-	_, protocol := a.runtimeState()
-	if protocol == "xray" {
-		return a.xrayStats.Totals()
+	var tx, rx int64
+	if a.hasCore("hysteria") {
+		t, r := a.stats.Totals()
+		tx += t
+		rx += r
 	}
-	return a.stats.Totals()
+	if a.hasCore("xray") {
+		t, r := a.xrayStats.Totals()
+		tx += t
+		rx += r
+	}
+	return tx, rx
 }
 
 func (a *Agent) write(typ string, payload any) bool {
@@ -421,15 +503,23 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 		case <-ticker.C:
 			sys := a.sampler.Sample(a.cfg.DataDir)
 			tx, rx := a.trafficTotals()
+			runtimes, cores := a.runtimesState()
+			running := map[string]bool{}
 			hy2Running := false
-			if rt, _ := a.runtimeState(); rt != nil {
-				hy2Running = rt.Running()
+			for _, core := range cores {
+				if rt := runtimes[core]; rt != nil && rt.Running() {
+					running[core] = true
+					if core == "hysteria" {
+						hy2Running = true
+					}
+				}
 			}
 			a.write("heartbeat", map[string]any{
 				"cpuPct": sys.CPUPct, "memUsed": sys.MemUsed, "memTotal": sys.MemTotal,
 				"diskUsed": sys.DiskUsed, "diskTotal": sys.DiskTotal, "load1": sys.Load1,
 				"uptimeSec": sys.UptimeSec, "online": a.onlineCount(),
 				"trafficTx": tx, "trafficRx": rx, "hy2Running": hy2Running,
+				"coresRunning": running,
 			})
 		}
 	}
@@ -443,25 +533,28 @@ func (a *Agent) statsLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			var batch *model.StatsBatch
-			if _, protocol := a.runtimeState(); protocol == "xray" {
-				batch = a.xrayStats.Poll(ctx)
-			} else {
-				batch = a.stats.Poll(ctx)
+			var batches []*model.StatsBatch
+			if a.hasCore("hysteria") {
+				batches = append(batches, a.stats.Poll(ctx))
 			}
-			if batch == nil {
-				continue
+			if a.hasCore("xray") {
+				batches = append(batches, a.xrayStats.Poll(ctx))
 			}
-			a.pendingMu.Lock()
-			if len(a.pendingStats) > 100 {
-				for k := range a.pendingStats {
-					delete(a.pendingStats, k)
-					break
+			for _, batch := range batches {
+				if batch == nil {
+					continue
 				}
+				a.pendingMu.Lock()
+				if len(a.pendingStats) > 100 {
+					for k := range a.pendingStats {
+						delete(a.pendingStats, k)
+						break
+					}
+				}
+				a.pendingStats[batch.BatchID] = batch
+				a.pendingMu.Unlock()
+				a.write("stats", batch)
 			}
-			a.pendingStats[batch.BatchID] = batch
-			a.pendingMu.Unlock()
-			a.write("stats", batch)
 		}
 	}
 }
@@ -577,128 +670,192 @@ func (a *Agent) logBatcher(ctx context.Context) {
 
 func (a *Agent) handleConfig(raw json.RawMessage) {
 	var msg struct {
-		Revision  int64  `json:"revision"`
-		Protocol  string `json:"protocol"`
-		Config    string `json:"config"`
-		YAML      string `json:"yaml"`
-		TLSMode   string `json:"tlsMode"`
-		Domain    string `json:"domain"`
-		Host      string `json:"host"`
-		Port      int    `json:"port"`
-		PortRange string `json:"portRange"`
+		Revision  int64             `json:"revision"`
+		Protocol  string            `json:"protocol"`
+		Config    string            `json:"config"`
+		YAML      string            `json:"yaml"`
+		Configs   map[string]string `json:"configs"`
+		Cores     []string          `json:"cores"`
+		TLSMode   string            `json:"tlsMode"`
+		Domain    string            `json:"domain"`
+		Host      string            `json:"host"`
+		Port      int               `json:"port"`
+		PortRange string            `json:"portRange"`
 	}
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		a.log.Warn("invalid config push")
 		return
 	}
-	configText := msg.Config
-	if strings.TrimSpace(configText) == "" {
-		configText = msg.YAML
-	}
-	if strings.TrimSpace(configText) == "" {
-		a.log.Warn("invalid config push")
-		return
-	}
-	protocol := strings.ToLower(strings.TrimSpace(msg.Protocol))
-	if protocol == "" {
-		protocol = "hysteria"
-	}
-	if strings.EqualFold(strings.TrimSpace(msg.TLSMode), "managed") && a.needsManagedCert(protocol, configText) {
-		host := strings.TrimSpace(msg.Host)
-		if host == "" {
-			host = strings.TrimSpace(msg.Domain)
+	configs := map[string]string{}
+	for core, text := range msg.Configs {
+		core = strings.ToLower(strings.TrimSpace(core))
+		if core != "" && strings.TrimSpace(text) != "" {
+			configs[core] = text
 		}
-		if _, err := a.managedCertStatus(host); err != nil {
-			a.setPendingConfig(raw, host)
-			a.requestCertificate("initial", false)
-			a.write("config.ack", map[string]any{
-				"revision": msg.Revision, "ok": false, "pending": true,
-				"error": "waiting for panel certificate: " + err.Error(),
-			})
+	}
+	if len(configs) == 0 {
+		configText := msg.Config
+		if strings.TrimSpace(configText) == "" {
+			configText = msg.YAML
+		}
+		if strings.TrimSpace(configText) == "" {
+			a.log.Warn("invalid config push")
 			return
+		}
+		protocol := strings.ToLower(strings.TrimSpace(msg.Protocol))
+		if protocol == "" {
+			protocol = "hysteria"
+		}
+		configs[protocol] = configText
+	}
+	cores := []string{}
+	seen := map[string]bool{}
+	for _, core := range msg.Cores {
+		core = strings.ToLower(strings.TrimSpace(core))
+		if _, ok := configs[core]; ok && !seen[core] {
+			seen[core] = true
+			cores = append(cores, core)
+		}
+	}
+	if len(cores) == 0 {
+		for core := range configs {
+			cores = append(cores, core)
+		}
+		sort.Strings(cores)
+	}
+
+	if strings.EqualFold(strings.TrimSpace(msg.TLSMode), "managed") {
+		needsCert := false
+		for core, text := range configs {
+			if a.needsManagedCert(core, text) {
+				needsCert = true
+			}
+		}
+		if needsCert {
+			host := strings.TrimSpace(msg.Host)
+			if host == "" {
+				host = strings.TrimSpace(msg.Domain)
+			}
+			if _, err := a.managedCertStatus(host); err != nil {
+				a.setPendingConfig(raw, host)
+				a.requestCertificate("initial", false)
+				a.write("config.ack", map[string]any{
+					"revision": msg.Revision, "ok": false, "pending": true,
+					"error": "waiting for panel certificate: " + err.Error(),
+				})
+				return
+			}
 		}
 	}
 	a.clearPendingConfig()
-	preparedPreview := PrepareConfig(a.cfg, configText)
-	rt, activeProtocol := a.runtimeState()
-	a.configMu.Lock()
-	unchanged := msg.Revision == a.appliedRevision && preparedPreview == a.currentConfig
-	previous := a.currentConfig
-	a.configMu.Unlock()
-	if rt != nil && unchanged && activeProtocol == protocol && rt.Running() {
-		a.write("config.ack", map[string]any{"revision": msg.Revision, "ok": true})
-		return
-	}
-	previousProtocol := activeProtocol
 
-	if err := a.applyConfig(msg.Revision, protocol, configText, msg.TLSMode, msg.Domain, msg.Host, msg.Port, msg.PortRange); err != nil {
+	prepared := map[string]string{}
+	for core, text := range configs {
+		prepared[core] = PrepareConfig(a.cfg, text)
+	}
+	a.configMu.Lock()
+	unchanged := msg.Revision == a.appliedRevision && len(prepared) == len(a.currentConfigs)
+	if unchanged {
+		for core, text := range prepared {
+			if a.currentConfigs[core] != text {
+				unchanged = false
+				break
+			}
+		}
+	}
+	previous := make(map[string]string, len(a.currentConfigs))
+	for core, text := range a.currentConfigs {
+		previous[core] = text
+	}
+	prevMeta := a.meta
+	a.configMu.Unlock()
+	if unchanged {
+		runtimes, _ := a.runtimesState()
+		running := true
+		for core := range prepared {
+			if rt := runtimes[core]; rt == nil || !rt.Running() {
+				running = false
+				break
+			}
+		}
+		if running {
+			a.write("config.ack", map[string]any{"revision": msg.Revision, "ok": true})
+			return
+		}
+	}
+
+	if err := a.applyConfigs(msg.Revision, cores, configs, msg.TLSMode, msg.Domain, msg.Host, msg.Port, msg.PortRange); err != nil {
 		a.log.Error("apply config failed", "revision", msg.Revision, "error", err)
 		// Restore the previous configuration so the node keeps serving.
-		if _, currentProtocol := a.runtimeState(); currentProtocol == protocol {
-			RemovePortHopping(msg.Port, msg.PortRange)
-		}
-		if previous != "" {
-			if _, currentProtocol := a.runtimeState(); currentProtocol != previousProtocol {
-				if err := a.ensureRuntime(previousProtocol); err != nil {
-					a.log.Error("restore runtime", "error", err)
-				}
-			}
-			restoreRuntime, _ := a.runtimeState()
-			_ = a.writeConfigFile(restoreRuntime, previous)
-			if previousProtocol == "xray" {
-				a.xrayStats.Configure(previous)
-			} else {
-				a.stats.Configure(previous)
-			}
-			if restoreRuntime != nil {
-				_ = restoreRuntime.Restart()
-			}
-			a.configMu.Lock()
-			prevPort, prevPortRange := a.meta.Port, a.meta.PortRange
-			a.configMu.Unlock()
-			if prevPortRange != "" && previousProtocol != "xray" {
-				_ = SetupPortHopping(prevPort, prevPortRange)
+		if len(previous) > 0 {
+			prevCores := mapKeys(previous)
+			if rerr := a.applyConfigs(prevMeta.Revision, prevCores, previous, prevMeta.TLSMode, prevMeta.Domain, prevMeta.Host, prevMeta.Port, prevMeta.PortRange); rerr != nil {
+				a.log.Error("restore previous config", "error", rerr)
 			}
 		}
 		a.write("config.ack", map[string]any{"revision": msg.Revision, "ok": false, "error": err.Error()})
 		return
 	}
-	a.log.Info("configuration applied", "revision", msg.Revision)
-	a.write("config.ack", map[string]any{"revision": msg.Revision, "ok": true})
+	a.log.Info("configuration applied", "revision", msg.Revision, "cores", cores)
+	a.write("config.ack", map[string]any{"revision": msg.Revision, "ok": true, "cores": cores})
 }
 
-func (a *Agent) applyConfig(revision int64, protocol, configText, tlsMode, domain, host string, port int, portRange string) error {
-	if err := a.ensureRuntime(protocol); err != nil {
+func (a *Agent) applyConfigs(revision int64, cores []string, configs map[string]string, tlsMode, domain, host string, port int, portRange string) error {
+	if len(cores) == 0 {
+		return fmt.Errorf("no cores in configuration")
+	}
+	if err := a.ensureRuntimes(cores); err != nil {
 		return err
 	}
-	rt, _ := a.runtimeState()
-	if rt == nil {
-		return fmt.Errorf("no runtime available for %s", protocol)
+	needManaged := false
+	needSelfSigned := false
+	for _, core := range cores {
+		text := configs[core]
+		if a.requiresManagedCert(core, text, tlsMode) {
+			needManaged = true
+		} else if a.needsManagedCert(core, text) {
+			// Hysteria manages its own ACME certificate, but Xray always reads
+			// /data/certs, so a hybrid node needs the local certificate too.
+			if core == "xray" || tlsMode != "acme" {
+				needSelfSigned = true
+			}
+		}
 	}
-	// REALITY and plaintext Xray inbounds never use the certificate file, even
-	// when the node's TLS mode is set to managed.
-	if a.requiresManagedCert(protocol, configText, tlsMode) {
+	if needManaged {
 		if _, err := a.managedCertStatus(host); err != nil {
 			return fmt.Errorf("managed certificate: %w", err)
 		}
-	} else if tlsMode != "acme" && a.needsManagedCert(protocol, configText) {
+	} else if needSelfSigned {
 		if err := EnsureSelfSignedCert(a.cfg.DataDir, host); err != nil {
 			return fmt.Errorf("certificate: %w", err)
 		}
 	}
-	prepared := PrepareConfig(a.cfg, configText)
-	if err := a.writeConfigFile(rt, prepared); err != nil {
-		return err
-	}
-	if protocol == "xray" {
-		a.xrayStats.Configure(prepared)
-	} else {
-		a.stats.Configure(prepared)
+	runtimes, _ := a.runtimesState()
+	prepared := map[string]string{}
+	for _, core := range cores {
+		rt := runtimes[core]
+		if rt == nil {
+			return fmt.Errorf("no runtime available for %s", core)
+		}
+		text := PrepareConfig(a.cfg, configs[core])
+		var check func(string) error
+		if core == "xray" {
+			check = func(p string) error { return ValidateXrayConfig(a.cfg, p) }
+		}
+		if err := a.writeConfigFileChecked(rt, text, check); err != nil {
+			return err
+		}
+		prepared[core] = text
+		if core == "xray" {
+			a.xrayStats.Configure(text)
+		} else {
+			a.stats.Configure(text)
+		}
 	}
 	a.configMu.Lock()
 	prev := a.meta
 	a.configMu.Unlock()
-	if protocol != "xray" {
+	if containsCore(cores, "hysteria") {
 		if prev.PortRange != portRange || prev.Port != port {
 			RemovePortHopping(prev.Port, prev.PortRange)
 		}
@@ -708,42 +865,70 @@ func (a *Agent) applyConfig(revision int64, protocol, configText, tlsMode, domai
 	} else {
 		RemovePortHopping(prev.Port, prev.PortRange)
 	}
-	if err := rt.Restart(); err != nil {
-		return fmt.Errorf("start %s: %w", protocol, err)
+	for _, core := range cores {
+		if err := runtimes[core].Restart(); err != nil {
+			return fmt.Errorf("start %s: %w", core, err)
+		}
 	}
-	// Give the process a moment to validate the config and bind its port.
+	// Give the processes a moment to validate their config and bind ports.
 	time.Sleep(1500 * time.Millisecond)
-	if !rt.Running() {
-		return fmt.Errorf("%s exited after applying the configuration", protocol)
+	for _, core := range cores {
+		if !runtimes[core].Running() {
+			return fmt.Errorf("%s exited after applying the configuration", core)
+		}
 	}
 	a.configMu.Lock()
 	certFP, certAfter, keyFP := a.meta.CertFingerprint, a.meta.CertNotAfter, a.meta.KeyFingerprint
 	if fp, after, kfp, err := a.certFileMeta(); err == nil {
 		certFP, certAfter, keyFP = fp, after, kfp
 	}
-	a.currentConfig = prepared
+	a.currentConfigs = prepared
+	a.currentConfig = prepared[cores[0]]
 	a.currentRevision = revision
 	a.appliedRevision = revision
 	a.meta = nodeMeta{
-		Revision: revision, Protocol: protocol, TLSMode: tlsMode, Domain: domain, Host: host,
+		Revision: revision, Protocol: cores[0], Cores: append([]string{}, cores...),
+		TLSMode: tlsMode, Domain: domain, Host: host,
 		Port: port, PortRange: portRange,
 		CertFingerprint: certFP, CertNotAfter: certAfter, KeyFingerprint: keyFP,
 	}
 	a.configMu.Unlock()
 	a.saveLocalState()
-	if protocol == "xray" {
+	if containsCore(cores, "xray") {
 		a.startAccessTail(a.accessLogPath())
 	} else {
 		a.stopAccessTail()
 	}
-	if a.requiresManagedCert(protocol, configText, tlsMode) {
+	if needManaged {
 		a.maybeRequestCert(context.Background(), "apply")
 	}
 	a.sendHello()
 	return nil
 }
 
+func containsCore(cores []string, want string) bool {
+	for _, core := range cores {
+		if core == want {
+			return true
+		}
+	}
+	return false
+}
+
+func mapKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func (a *Agent) writeConfigFile(rt Runtime, content string) error {
+	return a.writeConfigFileChecked(rt, content, nil)
+}
+
+func (a *Agent) writeConfigFileChecked(rt Runtime, content string, check func(path string) error) error {
 	if rt == nil {
 		return fmt.Errorf("no runtime configured")
 	}
@@ -752,10 +937,17 @@ func (a *Agent) writeConfigFile(rt Runtime, content string) error {
 		return err
 	}
 	path := rt.ConfigPath()
-	if err := os.WriteFile(path+".tmp", []byte(content), 0o600); err != nil {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(content), 0o600); err != nil {
 		return err
 	}
-	return os.Rename(path+".tmp", path)
+	if check != nil {
+		if err := check(tmp); err != nil {
+			_ = os.Remove(tmp)
+			return err
+		}
+	}
+	return os.Rename(tmp, path)
 }
 
 func (a *Agent) handleCommand(raw json.RawMessage) {
@@ -766,25 +958,35 @@ func (a *Agent) handleCommand(raw json.RawMessage) {
 	if err := json.Unmarshal(raw, &cmd); err != nil {
 		return
 	}
-	var err error
-	rt, _ := a.runtimeState()
-	if rt == nil {
+	var errs []string
+	runtimes, cores := a.runtimesState()
+	if len(runtimes) == 0 {
 		a.write("command.ack", map[string]any{"id": cmd.ID, "action": cmd.Action, "ok": false, "output": "no configuration applied yet"})
 		return
 	}
-	switch cmd.Action {
-	case "start":
-		err = rt.Start()
-	case "stop":
-		err = rt.Stop()
-	case "restart":
-		err = rt.Restart()
-	default:
-		err = fmt.Errorf("unknown action %q", cmd.Action)
+	for _, core := range cores {
+		rt := runtimes[core]
+		if rt == nil {
+			continue
+		}
+		var err error
+		switch cmd.Action {
+		case "start":
+			err = rt.Start()
+		case "stop":
+			err = rt.Stop()
+		case "restart":
+			err = rt.Restart()
+		default:
+			err = fmt.Errorf("unknown action %q", cmd.Action)
+		}
+		if err != nil {
+			errs = append(errs, core+": "+err.Error())
+		}
 	}
-	payload := map[string]any{"id": cmd.ID, "action": cmd.Action, "ok": err == nil}
-	if err != nil {
-		payload["output"] = err.Error()
+	payload := map[string]any{"id": cmd.ID, "action": cmd.Action, "ok": len(errs) == 0}
+	if len(errs) > 0 {
+		payload["output"] = strings.Join(errs, "; ")
 	} else {
 		payload["output"] = "ok"
 	}
@@ -796,22 +998,36 @@ func (a *Agent) loadLocalState() {
 	if b, err := os.ReadFile(metaPath); err == nil {
 		_ = json.Unmarshal(b, &a.meta)
 	}
-	if a.meta.Protocol == "" {
-		// Upgrade path from before protocol tracking: infer from the file name.
-		if _, err := os.Stat(filepath.Join(a.cfg.DataDir, "config", "config.json")); err == nil {
-			a.meta.Protocol = "xray"
-		} else if _, err := os.Stat(filepath.Join(a.cfg.DataDir, "config", "config.yaml")); err == nil {
-			a.meta.Protocol = "hysteria"
+	if a.currentConfigs == nil {
+		a.currentConfigs = map[string]string{}
+	}
+	if b, err := os.ReadFile(filepath.Join(a.cfg.DataDir, "config", "config.yaml")); err == nil {
+		a.currentConfigs["hysteria"] = string(b)
+	}
+	if b, err := os.ReadFile(filepath.Join(a.cfg.DataDir, "config", "config.json")); err == nil {
+		a.currentConfigs["xray"] = string(b)
+	}
+	cores := append([]string{}, a.meta.Cores...)
+	if len(cores) == 0 {
+		// Upgrade path from before multi-core tracking: infer from the local
+		// config files, then from the recorded primary protocol.
+		for _, core := range []string{"hysteria", "xray"} {
+			if _, ok := a.currentConfigs[core]; ok {
+				cores = append(cores, core)
+			}
+		}
+		if len(cores) == 0 && a.meta.Protocol != "" {
+			cores = []string{a.meta.Protocol}
 		}
 	}
-	name := "config.yaml"
-	if a.meta.Protocol == "xray" {
-		name = "config.json"
+	a.meta.Cores = cores
+	if len(cores) > 0 {
+		if a.meta.Protocol == "" {
+			a.meta.Protocol = cores[0]
+		}
+		a.currentConfig = a.currentConfigs[cores[0]]
 	}
-	if b, err := os.ReadFile(filepath.Join(a.cfg.DataDir, "config", name)); err == nil {
-		a.currentConfig = string(b)
-		a.appliedRevision = a.meta.Revision
-	}
+	a.appliedRevision = a.meta.Revision
 }
 
 func (a *Agent) saveLocalState() {

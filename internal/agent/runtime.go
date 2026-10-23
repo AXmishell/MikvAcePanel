@@ -84,6 +84,7 @@ func NewRuntime(cfg Config, protocol string, sink func(LogLine)) (Runtime, error
 		}
 		return &dockerRuntime{
 			cfg: cfg, sink: sink, protocol: protocol, image: image, command: command,
+			container:  containerName(cfg, protocol),
 			configPath: filepath.Join(cfg.DataDir, "config", configName),
 		}, nil
 	default:
@@ -96,6 +97,19 @@ func NewRuntime(cfg Config, protocol string, sink func(LogLine)) (Runtime, error
 			configPath: filepath.Join(cfg.DataDir, "config", configName),
 		}, nil
 	}
+}
+
+// containerName returns the sibling container name for a core. A hybrid node
+// runs the two cores in separate containers, so they cannot share a name.
+func containerName(cfg Config, protocol string) string {
+	name := strings.TrimSpace(cfg.ContainerName)
+	if name == "" {
+		name = "mikvace-hysteria"
+	}
+	if protocol == "xray" {
+		return name + "-xray"
+	}
+	return name
 }
 
 // ---- process runtime ----------------------------------------------------
@@ -301,6 +315,7 @@ type dockerRuntime struct {
 	protocol   string
 	image      string
 	command    []string
+	container  string
 	configPath string
 
 	mu      sync.Mutex
@@ -327,13 +342,13 @@ func (d *dockerRuntime) Start() error {
 	}
 	d.mu.Unlock()
 	// Remove a stale container with our name.
-	_ = exec.Command("docker", "rm", "-f", d.cfg.ContainerName).Run()
+	_ = exec.Command("docker", "rm", "-f", d.container).Run()
 	containerConfig := "/data/config/config.yaml"
 	if d.protocol == "xray" {
 		containerConfig = "/data/config/config.json"
 	}
 	args := []string{
-		"run", "-d", "--name", d.cfg.ContainerName,
+		"run", "-d", "--name", d.container,
 		"--restart", "unless-stopped", "--network", "host", "--cap-add", "NET_ADMIN",
 		"-v", d.cfg.HostDataDir + ":/data",
 		d.image,
@@ -360,7 +375,7 @@ func (d *dockerRuntime) startLogs() {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, "docker", "logs", "-f", "--tail", "0", d.cfg.ContainerName)
+	cmd := exec.CommandContext(ctx, "docker", "logs", "-f", "--tail", "0", d.container)
 	stop := make(chan struct{})
 	d.logCmd = cmd
 	d.logStop = stop
@@ -413,11 +428,11 @@ func (d *dockerRuntime) Stop() error {
 		_ = logCmd.Process.Kill()
 	}
 	emit(d.sink, "INFO", "stopping "+d.protocol+" docker container")
-	out, err := exec.Command("docker", "stop", "-t", "10", d.cfg.ContainerName).CombinedOutput()
+	out, err := exec.Command("docker", "stop", "-t", "10", d.container).CombinedOutput()
 	if err != nil && !strings.Contains(string(out), "No such container") {
 		return fmt.Errorf("docker stop: %s: %w", strings.TrimSpace(string(out)), err)
 	}
-	_ = exec.Command("docker", "rm", "-f", d.cfg.ContainerName).Run()
+	_ = exec.Command("docker", "rm", "-f", d.container).Run()
 	return nil
 }
 
@@ -435,7 +450,7 @@ func (d *dockerRuntime) Running() bool {
 	if !started {
 		return false
 	}
-	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", d.cfg.ContainerName).Output()
+	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", d.container).Output()
 	if err != nil {
 		return false
 	}
@@ -449,7 +464,7 @@ func (d *dockerRuntime) detectVersion() {
 	if d.protocol == "xray" {
 		bin = "xray"
 	}
-	out, err := exec.Command("docker", "exec", d.cfg.ContainerName, bin, "version").CombinedOutput()
+	out, err := exec.Command("docker", "exec", d.container, bin, "version").CombinedOutput()
 	if err != nil {
 		d.mu.Lock()
 		d.version = "docker"

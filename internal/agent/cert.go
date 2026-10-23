@@ -25,6 +25,10 @@ import (
 // CSR and install a panel-issued certificate.
 const CapabilityCSR = "cert.csr.v1"
 
+// CapabilityMultiCore advertises that this agent can run several cores from a
+// single configuration push.
+const CapabilityMultiCore = "multi-core.v1"
+
 func (a *Agent) certFiles() (string, string) {
 	dir := filepath.Join(a.cfg.DataDir, "certs")
 	return filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
@@ -160,11 +164,26 @@ func (a *Agent) maybeRequestCert(_ context.Context, reason string) {
 	host := a.meta.Host
 	protocol := a.meta.Protocol
 	configText := a.currentConfig
+	configs := make(map[string]string, len(a.currentConfigs))
+	for core, text := range a.currentConfigs {
+		configs[core] = text
+	}
 	if host == "" {
 		host = a.meta.Domain
 	}
 	a.configMu.Unlock()
-	if configText != "" && !a.requiresManagedCert(protocol, configText, mode) {
+	needsCert := false
+	if len(configs) > 0 {
+		for core, text := range configs {
+			if a.requiresManagedCert(core, text, mode) {
+				needsCert = true
+				break
+			}
+		}
+	} else if configText != "" && a.requiresManagedCert(protocol, configText, mode) {
+		needsCert = true
+	}
+	if !needsCert {
 		return
 	}
 	a.certMu.Lock()
@@ -379,13 +398,20 @@ func (a *Agent) handleCertPush(raw json.RawMessage) {
 		a.handleConfig(pending)
 		return
 	}
-	rt, _ := a.runtimeState()
+	runtimes, cores := a.runtimesState()
 	a.configMu.Lock()
-	hasConfig := a.currentConfig != "" && rt != nil
+	configs := make(map[string]string, len(a.currentConfigs))
+	for core, text := range a.currentConfigs {
+		configs[core] = text
+	}
 	a.configMu.Unlock()
-	if hasConfig && rt.Running() {
+	for _, core := range cores {
+		rt := runtimes[core]
+		if rt == nil || configs[core] == "" || !rt.Running() {
+			continue
+		}
 		if err := rt.Restart(); err != nil {
-			a.log.Error("restart after certificate install", "error", err)
+			a.log.Error("restart after certificate install", "core", core, "error", err)
 		}
 	}
 }

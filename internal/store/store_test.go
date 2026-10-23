@@ -252,3 +252,33 @@ func TestPendingRestoreSwap(t *testing.T) {
 		t.Fatalf("restored user = %+v %v", u, err)
 	}
 }
+
+func TestNodeCoresAndConfigBundle(t *testing.T) {
+	st, ctx := testStore(t)
+	n, err := st.CreateNode(ctx, &model.Node{
+		Name: "hybrid", Type: "hysteria", Cores: []string{"hysteria", "xray"},
+		IP: "203.0.113.20", Port: 443, Active: true, StatsPort: 9999, TLSMode: "selfsigned",
+		Xray: model.XraySettings{Inbounds: []model.XrayInbound{{Protocol: "vless", Tag: "vless-in", Port: 8443}}},
+	}, "hash", "prefix", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(n.Cores) != 2 || !n.HasCore("xray") {
+		t.Fatalf("cores = %v", n.Cores)
+	}
+	if len(n.Xray.Inbounds) != 1 || n.Xray.Inbounds[0].Port != 8443 {
+		t.Fatalf("inbounds = %+v", n.Xray.Inbounds)
+	}
+	configs := map[string]string{"hysteria": "a: 1\n", "xray": `{"inbounds":[]}`}
+	cfg, created, err := st.SaveNodeConfigBundle(ctx, n.ID, configs["hysteria"], configs, "bundle-hash")
+	if err != nil || !created {
+		t.Fatalf("save bundle: %v created=%v", err, created)
+	}
+	got, err := st.GetNodeConfig(ctx, n.ID, cfg.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Configs["xray"] != configs["xray"] || got.YAML != configs["hysteria"] {
+		t.Fatalf("config roundtrip = %+v", got)
+	}
+}

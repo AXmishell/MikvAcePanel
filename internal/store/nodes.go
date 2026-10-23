@@ -18,14 +18,14 @@ const nodeSelect = `SELECT id, name, type, flag, ip, domain, sni, listen, port, 
 	masquerade_url, acl_json, outbounds_json, max_online, ranking, active, status, token_hash, token, token_prefix,
 	agent_version, os, arch, hy2_version, runtime, last_seen_at, config_revision, applied_revision,
 	config_error, traffic_tx, traffic_rx, online_users, created_at, updated_at,
-	capabilities_json, cert_fingerprint, cert_not_after FROM nodes`
+	capabilities_json, cert_fingerprint, cert_not_after, cores_json, xray_version FROM nodes`
 
 func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
 	var n model.Node
 	var acl, outbounds, xrayJSON string
 	var active, sshInstallDocker int
 	var last sql.NullString
-	var capsJSON, certAfter sql.NullString
+	var capsJSON, certAfter, coresJSON sql.NullString
 	var created, updated string
 	err := row.Scan(&n.ID, &n.Name, &n.Type, &n.Flag, &n.IP, &n.Domain, &n.SNI, &n.Listen,
 		&n.Port, &n.PortRange, &n.HopInterval, &n.ObfsType, &n.ObfsPassword, &n.StatsPort, &n.StatsSecret,
@@ -34,7 +34,7 @@ func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
 		&n.MaxOnline, &n.Ranking, &active, &n.Status, new(string), &n.Token, &n.TokenPrefix, &n.AgentVersion,
 		&n.OS, &n.Arch, &n.Hy2Version, &n.Runtime, &last, &n.ConfigRevision, &n.AppliedRevision,
 		&n.ConfigError, &n.TrafficTx, &n.TrafficRx, &n.OnlineUsers, &created, &updated,
-		&capsJSON, &n.CertFingerprint, &certAfter)
+		&capsJSON, &n.CertFingerprint, &certAfter, &coresJSON, &n.XrayVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -47,6 +47,9 @@ func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
 	n.CertNotAfter = nullTime(certAfter)
 	if capsJSON.Valid && capsJSON.String != "" {
 		_ = json.Unmarshal([]byte(capsJSON.String), &n.Capabilities)
+	}
+	if coresJSON.Valid && coresJSON.String != "" {
+		_ = json.Unmarshal([]byte(coresJSON.String), &n.Cores)
 	}
 	n.CreatedAt = parseTime(created)
 	n.UpdatedAt = parseTime(updated)
@@ -187,13 +190,13 @@ func (s *Store) CreateNode(ctx context.Context, n *model.Node, tokenHash, tokenP
 	}
 	res, err := s.DB.ExecContext(ctx,
 		`INSERT INTO nodes (name, type, flag, ip, domain, sni, listen, port, port_range, hop_interval,
-		 obfs_type, obfs_password, stats_port, stats_secret, xray_json, ssh_port, ssh_user, ssh_password, ssh_key, ssh_host_key, ssh_install_docker,
+		 obfs_type, obfs_password, stats_port, stats_secret, xray_json, cores_json, ssh_port, ssh_user, ssh_password, ssh_key, ssh_host_key, ssh_install_docker,
 		 tls_mode, acme_email, bandwidth_up, bandwidth_down,
 		 masquerade_url, acl_json, outbounds_json, max_online, ranking, active, status, token_hash, token, token_prefix,
 		 created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.Name, n.Type, n.Flag, n.IP, n.Domain, n.SNI, n.Listen, n.Port, n.PortRange, n.HopInterval,
-		n.ObfsType, n.ObfsPassword, n.StatsPort, n.StatsSecret, marshalJSON(n.Xray), n.SSHPort, n.SSHUser, n.SSHPassword, n.SSHKey, n.SSHHostKey,
+		n.ObfsType, n.ObfsPassword, n.StatsPort, n.StatsSecret, marshalJSON(n.Xray), marshalJSON(n.Cores), n.SSHPort, n.SSHUser, n.SSHPassword, n.SSHKey, n.SSHHostKey,
 		boolInt(n.SSHInstallDocker), n.TLSMode, n.ACMEEmail, n.BandwidthUp, n.BandwidthDown,
 		n.MasqueradeURL, marshalJSON(n.ACL), marshalJSON(n.Outbounds), n.MaxOnline, n.Ranking, boolInt(n.Active),
 		"offline", tokenHash, n.Token, tokenPrefix, ts(nowT), ts(nowT))
@@ -210,13 +213,13 @@ func (s *Store) CreateNode(ctx context.Context, n *model.Node, tokenHash, tokenP
 // UpdateNode updates a node's editable settings. The agent token is unchanged.
 func (s *Store) UpdateNode(ctx context.Context, n *model.Node, groupIDs []int64) (*model.Node, error) {
 	res, err := s.DB.ExecContext(ctx,
-		`UPDATE nodes SET name = ?, flag = ?, ip = ?, domain = ?, sni = ?, listen = ?, port = ?, port_range = ?,
-		 hop_interval = ?, obfs_type = ?, obfs_password = ?, stats_port = ?, xray_json = ?, ssh_port = ?, ssh_user = ?,
+		`UPDATE nodes SET name = ?, type = ?, flag = ?, ip = ?, domain = ?, sni = ?, listen = ?, port = ?, port_range = ?,
+		 hop_interval = ?, obfs_type = ?, obfs_password = ?, stats_port = ?, xray_json = ?, cores_json = ?, ssh_port = ?, ssh_user = ?,
 		 ssh_password = ?, ssh_key = ?, ssh_host_key = ?, ssh_install_docker = ?, tls_mode = ?, acme_email = ?,
 		 bandwidth_up = ?, bandwidth_down = ?, masquerade_url = ?, acl_json = ?, outbounds_json = ?,
 		 max_online = ?, ranking = ?, active = ?, updated_at = ? WHERE id = ?`,
-		n.Name, n.Flag, n.IP, n.Domain, n.SNI, n.Listen, n.Port, n.PortRange, n.HopInterval,
-		n.ObfsType, n.ObfsPassword, n.StatsPort, marshalJSON(n.Xray), n.SSHPort, n.SSHUser, n.SSHPassword, n.SSHKey, n.SSHHostKey,
+		n.Name, n.Type, n.Flag, n.IP, n.Domain, n.SNI, n.Listen, n.Port, n.PortRange, n.HopInterval,
+		n.ObfsType, n.ObfsPassword, n.StatsPort, marshalJSON(n.Xray), marshalJSON(n.Cores), n.SSHPort, n.SSHUser, n.SSHPassword, n.SSHKey, n.SSHHostKey,
 		boolInt(n.SSHInstallDocker), n.TLSMode, n.ACMEEmail, n.BandwidthUp, n.BandwidthDown,
 		n.MasqueradeURL, marshalJSON(n.ACL), marshalJSON(n.Outbounds), n.MaxOnline, n.Ranking,
 		boolInt(n.Active), ts(now()), n.ID)
@@ -289,6 +292,8 @@ type NodeHello struct {
 	OS          string
 	Arch        string
 	Hy2Version  string
+	XrayVersion string
+	Cores       []string
 	Runtime     string
 	OnlineUsers int
 }
@@ -297,9 +302,9 @@ type NodeHello struct {
 func (s *Store) MarkNodeOnline(ctx context.Context, id int64, hello NodeHello) error {
 	_, err := s.DB.ExecContext(ctx,
 		`UPDATE nodes SET status = 'online', last_seen_at = ?, agent_version = ?, os = ?, arch = ?,
-		 hy2_version = ?, runtime = ?, online_users = ?, updated_at = ? WHERE id = ?`,
-		ts(now()), hello.Version, hello.OS, hello.Arch, hello.Hy2Version, hello.Runtime,
-		hello.OnlineUsers, ts(now()), id)
+		 hy2_version = ?, xray_version = ?, runtime = ?, online_users = ?, updated_at = ? WHERE id = ?`,
+		ts(now()), hello.Version, hello.OS, hello.Arch, hello.Hy2Version, hello.XrayVersion,
+		hello.Runtime, hello.OnlineUsers, ts(now()), id)
 	return err
 }
 
@@ -489,9 +494,15 @@ func (s *Store) ListNodeConfigs(ctx context.Context, nodeID int64, limit int) ([
 	return out, rows.Err()
 }
 
-// SaveNodeConfig stores a new config revision. When the hash matches the
-// latest revision, the existing revision is returned with created=false.
+// SaveNodeConfig stores a new single-core config revision. When the hash
+// matches the latest revision, the existing revision is returned with
+// created=false.
 func (s *Store) SaveNodeConfig(ctx context.Context, nodeID int64, yaml, hash string) (*model.NodeConfig, bool, error) {
+	return s.SaveNodeConfigBundle(ctx, nodeID, yaml, nil, hash)
+}
+
+// SaveNodeConfigBundle stores a revision containing one config per core.
+func (s *Store) SaveNodeConfigBundle(ctx context.Context, nodeID int64, yaml string, configs map[string]string, hash string) (*model.NodeConfig, bool, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, false, err
@@ -509,16 +520,19 @@ func (s *Store) SaveNodeConfig(ctx context.Context, nodeID int64, yaml, hash str
 	if lastHash == hash && lastRev > 0 {
 		var c model.NodeConfig
 		var created string
-		var applied sql.NullString
+		var applied, configsJSON sql.NullString
 		err := tx.QueryRowContext(ctx,
-			`SELECT id, node_id, revision, yaml, hash, created_at, applied_at, last_error FROM node_configs
+			`SELECT id, node_id, revision, yaml, hash, created_at, applied_at, last_error, configs_json FROM node_configs
 			 WHERE node_id = ? AND revision = ?`, nodeID, lastRev).
-			Scan(&c.ID, &c.NodeID, &c.Revision, &c.YAML, &c.Hash, &created, &applied, &c.LastError)
+			Scan(&c.ID, &c.NodeID, &c.Revision, &c.YAML, &c.Hash, &created, &applied, &c.LastError, &configsJSON)
 		if err != nil {
 			return nil, false, err
 		}
 		c.CreatedAt = parseTime(created)
 		c.AppliedAt = nullTime(applied)
+		if configsJSON.Valid && configsJSON.String != "" {
+			_ = json.Unmarshal([]byte(configsJSON.String), &c.Configs)
+		}
 		if err := tx.Commit(); err != nil {
 			return nil, false, err
 		}
@@ -527,8 +541,8 @@ func (s *Store) SaveNodeConfig(ctx context.Context, nodeID int64, yaml, hash str
 	rev := lastRev + 1
 	nowT := now()
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO node_configs (node_id, revision, yaml, hash, created_at) VALUES (?, ?, ?, ?, ?)`,
-		nodeID, rev, yaml, hash, ts(nowT))
+		`INSERT INTO node_configs (node_id, revision, yaml, hash, configs_json, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		nodeID, rev, yaml, hash, marshalJSON(configs), ts(nowT))
 	if err != nil {
 		return nil, false, err
 	}
@@ -540,12 +554,12 @@ func (s *Store) SaveNodeConfig(ctx context.Context, nodeID int64, yaml, hash str
 	if err := tx.Commit(); err != nil {
 		return nil, false, err
 	}
-	return &model.NodeConfig{ID: id, NodeID: nodeID, Revision: rev, YAML: yaml, Hash: hash, CreatedAt: nowT}, true, nil
+	return &model.NodeConfig{ID: id, NodeID: nodeID, Revision: rev, YAML: yaml, Configs: configs, Hash: hash, CreatedAt: nowT}, true, nil
 }
 
 // GetNodeConfig returns a specific revision, or the latest when revision <= 0.
 func (s *Store) GetNodeConfig(ctx context.Context, nodeID, revision int64) (*model.NodeConfig, error) {
-	q := `SELECT id, node_id, revision, yaml, hash, created_at, applied_at, last_error FROM node_configs WHERE node_id = ?`
+	q := `SELECT id, node_id, revision, yaml, hash, created_at, applied_at, last_error, configs_json FROM node_configs WHERE node_id = ?`
 	args := []any{nodeID}
 	if revision > 0 {
 		q += ` AND revision = ?`
@@ -554,9 +568,9 @@ func (s *Store) GetNodeConfig(ctx context.Context, nodeID, revision int64) (*mod
 	q += ` ORDER BY revision DESC LIMIT 1`
 	var c model.NodeConfig
 	var created string
-	var applied sql.NullString
+	var applied, configsJSON sql.NullString
 	err := s.DB.QueryRowContext(ctx, q, args...).
-		Scan(&c.ID, &c.NodeID, &c.Revision, &c.YAML, &c.Hash, &created, &applied, &c.LastError)
+		Scan(&c.ID, &c.NodeID, &c.Revision, &c.YAML, &c.Hash, &created, &applied, &c.LastError, &configsJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -565,6 +579,9 @@ func (s *Store) GetNodeConfig(ctx context.Context, nodeID, revision int64) (*mod
 	}
 	c.CreatedAt = parseTime(created)
 	c.AppliedAt = nullTime(applied)
+	if configsJSON.Valid && configsJSON.String != "" {
+		_ = json.Unmarshal([]byte(configsJSON.String), &c.Configs)
+	}
 	return &c, nil
 }
 

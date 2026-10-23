@@ -24,8 +24,8 @@ hide:
 
     ---
 
-    Hysteria 2（QUIC/UDP）与 Xray VLESS（TCP / WebSocket / gRPC、REALITY / TLS）。
-    Agent 支持单容器内运行，也支持管理同机代理容器。
+    Hysteria 2（QUIC/UDP）与 Xray 多协议入站（TCP / WebSocket / gRPC / XHTTP / mKCP，VLESS / VMess / Trojan / Shadowsocks）。
+    同一节点可同时运行两个核心，也可只启用其中一个。
 
 -   :material-certificate:{ .lg .middle } **证书统一签发**
 
@@ -91,7 +91,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-访问 `http://服务器IP:8080/panel/`，登录后：
+访问 `http://服务器IP:8080/dashboard`，登录后：
 
 1. 修改默认密码，建议同时启用两步验证；
 2. 在 **节点** 页面添加节点，复制生成的安装命令；

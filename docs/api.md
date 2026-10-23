@@ -223,7 +223,7 @@ HAPP/Incy 请求还会把 routing 指令前置到 URI 订阅正文。
 | POST | `/api/nodes/:id/token` | 重置 Agent Token |
 | POST | `/api/nodes/:id/sync` | 生成/保存配置，在线则推送 |
 | POST | `/api/nodes/:id/command` | `{action:"start"|"stop"|"restart"|"sync"}` |
-| GET | `/api/nodes/:id/config` | 最新 YAML、revision、hash、appliedAt |
+| GET | `/api/nodes/:id/config` | 最新配置：`configs`（每个核心一份）、`cores`、revision、hash、appliedAt |
 | GET | `/api/nodes/:id/install` | Token、Docker 命令、安装脚本、compose |
 | POST | `/api/nodes/:id/ssh/install` | 通过 SSH 执行节点安装脚本，返回输出 |
 | GET | `/api/nodes/:id/cert` | 证书状态、指纹、有效期、手动 TXT 记录 |

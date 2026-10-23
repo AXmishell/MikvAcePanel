@@ -1,6 +1,7 @@
 package xrayconfig
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -101,5 +102,69 @@ func TestRenderTLSAndWS(t *testing.T) {
 	if !strings.Contains(text, `"certificateFile": "/data/certs/cert.pem"`) ||
 		!strings.Contains(text, `"path": "/vless"`) {
 		t.Fatalf("tls/ws config = %s", text)
+	}
+}
+
+func TestRenderMultiProtocolInbounds(t *testing.T) {
+	n := &model.Node{ID: 9, Type: "xray", Name: "multi", IP: "203.0.113.9", Port: 443, Xray: model.XraySettings{
+		Inbounds: []model.XrayInbound{
+			{Protocol: "vless", Tag: "vless-in", Port: 443, Transport: "tcp", Security: "reality"},
+			{Protocol: "vmess", Tag: "vmess-in", Port: 8443, Transport: "ws", Security: "tls", WSPath: "/vm"},
+			{Protocol: "trojan", Tag: "trojan-in", Port: 8444, Transport: "grpc", Security: "none", GRPCServiceName: "tj"},
+			{Protocol: "shadowsocks", Tag: "ss-in", Port: 8445, Transport: "tcp", Security: "none"},
+		},
+	}}
+	if err := Normalize(n); err != nil {
+		t.Fatal(err)
+	}
+	if n.Xray.Inbounds[0].RealityPrivateKey == "" {
+		t.Fatal("reality key not generated")
+	}
+	users := []model.User{
+		{UserID: "alice", Password: "pw", XrayUUID: "11111111-1111-4111-8111-111111111111", Enabled: true},
+	}
+	text, _, err := Render(n, users)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(text), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	inbounds := cfg["inbounds"].([]any)
+	if len(inbounds) != 5 {
+		t.Fatalf("inbounds = %d", len(inbounds))
+	}
+	seen := map[string]bool{}
+	for _, raw := range inbounds[1:] {
+		ib := raw.(map[string]any)
+		proto := ib["protocol"].(string)
+		seen[proto] = true
+		clients, _ := ib["settings"].(map[string]any)["clients"].([]any)
+		if len(clients) != 1 {
+			t.Fatalf("%s clients = %d", proto, len(clients))
+		}
+	}
+	for _, proto := range []string{"vless", "vmess", "trojan", "shadowsocks"} {
+		if !seen[proto] {
+			t.Fatalf("missing %s inbound: %s", proto, text)
+		}
+	}
+	if !strings.Contains(text, `"xhttpSettings"`) && !strings.Contains(text, `"method": "2022-blake3-aes-128-gcm"`) {
+		t.Fatalf("shadowsocks settings missing: %s", text)
+	}
+}
+
+func TestSSPasswordLengths(t *testing.T) {
+	u := &model.User{XrayUUID: "11111111-1111-4111-8111-111111111111"}
+	for _, method := range []string{"2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm"} {
+		pw := SSPassword(u, method)
+		raw, err := base64.StdEncoding.DecodeString(pw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(raw) != SSKeyLen(method) {
+			t.Fatalf("%s key = %d bytes", method, len(raw))
+		}
 	}
 }

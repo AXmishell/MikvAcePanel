@@ -6,9 +6,9 @@ export default defineConfig(({ mode }) => {
   const apiTarget = process.env.VITE_DEV_API_TARGET || env.VITE_DEV_API_TARGET || 'http://127.0.0.1:8080'
 
   return {
-    // Use "/" when serving the SPA from a CDN root, "/panel/" for the
-    // embedded single-binary deployment.
-    base: process.env.VITE_BASE_PATH || env.VITE_BASE_PATH || '/panel/',
+    // The panel is served from the site root: /login, /dashboard, /users, ...
+    // Set VITE_BASE_PATH only when hosting the SPA under a sub-path.
+    base: process.env.VITE_BASE_PATH || env.VITE_BASE_PATH || '/',
     plugins: [vue()],
     server: {
       port: 5173,

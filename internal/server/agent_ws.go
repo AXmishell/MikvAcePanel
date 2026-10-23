@@ -33,6 +33,8 @@ type helloPayload struct {
 	OS           string   `json:"os"`
 	Arch         string   `json:"arch"`
 	Hy2Version   string   `json:"hy2Version"`
+	XrayVersion  string   `json:"xrayVersion"`
+	Cores        []string `json:"cores"`
 	Runtime      string   `json:"runtime"`
 	OnlineUsers  int      `json:"onlineUsers"`
 	Capabilities []string `json:"capabilities"`
@@ -160,6 +162,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 			}
 			_ = s.store.MarkNodeOnline(r.Context(), node.ID, store.NodeHello{
 				Version: h.Version, OS: h.OS, Arch: h.Arch, Hy2Version: h.Hy2Version,
+				XrayVersion: h.XrayVersion, Cores: h.Cores,
 				Runtime: h.Runtime, OnlineUsers: h.OnlineUsers,
 			})
 			_ = s.store.UpdateNodeCapabilities(r.Context(), node.ID, h.Capabilities)

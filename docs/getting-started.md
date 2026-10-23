@@ -40,7 +40,7 @@ docker compose up -d --build
 docker compose logs -f panel
 ```
 
-打开 `http://服务器IP:8080/panel/`。
+打开 `http://服务器IP:8080/dashboard`（旧地址 `/panel` 会自动跳转）。
 
 ### 使用 GHCR 预构建镜像
 

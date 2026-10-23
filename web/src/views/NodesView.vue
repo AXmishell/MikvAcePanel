@@ -31,7 +31,7 @@
             <div class="node-host truncate">{{ n.domain || n.ip || 'no address' }}:{{ n.port }}</div>
           </div>
           <div class="flex" style="gap: 6px">
-            <span class="badge badge-info">{{ n.type === 'xray' ? 'VLESS' : 'Hy2' }}</span>
+            <span class="badge badge-info">{{ coreLabel(n) }}</span>
             <StatusBadge :status="n.status" />
           </div>
         </div>
@@ -52,7 +52,7 @@
 
         <div class="small dim">
           <div class="flex" style="justify-content: space-between; gap: 8px">
-            <span>{{ n.type === 'xray' ? 'Xray' : 'Hysteria' }} {{ n.hy2Version || 'unknown' }}</span>
+            <span>{{ versionLabel(n) }}</span>
             <span>{{ n.lastSeenAt ? fmtRelative(n.lastSeenAt) : '从未连接' }}</span>
           </div>
           <div v-if="n.groups?.length" class="chip-list" style="margin-top: 7px">
@@ -80,17 +80,17 @@
         <button class="tab" :class="{ active: tab === 'basic' }" @click="tab = 'basic'">连接</button>
         <button class="tab" :class="{ active: tab === 'tls' }" @click="tab = 'tls'">TLS 与传输</button>
         <button class="tab" :class="{ active: tab === 'ssh' }" @click="tab = 'ssh'">SSH 自动安装</button>
-        <button v-if="form.type === 'hysteria'" class="tab" :class="{ active: tab === 'advanced' }" @click="tab = 'advanced'">ACL 与高级</button>
+        <button v-if="hasHysteria" class="tab" :class="{ active: tab === 'advanced' }" @click="tab = 'advanced'">ACL 与高级</button>
       </div>
 
       <div v-show="tab === 'basic'" class="form-grid">
         <div class="field full">
-          <label>节点类型</label>
-          <select v-model="form.type" :disabled="!!editing">
-            <option value="hysteria">Hysteria 2（QUIC / UDP）</option>
-            <option value="xray">Xray VLESS（TCP / REALITY）</option>
-          </select>
-          <span v-if="editing" class="hint">已有节点的协议不可修改。</span>
+          <label>运行核心</label>
+          <div class="chip-list">
+            <button type="button" class="chip" :class="{ on: form.cores.includes('hysteria') }" @click="toggleCore('hysteria')">Hysteria 2（QUIC / UDP）</button>
+            <button type="button" class="chip" :class="{ on: form.cores.includes('xray') }" @click="toggleCore('xray')">Xray（TCP：VLESS / VMess / Trojan / SS）</button>
+          </div>
+          <span class="hint">可同时启用两个核心；第一个为核心类型，订阅会自动合并两个核心的入站。</span>
         </div>
         <div class="field"><label>名称</label><input v-model="form.name" type="text" placeholder="Tokyo Edge" /></div>
         <div class="field"><label>国旗 Emoji</label><input v-model="form.flag" type="text" placeholder="🇯🇵" maxlength="8" /></div>
@@ -99,7 +99,7 @@
         <div class="field"><label>自定义 SNI（仅自签名）</label><input v-model="form.sni" type="text" placeholder="www.bing.com" /></div>
         <div class="field"><label>监听地址</label><input v-model="form.listen" type="text" placeholder=":443（默认）" /></div>
         <div class="field"><label>端口</label><input v-model.number="form.port" type="number" min="1" max="65535" placeholder="443" /></div>
-        <div v-if="form.type === 'hysteria'" class="field"><label>统计端口</label><input v-model.number="form.statsPort" type="number" min="1" max="65535" placeholder="9999" /></div>
+        <div v-if="hasHysteria" class="field"><label>统计端口</label><input v-model.number="form.statsPort" type="number" min="1" max="65535" placeholder="9999" /></div>
         <div class="field"><label>最大在线用户数</label><input v-model.number="form.maxOnline" type="number" min="0" placeholder="0 = 不限制" /></div>
         <div class="field"><label>排序权重</label><input v-model.number="form.ranking" type="number" min="0" step="0.1" placeholder="1.0" />
           <span class="hint">权重越高，订阅中越靠前。</span>
@@ -116,7 +116,7 @@
         </div>
       </div>
 
-      <div v-show="tab === 'tls' && form.type === 'hysteria'" class="form-grid">
+      <div v-show="tab === 'tls' && (hasHysteria || hasXray)" class="form-grid">
         <div class="field">
           <label>TLS 模式</label>
           <select v-model="form.tlsMode">
@@ -124,9 +124,9 @@
             <option value="managed">面板签发（CSR，推荐）</option>
             <option value="acme">节点自签 ACME（TLS-ALPN）</option>
           </select>
-          <span class="hint">面板签发使用 DNS-01，证书由面板申请后通过 WebSocket 下发，节点无需开放 80 端口。</span>
+          <span class="hint">面板签发使用 DNS-01，证书由面板申请后通过 WebSocket 下发；Xray 的 TLS 入站也使用该证书，REALITY 不需要证书。</span>
         </div>
-        <div class="field"><label>ACME 邮箱</label><input v-model="form.acmeEmail" type="email" placeholder="admin@example.com" /></div>
+        <div v-if="hasHysteria" class="field"><label>ACME 邮箱</label><input v-model="form.acmeEmail" type="email" placeholder="admin@example.com" /></div>
         <div v-if="form.tlsMode === 'managed'" class="field full">
           <div class="banner banner-info" style="margin: 0 0 8px">
             证书由面板统一申请并下发。保存节点后，Agent 会自动生成密钥并发起 CSR。
@@ -152,6 +152,9 @@
             </div>
           </div>
         </div>
+      </div>
+
+      <div v-show="tab === 'tls' && hasHysteria" class="form-grid">
         <div class="field"><label>端口跳跃范围</label><input v-model="form.portRange" type="text" placeholder="20000-50000" />
           <span class="hint">Agent 会自动安装 iptables REDIRECT 规则，留空关闭。</span>
         </div>
@@ -174,46 +177,93 @@
 
 
 
-      <div v-show="tab === 'tls' && form.type === 'xray'" class="form-grid">
+      <div v-show="tab === 'tls' && hasXray" class="form-grid">
         <div class="field">
-          <label>传输方式</label>
-          <select v-model="form.xray.transport">
-            <option value="tcp">TCP（RAW）— REALITY 推荐</option>
-            <option value="ws">WebSocket</option>
-            <option value="grpc">gRPC</option>
-          </select>
+          <label>API 端口</label>
+          <input v-model.number="form.xray.apiPort" type="number" min="1" max="65535" placeholder="61000" />
+          <span class="hint">仅监听 127.0.0.1，用于流量统计。</span>
         </div>
-        <div class="field">
-          <label>安全</label>
-          <select v-model="form.xray.security">
-            <option value="reality">REALITY（无需域名）</option>
-            <option value="tls">TLS（自签名 / 域名）</option>
-            <option value="none">无加密（不推荐）</option>
-          </select>
+        <div class="field full">
+          <div class="flex" style="justify-content: space-between; align-items: center">
+            <label style="margin: 0">Xray 入站（{{ form.xray.inbounds.length }}）</label>
+            <button class="btn btn-sm" type="button" @click="addInbound"><Plus :size="13" /> 添加入站</button>
+          </div>
+          <span class="hint">每个入站可独立选择协议、端口、传输和安全方式。</span>
         </div>
-        <div class="field"><label>Flow</label><input v-model="form.xray.flow" type="text" placeholder="xtls-rprx-vision" /></div>
-        <div class="field"><label>uTLS 指纹</label><input v-model="form.xray.fingerprint" type="text" placeholder="chrome" /></div>
-        <div class="field"><label>API 端口</label><input v-model.number="form.xray.apiPort" type="number" min="1" max="65535" placeholder="61000" /></div>
-        <div class="field"><label>入站标签</label><input v-model="form.xray.inboundTag" type="text" placeholder="vless-in" /></div>
-        <template v-if="form.xray.security === 'reality' || form.xray.security === 'tls'">
-          <div class="field"><label>REALITY 目标 / TLS SNI 来源</label><input v-model="form.xray.realityDest" type="text" placeholder="www.cloudflare.com:443" /></div>
-          <div class="field"><label>服务器名称（逗号分隔）</label><input v-model="form.xraySniText" type="text" placeholder="www.cloudflare.com" /></div>
-          <div class="field"><label>ALPN（逗号分隔）</label><input v-model="form.xrayAlpnText" type="text" placeholder="h2,http/1.1" /></div>
-          <div class="field"><label>SpiderX</label><input v-model="form.xray.realitySpiderX" type="text" placeholder="/" /></div>
-        </template>
-        <template v-if="form.xray.security === 'reality'">
-          <div class="field full"><label>REALITY 私钥</label><input v-model="form.xray.realityPrivateKey" type="text" placeholder="留空时自动生成" /></div>
-          <div class="field full"><label>REALITY 公钥</label><input v-model="form.xray.realityPublicKey" type="text" placeholder="留空时自动生成" /></div>
-          <div class="field full"><label>Short ID（逗号分隔）</label><input v-model="form.xraySidText" type="text" placeholder="随机 8 位十六进制" /></div>
-        </template>
-        <template v-if="form.xray.transport === 'ws'">
-          <div class="field"><label>WebSocket 路径</label><input v-model="form.xray.wsPath" type="text" placeholder="/" /></div>
-          <div class="field"><label>WebSocket Host</label><input v-model="form.xray.wsHost" type="text" placeholder="cdn.example.com" /></div>
-        </template>
-        <template v-if="form.xray.transport === 'grpc'">
-          <div class="field full"><label>gRPC 服务名</label><input v-model="form.xray.grpcServiceName" type="text" placeholder="grpc" /></div>
-        </template>
-        <div class="field full"><span class="hint">留空时由面板生成 REALITY 密钥；TLS 使用节点 Agent 管理的自签名证书。</span></div>
+        <div v-for="(ib, idx) in form.xray.inbounds" :key="ib._key" class="card" style="grid-column: 1 / -1; padding: 12px; margin-bottom: 8px">
+          <div class="flex" style="justify-content: space-between; align-items: center; margin-bottom: 8px">
+            <strong>#{{ idx + 1 }} {{ ib.protocol }} : {{ ib.port }}</strong>
+            <button class="icon-btn danger" type="button" :disabled="form.xray.inbounds.length === 1" @click="removeInbound(idx)"><X :size="15" /></button>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label>协议</label>
+              <select v-model="ib.protocol" @change="normalizeInbound(ib)">
+                <option value="vless">VLESS</option>
+                <option value="vmess">VMess</option>
+                <option value="trojan">Trojan</option>
+                <option value="shadowsocks">Shadowsocks</option>
+              </select>
+            </div>
+            <div class="field"><label>入站标签</label><input v-model="ib.tag" type="text" placeholder="vless-in" /></div>
+            <div class="field"><label>端口</label><input v-model.number="ib.port" type="number" min="1" max="65535" placeholder="443" /></div>
+            <div class="field"><label>监听地址</label><input v-model="ib.listen" type="text" placeholder="0.0.0.0（默认）" /></div>
+            <div class="field">
+              <label>传输方式</label>
+              <select v-model="ib.transport" @change="normalizeInbound(ib)">
+                <option value="tcp">TCP（RAW）</option>
+                <option value="ws">WebSocket</option>
+                <option value="grpc">gRPC</option>
+                <option value="xhttp">XHTTP</option>
+                <option value="mkcp">mKCP</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>安全</label>
+              <select v-model="ib.security" :disabled="ib.protocol === 'shadowsocks'">
+                <option value="reality" :disabled="!['tcp', 'xhttp', 'grpc'].includes(ib.transport)">REALITY</option>
+                <option value="tls">TLS</option>
+                <option value="none">无加密</option>
+              </select>
+            </div>
+            <div v-if="ib.protocol === 'vless' && ib.transport === 'tcp' && ib.security !== 'none'" class="field"><label>Flow</label><input v-model="ib.flow" type="text" placeholder="xtls-rprx-vision" /></div>
+            <div v-if="ib.protocol === 'shadowsocks'" class="field">
+              <label>加密方式</label>
+              <select v-model="ib.ssMethod">
+                <option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</option>
+                <option value="2022-blake3-aes-256-gcm">2022-blake3-aes-256-gcm</option>
+              </select>
+            </div>
+            <div class="field"><label>uTLS 指纹</label><input v-model="ib.fingerprint" type="text" placeholder="chrome" /></div>
+            <template v-if="ib.security === 'reality'">
+              <div class="field"><label>REALITY 目标</label><input v-model="ib.realityDest" type="text" placeholder="www.cloudflare.com:443" /></div>
+              <div class="field"><label>服务器名称（逗号分隔）</label><input v-model="ib.sniText" type="text" placeholder="www.cloudflare.com" /></div>
+              <div class="field"><label>ALPN（逗号分隔）</label><input v-model="ib.alpnText" type="text" placeholder="h2,http/1.1" /></div>
+              <div class="field"><label>SpiderX</label><input v-model="ib.realitySpiderX" type="text" placeholder="/" /></div>
+              <div class="field"><label>REALITY 私钥</label><input v-model="ib.realityPrivateKey" type="text" placeholder="留空时自动生成" /></div>
+              <div class="field"><label>REALITY 公钥</label><input v-model="ib.realityPublicKey" type="text" placeholder="留空时自动生成" /></div>
+              <div class="field full"><label>Short ID（逗号分隔）</label><input v-model="ib.sidText" type="text" placeholder="随机 8 位十六进制" /></div>
+            </template>
+            <template v-if="ib.security === 'tls' && ib.protocol !== 'shadowsocks'">
+              <div class="field"><label>服务器名称（逗号分隔）</label><input v-model="ib.sniText" type="text" placeholder="node.example.com" /></div>
+              <div class="field"><label>ALPN（逗号分隔）</label><input v-model="ib.alpnText" type="text" placeholder="h2,http/1.1" /></div>
+            </template>
+            <template v-if="ib.transport === 'ws'">
+              <div class="field"><label>WebSocket 路径</label><input v-model="ib.wsPath" type="text" placeholder="/" /></div>
+              <div class="field"><label>WebSocket Host</label><input v-model="ib.wsHost" type="text" placeholder="cdn.example.com" /></div>
+            </template>
+            <template v-if="ib.transport === 'grpc'">
+              <div class="field"><label>gRPC 服务名</label><input v-model="ib.grpcServiceName" type="text" placeholder="grpc" /></div>
+            </template>
+            <template v-if="ib.transport === 'xhttp'">
+              <div class="field"><label>XHTTP 路径</label><input v-model="ib.xhttpPath" type="text" placeholder="/" /></div>
+              <div class="field"><label>XHTTP Host</label><input v-model="ib.xhttpHost" type="text" placeholder="cdn.example.com" /></div>
+              <div class="field"><label>XHTTP 模式</label><input v-model="ib.xhttpMode" type="text" placeholder="auto" /></div>
+            </template>
+            <div v-if="ib.transport === 'mkcp'" class="field full"><label>mKCP Seed</label><input v-model="ib.kcpSeed" type="text" placeholder="可留空" /></div>
+          </div>
+        </div>
+        <div class="field full"><span class="hint">REALITY 密钥留空时由面板自动生成；TLS 使用节点 Agent 管理的证书。Shadowsocks 使用 2022 系列以支持按用户限速与流量统计。</span></div>
       </div>
       <div v-show="tab === 'ssh'" class="form-grid">
         <div class="field"><label>SSH 端口</label><input v-model.number="form.sshPort" type="number" min="1" max="65535" placeholder="22" /></div>
@@ -237,11 +287,11 @@
         </div>
       </div>
       <div v-show="tab === 'advanced'" class="form-grid">
-        <div v-if="form.type === 'hysteria'" class="field full">
+        <div v-if="hasHysteria" class="field full">
           <label>ACL 规则（每行一条）</label>
           <textarea v-model="form.aclText" rows="7" placeholder="reject(geoip:private)&#10;reject(suffix:doubleclick.net)&#10;direct(all)"></textarea>
         </div>
-        <div v-if="form.type === 'hysteria'" class="field full">
+        <div v-if="hasHysteria" class="field full">
           <label>自定义出站</label>
           <div v-for="(o, i) in form.outbounds" :key="i" class="outbound-row">
             <input v-model="o.name" type="text" placeholder="名称" style="max-width: 130px" />
@@ -317,14 +367,17 @@
       <template #footer><button class="btn" @click="sshOpen = false">关闭</button></template>
     </Modal>
 
-    <Modal v-model="configOpen" :title="configInfo?.protocol === 'xray' ? '生成的 Xray 配置' : '生成的 Hysteria 配置'" size="lg">
+    <Modal v-model="configOpen" :title="'生成的节点配置'" size="lg">
       <div v-if="configInfo">
+        <div v-if="configCores.length > 1" class="tabs" style="margin-bottom: 9px">
+          <button v-for="c in configCores" :key="c" class="tab" :class="{ active: configCore === c }" @click="configCore = c">{{ c === 'xray' ? 'Xray JSON' : 'Hysteria YAML' }}</button>
+        </div>
         <div class="flex small dim" style="margin-bottom: 9px">
           <span>配置版本 {{ configInfo.revision }}</span><span>·</span><span>{{ configInfo.hash ? configInfo.hash.slice(0, 16) + '…' : '' }}</span>
           <div class="spacer"></div>
-          <button class="btn btn-sm" @click="copy(configInfo.yaml)"><Copy :size="13" /> 复制配置</button>
+          <button class="btn btn-sm" @click="copy(configText)"><Copy :size="13" /> 复制配置</button>
         </div>
-        <pre class="code">{{ configInfo.yaml || '# 尚未生成配置' }}</pre>
+        <pre class="code">{{ configText || '# 尚未生成配置' }}</pre>
       </div>
       <template #footer><button class="btn" @click="configOpen = false">关闭</button></template>
     </Modal>
@@ -371,6 +424,7 @@ const install = ref(null)
 const installError = ref('')
 const configOpen = ref(false)
 const configInfo = ref(null)
+const configCore = ref('')
 const deleteOpen = ref(false)
 const deleteTarget = ref(null)
 const certInfo = ref(null)
@@ -382,21 +436,118 @@ const certUploading = ref(false)
 let timer = null
 
 const onlineCount = computed(() => nodes.value.filter((n) => n.connected).length)
+const hasHysteria = computed(() => form.cores.includes('hysteria'))
+const hasXray = computed(() => form.cores.includes('xray'))
+const configCores = computed(() => {
+  const info = configInfo.value
+  if (!info) return []
+  if (Array.isArray(info.cores) && info.cores.length) return info.cores
+  return Object.keys(info.configs || {})
+})
+const configText = computed(() => {
+  const info = configInfo.value
+  if (!info) return ''
+  if (configCore.value && info.configs?.[configCore.value]) return info.configs[configCore.value]
+  return info.yaml || ''
+})
+
+let inboundKey = 1
+function emptyInbound() {
+  return {
+    _key: inboundKey++,
+    protocol: 'vless', tag: 'vless-in', listen: '', port: 443,
+    transport: 'tcp', security: 'reality', flow: 'xtls-rprx-vision', fingerprint: 'chrome',
+    alpn: [], realityDest: 'www.cloudflare.com:443', realitySni: [], realityPrivateKey: '',
+    realityPublicKey: '', realityShortIds: [], realitySpiderX: '',
+    wsPath: '/', wsHost: '', grpcServiceName: 'grpc',
+    xhttpPath: '/', xhttpHost: '', xhttpMode: 'auto', kcpSeed: '',
+    ssMethod: '2022-blake3-aes-128-gcm',
+    sniText: '', alpnText: 'h2,http/1.1', sidText: '',
+  }
+}
+function inboundsFromNode(n) {
+  const x = n.xray || {}
+  if (Array.isArray(x.inbounds) && x.inbounds.length) {
+    return x.inbounds.map((ib) => ({
+      ...emptyInbound(), ...ib,
+      port: ib.port || n.port || 443,
+      sniText: (ib.realitySni || []).join(','),
+      alpnText: (ib.alpn || []).join(','),
+      sidText: (ib.realityShortIds || []).join(','),
+    }))
+  }
+  return [{
+    ...emptyInbound(),
+    port: n.port || 443,
+    transport: x.transport || 'tcp', security: x.security || 'reality',
+    flow: x.flow || '', fingerprint: x.fingerprint || 'chrome',
+    realityDest: x.realityDest || 'www.cloudflare.com:443',
+    realitySni: x.realitySni || [], realityPrivateKey: x.realityPrivateKey || '',
+    realityPublicKey: x.realityPublicKey || '', realityShortIds: x.realityShortIds || [],
+    realitySpiderX: x.realitySpiderX || '', wsPath: x.wsPath || '/', wsHost: x.wsHost || '',
+    grpcServiceName: x.grpcServiceName || 'grpc',
+    sniText: (x.realitySni || []).join(','), alpnText: (x.alpn || []).join(','),
+    sidText: (x.realityShortIds || []).join(','),
+  }]
+}
 
 function emptyForm() {
   return {
     name: '', flag: '', ip: '', domain: '', sni: '', listen: '', port: 443, statsPort: 9999,
     tlsMode: 'selfsigned', acmeEmail: '', portRange: '', hopInterval: '30s', obfsType: '',
     obfsPassword: '', bandwidthUp: '', bandwidthDown: '', masqueradeUrl: '',
-    type: 'hysteria', maxOnline: 0, ranking: 1, active: true, groupIds: [], aclText: 'direct(all)',
+    type: 'hysteria', cores: ['hysteria'], maxOnline: 0, ranking: 1, active: true, groupIds: [], aclText: 'direct(all)',
     outbounds: [], sshPort: 22, sshUser: 'root', sshPassword: '', sshKey: '', sshHostKey: '', sshInstallDocker: false,
-    xray: { transport: 'tcp', security: 'reality', flow: 'xtls-rprx-vision', fingerprint: 'chrome', alpn: [], realityDest: 'www.cloudflare.com:443', realitySni: [], realityPrivateKey: '', realityPublicKey: '', realityShortIds: [], realitySpiderX: '', wsPath: '/', wsHost: '', grpcServiceName: 'grpc', apiPort: 61000, inboundTag: 'vless-in' },
-    xraySniText: '', xrayAlpnText: 'h2,http/1.1', xraySidText: '',
+    xray: { apiPort: 61000, inbounds: [emptyInbound()] },
   }
 }
 function resetForm() { Object.assign(form, emptyForm()) }
 function splitList(v) { return String(v || '').split(',').map((s) => s.trim()).filter(Boolean) }
-watch(() => form.type, (t) => { if (t === 'xray' && tab.value === 'advanced') tab.value = 'tls' })
+function toggleCore(core) {
+  const i = form.cores.indexOf(core)
+  if (i >= 0) {
+    if (form.cores.length > 1) form.cores.splice(i, 1)
+  } else {
+    form.cores.push(core)
+  }
+  form.type = form.cores[0]
+  if (form.type !== 'xray' && tab.value === 'advanced' && !form.cores.includes('hysteria')) tab.value = 'tls'
+}
+function addInbound() {
+  const ib = emptyInbound()
+  ib.port = (Number(form.xray.inbounds[form.xray.inbounds.length - 1]?.port) || Number(form.port) || 443) + 1
+  ib.tag = `${ib.protocol}-in-${form.xray.inbounds.length + 1}`
+  form.xray.inbounds.push(ib)
+}
+function removeInbound(idx) {
+  if (form.xray.inbounds.length > 1) form.xray.inbounds.splice(idx, 1)
+}
+function normalizeInbound(ib) {
+  if (ib.protocol === 'shadowsocks') {
+    ib.security = 'none'
+    ib.flow = ''
+    return
+  }
+  if (ib.security === 'reality' && !['tcp', 'xhttp', 'grpc'].includes(ib.transport)) {
+    ib.security = 'tls'
+  }
+  if (ib.protocol !== 'vless') ib.flow = ''
+  if (ib.security === 'none') ib.flow = ''
+}
+function coreLabel(n) {
+  const cores = (n.cores && n.cores.length ? n.cores : [n.type || 'hysteria'])
+  return cores.map((c) => (c === 'xray' ? 'Xray' : 'Hy2')).join(' + ')
+}
+function versionLabel(n) {
+  const cores = (n.cores && n.cores.length ? n.cores : [n.type || 'hysteria'])
+  const parts = []
+  if (cores.includes('hysteria')) parts.push('Hysteria ' + (n.hy2Version || 'unknown'))
+  if (cores.includes('xray')) parts.push('Xray ' + (n.xrayVersion || 'unknown'))
+  return parts.join(' · ') || 'unknown'
+}
+watch(() => form.cores.slice(), () => {
+  if (!form.cores.includes('hysteria') && tab.value === 'advanced') tab.value = 'tls'
+})
 function toggleId(list, id) {
   const i = list.indexOf(id)
   if (i >= 0) list.splice(i, 1)
@@ -445,6 +596,7 @@ function openEdit(n) {
   editing.value = n
   Object.assign(form, {
     type: n.type || 'hysteria',
+    cores: (n.cores && n.cores.length ? [...n.cores] : [n.type || 'hysteria']),
     name: n.name, flag: n.flag || '', ip: n.ip || '', domain: n.domain || '', sni: n.sni || '',
     listen: n.listen || '', port: n.port || 443, statsPort: n.statsPort || 9999,
     tlsMode: n.tlsMode || 'selfsigned', acmeEmail: n.acmeEmail || '', portRange: n.portRange || '',
@@ -456,10 +608,7 @@ function openEdit(n) {
     groupIds: (n.groups || []).map((g) => g.id),
     aclText: (n.acl || []).join('\n'),
     outbounds: (n.outbounds || []).map((o) => ({ ...o })),
-    xray: { ...emptyForm().xray, ...(n.xray || {}) },
-    xraySniText: (n.xray?.realitySni || []).join(','),
-    xrayAlpnText: (n.xray?.alpn || []).join(','),
-    xraySidText: (n.xray?.realityShortIds || []).join(','),
+    xray: { apiPort: n.xray?.apiPort || 61000, inbounds: inboundsFromNode(n) },
   })
   tab.value = 'basic'
   formError.value = ''
@@ -538,7 +687,8 @@ async function save() {
   saving.value = true
   try {
     const payload = {
-      type: form.type,
+      type: form.cores[0],
+      cores: form.cores.slice(),
       name: form.name, flag: form.flag, ip: form.ip, domain: form.domain, sni: form.sni,
       listen: form.listen, port: Number(form.port) || 443, statsPort: Number(form.statsPort) || 9999,
       tlsMode: form.tlsMode, acmeEmail: form.acmeEmail, portRange: form.portRange,
@@ -552,10 +702,17 @@ async function save() {
       acl: form.aclText.split('\n').map((s) => s.trim()).filter(Boolean),
       outbounds: form.outbounds.filter((o) => o.name),
       xray: {
-        ...form.xray,
-        realitySni: splitList(form.xraySniText),
-        alpn: splitList(form.xrayAlpnText),
-        realityShortIds: splitList(form.xraySidText),
+        apiPort: Number(form.xray.apiPort) || 61000,
+        inbounds: form.xray.inbounds.map((ib) => {
+          const { _key, sniText, alpnText, sidText, ...rest } = ib
+          return {
+            ...rest,
+            port: Number(rest.port) || 443,
+            realitySni: splitList(sniText),
+            alpn: splitList(alpnText),
+            realityShortIds: splitList(sidText),
+          }
+        }),
       },
     }
     let res
@@ -647,9 +804,13 @@ async function resetToken() {
 }
 async function openConfig(n) {
   configInfo.value = null
+  configCore.value = ''
   configOpen.value = true
   try {
     configInfo.value = await api.nodeConfig(n.id)
+    const cores = Array.isArray(configInfo.value.cores) && configInfo.value.cores.length
+      ? configInfo.value.cores : Object.keys(configInfo.value.configs || {})
+    configCore.value = cores[0] || ''
   } catch (e) {
     notify(e.message, 'error')
   }

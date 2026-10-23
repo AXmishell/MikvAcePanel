@@ -134,6 +134,21 @@ func (h *Hub) PushConfig(nodeID, revision int64, protocol, config, tlsMode, doma
 	})
 }
 
+// PushConfigBundle sends one configuration per core to a multi-core agent.
+func (h *Hub) PushConfigBundle(nodeID, revision int64, configs map[string]string, cores []string, tlsMode, domain, host, portRange string, port int) bool {
+	primary := ""
+	primaryConfig := ""
+	if len(cores) > 0 {
+		primary = cores[0]
+		primaryConfig = configs[primary]
+	}
+	return h.SendToNode(nodeID, "config", map[string]any{
+		"revision": revision, "cores": cores, "configs": configs,
+		"protocol": primary, "config": primaryConfig, "yaml": primaryConfig,
+		"tlsMode": tlsMode, "domain": domain, "host": host, "portRange": portRange, "port": port,
+	})
+}
+
 // SendCommand issues a runtime command.
 func (h *Hub) SendCommand(nodeID int64, action string) (string, bool) {
 	id := store.RandomToken(8)

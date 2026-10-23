@@ -309,3 +309,68 @@ func TestEndpointsManagedCertificate(t *testing.T) {
 		t.Fatalf("managed link should verify the certificate: %s", link)
 	}
 }
+
+func TestXrayMultiProtocolSubscriptions(t *testing.T) {
+	n := model.Node{
+		ID: 7, Type: "xray", Name: "Multi", IP: "203.0.113.7", Port: 443,
+		Xray: model.XraySettings{APIPort: 61000, Inbounds: []model.XrayInbound{
+			{Protocol: "vless", Tag: "vless-in", Port: 443, Transport: "tcp", Security: "reality", RealitySNI: []string{"www.example.com"}, RealityPublicKey: "pk", RealityShortIDs: []string{"abcd"}, Fingerprint: "chrome"},
+			{Protocol: "vmess", Tag: "vmess-in", Port: 8443, Transport: "ws", Security: "tls", WSPath: "/vm", WSHost: "cdn.example.com"},
+			{Protocol: "trojan", Tag: "trojan-in", Port: 8444, Transport: "grpc", Security: "tls", GRPCServiceName: "tj"},
+			{Protocol: "shadowsocks", Tag: "ss-in", Port: 8445, Transport: "tcp", Security: "none", SSMethod: "2022-blake3-aes-128-gcm"},
+		}},
+	}
+	u := &model.User{UserID: "alice", Password: "secret", XrayUUID: "11111111-1111-4111-8111-111111111111", Enabled: true}
+
+	list := URIList(u, []model.Node{n})
+	for _, prefix := range []string{"vless://", "vmess://", "trojan://", "ss://"} {
+		if !strings.Contains(list, prefix) {
+			t.Fatalf("missing %s in:\n%s", prefix, list)
+		}
+	}
+
+	clash, err := Clash(u, []model.Node{n})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, typ := range []string{"type: vless", "type: vmess", "type: trojan", "type: ss"} {
+		if !strings.Contains(clash, typ) {
+			t.Fatalf("missing %s in:\n%s", typ, clash)
+		}
+	}
+
+	sing, err := Singbox(u, []model.Node{n})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, typ := range []string{`"type": "vless"`, `"type": "vmess"`, `"type": "trojan"`, `"type": "shadowsocks"`} {
+		if !strings.Contains(sing, typ) {
+			t.Fatalf("missing %s in:\n%s", typ, sing)
+		}
+	}
+
+	xr, err := Xray(u, []model.Node{n})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, typ := range []string{`"protocol": "vless"`, `"protocol": "vmess"`, `"protocol": "trojan"`, `"protocol": "shadowsocks"`} {
+		if !strings.Contains(xr, typ) {
+			t.Fatalf("missing %s in:\n%s", typ, xr)
+		}
+	}
+}
+
+func TestHybridNodeEmitsBothCores(t *testing.T) {
+	n := model.Node{
+		ID: 8, Type: "hysteria", Cores: []string{"hysteria", "xray"},
+		Name: "Hybrid", IP: "203.0.113.8", Port: 443,
+		Xray: model.XraySettings{Inbounds: []model.XrayInbound{
+			{Protocol: "vless", Tag: "vless-in", Port: 8443, Transport: "tcp", Security: "reality", RealitySNI: []string{"www.example.com"}, RealityPublicKey: "pk", RealityShortIDs: []string{"abcd"}},
+		}},
+	}
+	u := &model.User{UserID: "alice", Password: "secret", XrayUUID: "11111111-1111-4111-8111-111111111111", Enabled: true}
+	list := URIList(u, []model.Node{n})
+	if !strings.Contains(list, "hysteria2://") || !strings.Contains(list, "vless://") {
+		t.Fatalf("hybrid subscription missing a core:\n%s", list)
+	}
+}

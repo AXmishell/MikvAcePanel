@@ -27,7 +27,10 @@
 - 证书路径不存在或私钥不匹配；
 - ACME 域名不可达 / 443 被占用；
 - `HY2_RUNTIME=docker` 时 `HOST_DATA_DIR` 与 Agent 数据目录不一致；
-- Xray 配置字段非法。
+- Xray 配置字段非法；
+- REALITY 只支持 TCP / XHTTP / gRPC 传输；
+- Shadowsocks 多用户只支持 `2022-blake3-aes-128-gcm` / `2022-blake3-aes-256-gcm`；
+- 双核心节点需要 Agent 具备 `multi-core.v1` 能力（升级节点镜像即可）。
 
 Agent 会尝试回滚旧配置；修复后点击“同步”或重启节点。
 

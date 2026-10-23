@@ -473,8 +473,11 @@ func TestXrayNodeConfigAndVLESSSubscription(t *testing.T) {
 	nodeObj := nodeResp["node"].(map[string]any)
 	nodeID := int64(nodeObj["id"].(float64))
 	xray := nodeObj["xray"].(map[string]any)
-	if xray["realityPrivateKey"] == "" || xray["realityPublicKey"] == "" {
-		t.Fatalf("reality keys not generated: %+v", xray)
+	if xray["realityPrivateKey"] != "" {
+		t.Fatalf("reality private key must not be returned to the browser: %+v", xray)
+	}
+	if xray["realityPublicKey"] == "" {
+		t.Fatalf("reality public key not generated: %+v", xray)
 	}
 	user := decode[map[string]any](t, env.do(t, "POST", "/api/users", env.token, map[string]any{
 		"userId": "vlessuser", "password": "secretpass", "enabled": true,
@@ -756,5 +759,39 @@ func TestRestoreCelerityBackup(t *testing.T) {
 	nodes, err := imported.ListNodes(context.Background())
 	if err != nil || len(nodes) != 1 || nodes[0].Name != "imported-node" {
 		t.Fatalf("imported nodes = %+v, %v", nodes, err)
+	}
+}
+
+func TestHybridNodeRendersBothCores(t *testing.T) {
+	env := newTestEnv(t)
+	nodeResp := decode[map[string]any](t, env.do(t, "POST", "/api/nodes", env.token, map[string]any{
+		"name": "Hybrid", "flag": "JP", "ip": "203.0.113.8", "port": 443,
+		"cores": []string{"hysteria", "xray"}, "tlsMode": "selfsigned", "active": true,
+		"xray": map[string]any{
+			"apiPort": 61000,
+			"inbounds": []map[string]any{{
+				"protocol": "vmess", "tag": "vmess-in", "port": 8443,
+				"transport": "ws", "security": "tls", "wsPath": "/vm",
+			}},
+		},
+	}))
+	nodeObj := nodeResp["node"].(map[string]any)
+	nodeID := int64(nodeObj["id"].(float64))
+	cores, _ := nodeObj["cores"].([]any)
+	if len(cores) != 2 {
+		t.Fatalf("cores = %v", nodeObj["cores"])
+	}
+	cfg := decode[map[string]any](t, env.do(t, "GET", "/api/nodes/"+itoa(nodeID)+"/config", env.token, nil))
+	configs, ok := cfg["configs"].(map[string]any)
+	if !ok {
+		t.Fatalf("configs missing: %+v", cfg)
+	}
+	hy2, _ := configs["hysteria"].(string)
+	xray, _ := configs["xray"].(string)
+	if !strings.Contains(hy2, "listen:") || !strings.Contains(hy2, "auth:") {
+		t.Fatalf("hysteria config missing:\n%s", hy2)
+	}
+	if !strings.Contains(xray, `"protocol": "vmess"`) || !strings.Contains(xray, `"wsSettings"`) {
+		t.Fatalf("xray config missing vmess/ws:\n%s", xray)
 	}
 }
