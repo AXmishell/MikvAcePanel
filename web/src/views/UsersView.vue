@@ -385,5 +385,5 @@ onMounted(() => { loadMeta(); load() })
 </script>
 
 <style scoped>
-.avatar-sm { width: 30px; height: 30px; border-radius: 9px; flex: none; display: grid; place-items: center; font-size: 12px; font-weight: 800; color: #04101d; background: linear-gradient(135deg, #38bdf8, #818cf8); }
+.avatar-sm { width: 30px; height: 30px; border-radius: 7px; flex: none; display: grid; place-items: center; font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--on-accent); background: var(--accent); }
 </style>

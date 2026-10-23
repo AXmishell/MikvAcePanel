@@ -204,9 +204,9 @@ let timer = null
 
 const rangeLabel = computed(() => ({ '1h': '最近 1 小时', '6h': '最近 6 小时', '24h': '最近 24 小时', '7d': '最近 7 天', '30d': '最近 30 天' }[range.value]))
 const timelineSeries = [
-  { key: 'total', color: '#38bdf8', fill: true },
-  { key: 'errors', color: '#fbbf24', fill: false },
-  { key: 'authFailures', color: '#fb7185', fill: false },
+  { key: 'total', color: '#ff6b3d', fill: true },
+  { key: 'errors', color: '#e6b64c', fill: false },
+  { key: 'authFailures', color: '#ff6f6f', fill: false },
 ]
 const maxLevel = computed(() => Math.max(1, ...(summary.value?.levels || []).map((l) => l.count)))
 const maxEvent = computed(() => Math.max(1, ...(summary.value?.events || []).map((l) => l.count)))

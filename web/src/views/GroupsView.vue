@@ -71,7 +71,7 @@ const modalOpen = ref(false)
 const editing = ref(null)
 const saving = ref(false)
 const formError = ref('')
-const form = reactive({ name: '', description: '', color: '#38bdf8', subscriptionTitle: '', maxDevices: 0 })
+const form = reactive({ name: '', description: '', color: '#ff6b3d', subscriptionTitle: '', maxDevices: 0 })
 const deleteOpen = ref(false)
 const deleteTarget = ref(null)
 
@@ -85,14 +85,14 @@ async function load() {
 }
 function openCreate() {
   editing.value = null
-  Object.assign(form, { name: '', description: '', color: '#38bdf8', subscriptionTitle: '', maxDevices: 0 })
+  Object.assign(form, { name: '', description: '', color: '#ff6b3d', subscriptionTitle: '', maxDevices: 0 })
   formError.value = ''
   modalOpen.value = true
 }
 function openEdit(g) {
   editing.value = g
   Object.assign(form, {
-    name: g.name, description: g.description, color: g.color || '#38bdf8',
+    name: g.name, description: g.description, color: g.color || '#ff6b3d',
     subscriptionTitle: g.subscriptionTitle || '', maxDevices: g.maxDevices || 0,
   })
   formError.value = ''

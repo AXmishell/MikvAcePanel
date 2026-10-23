@@ -155,8 +155,8 @@ const events = computed(() => data.value?.events || [])
 const recentLogs = computed(() => data.value?.recentLogs || [])
 const trafficSeries = computed(() => (data.value?.trafficSeries || []).map((p) => ({ ...p, total: (p.tx || 0) + (p.rx || 0) })))
 const trafficSeriesDef = [
-  { key: 'tx', color: '#38bdf8', fill: true },
-  { key: 'rx', color: '#818cf8', fill: false },
+  { key: 'tx', color: '#ff6b3d', fill: true },
+  { key: 'rx', color: '#93b8a5', fill: false },
 ]
 const uptimeLabel = computed(() => {
   const s = data.value?.system?.uptime || 0

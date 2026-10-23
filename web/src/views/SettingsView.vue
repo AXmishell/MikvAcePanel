@@ -44,7 +44,7 @@
             <dt>数据目录</dt><dd class="mono">{{ meta.dataDir }}</dd>
           </dl>
         </div>
-        <div class="modal-footer" style="border-radius: 0 0 16px 16px">
+        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
           <button class="btn btn-primary" :disabled="saving" @click="save(['panel_name', 'public_url'])">保存常规设置</button>
         </div>
       </section>
@@ -108,7 +108,7 @@
             <div class="field full"><label>HAPP 公告</label><input v-model="form.happ_announce" type="text" placeholder="可选公告" /></div>
           </div>
         </div>
-        <div class="modal-footer" style="border-radius: 0 0 16px 16px">
+        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
           <button class="btn btn-primary" :disabled="saving" @click="save(['page_title', 'subscription_title', 'page_note', 'logo_url', 'subscription_update_interval', 'support_url', 'web_page_url', 'subscription_buttons', 'happ_provider_id', 'happ_routing_mode', 'happ_routing_profile', 'happ_announce'])">保存订阅设置</button>
         </div>
       </section>
@@ -132,7 +132,7 @@
             <div class="field"><label>错误爆发阈值（单节点错误数）</label><input v-model="form.alert_error_burst_threshold" type="number" min="1" /></div>
           </div>
         </div>
-        <div class="modal-footer" style="border-radius: 0 0 16px 16px">
+        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
           <button class="btn btn-primary" :disabled="saving" @click="save(['log_ingest_enabled', 'log_retention_days', 'device_grace_minutes', 'alert_auth_fail_threshold', 'alert_error_burst_threshold'])">保存分析设置</button>
         </div>
       </section>
@@ -149,7 +149,7 @@
           <div class="divider"></div>
           <div class="small dim">会话使用服务端密钥签名，密钥位于 <span class="mono">{{ meta.dataDir }}/jwt.secret</span>. 修改密码不会使现有会话失效；如需强制下线请轮换该密钥。</div>
         </div>
-        <div class="modal-footer" style="border-radius: 0 0 16px 16px">
+        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
           <button class="btn btn-primary" :disabled="pwSaving" @click="changePassword">{{ pwSaving ? '更新中…' : '更新密码' }}</button>
         </div>
       </section>
@@ -285,7 +285,7 @@
             </div>
           </div>
         </div>
-        <div class="modal-footer" style="border-radius: 0 0 16px 16px">
+        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
           <button class="btn" :disabled="certSaving" @click="clearCertCredentials">清除 DNS 凭据</button>
           <div class="spacer"></div>
           <button class="btn btn-primary" :disabled="certSaving" @click="saveCertSettings">保存证书设置</button>
@@ -333,7 +333,7 @@
             </tbody>
           </table>
         </div>
-        <div class="modal-footer" style="border-radius: 0 0 16px 16px">
+        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
           <button class="btn btn-primary" :disabled="saving" @click="save(['backup_enabled', 'backup_interval_hours', 'backup_keep'])">保存备份设置</button>
         </div>
       </section>
@@ -728,14 +728,14 @@ onMounted(() => { load(); loadKeys(); loadBackups() })
 .theme-options { display: flex; gap: 12px; flex-wrap: wrap; }
 .theme-option {
   display: flex; align-items: center; gap: 12px; width: 236px; padding: 12px;
-  border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2);
   color: var(--text); text-align: left; transition: 0.16s ease;
 }
-.theme-option:hover { border-color: var(--muted-2); }
+.theme-option:hover { border-color: var(--line-strong); }
 .theme-option.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.theme-swatch { width: 44px; height: 34px; border-radius: 8px; border: 1px solid var(--line); flex: none; }
-.theme-swatch--dark { background: linear-gradient(135deg, #060a12, #1d2b42); }
-.theme-swatch--light { background: linear-gradient(135deg, #ffffff, #e8eef6); }
+.theme-swatch { width: 44px; height: 34px; border-radius: 6px; border: 1px solid var(--line); flex: none; }
+.theme-swatch--dark { background: linear-gradient(135deg, #0d0d0c 55%, #ff6b3d 55%); }
+.theme-swatch--light { background: linear-gradient(135deg, #f3efe6 55%, #d9481f 55%); }
 .theme-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .theme-meta strong { font-size: 12.5px; }
 .theme-meta small { font-size: 11px; color: var(--muted-2); }

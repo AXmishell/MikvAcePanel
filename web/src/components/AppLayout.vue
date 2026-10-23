@@ -6,10 +6,10 @@
         <div class="brand-logo">M</div>
         <div>
           <div class="brand-name">MikvAce</div>
-          <div class="brand-sub">控制面板</div>
+          <div class="brand-sub">Control Plane</div>
         </div>
       </div>
-      <div class="nav-label">概览</div>
+      <div class="nav-label">控制台</div>
       <router-link v-for="item in navMain" :key="item.to" :to="item.to" class="nav-item" :class="{ active: isActive(item.to) }" @click="mobileOpen = false">
         <component :is="item.icon" :size="17" />
         <span>{{ item.label }}</span>
@@ -22,23 +22,28 @@
       </router-link>
       <div class="sidebar-foot">
         <div class="flex"><span class="dot online"></span><span>面板在线</span></div>
-        <div style="margin-top: 5px">{{ auth.version ? 'v' + auth.version : 'dev' }}</div>
+        <div class="version">{{ auth.version ? 'v' + auth.version : 'dev build' }}</div>
       </div>
     </aside>
 
     <div class="main">
       <header class="topbar">
-        <button class="icon-btn mobile-toggle" @click="mobileOpen = true"><Menu :size="19" /></button>
+        <button class="icon-btn mobile-toggle" aria-label="打开导航" @click="mobileOpen = true"><Menu :size="19" /></button>
         <div>
           <div class="page-title">{{ title }}</div>
           <div class="page-sub">{{ subtitle }}</div>
         </div>
         <div class="topbar-spacer"></div>
-        <button class="icon-btn" :title="theme.current === 'light' ? '切换为深色主题' : '切换为白色主题'" @click="toggleTheme">
+        <button
+          class="icon-btn"
+          :aria-label="theme.current === 'light' ? '切换为深色主题' : '切换为浅色主题'"
+          :title="theme.current === 'light' ? '切换为深色主题' : '切换为浅色主题'"
+          @click="toggleTheme"
+        >
           <Moon v-if="theme.current === 'light'" :size="17" />
           <Sun v-else :size="17" />
         </button>
-        <a class="icon-btn" href="/api/health" target="_blank" title="健康检查"><Activity :size="17" /></a>
+        <a class="icon-btn" href="/api/health" target="_blank" title="健康检查" aria-label="健康检查"><Activity :size="17" /></a>
         <div class="user-chip">
           <div class="avatar">{{ initial }}</div>
           <div class="user-meta">
@@ -115,11 +120,24 @@ watch(() => route.path, () => (mobileOpen.value = false))
 </script>
 
 <style scoped>
-.sidebar-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 25; }
-.user-chip { display: flex; align-items: center; gap: 9px; padding: 4px 4px 4px 6px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,0.02); }
-.avatar { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-size: 12px; font-weight: 800; color: #04101d; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
-.user-meta { line-height: 1.15; padding-right: 8px; }
-.user-name { font-size: 11.5px; font-weight: 700; }
-.user-role { font-size: 9.5px; color: var(--muted-2); }
+.sidebar-overlay { position: fixed; inset: 0; background: var(--scrim); backdrop-filter: blur(2px); z-index: 25; }
+.user-chip {
+  display: flex; align-items: center; gap: 9px;
+  padding: 3px 3px 3px 5px;
+  border: 1px solid var(--line); border-radius: 9px;
+  background: var(--panel-2);
+}
+.avatar {
+  width: 27px; height: 27px; border-radius: 6px;
+  display: grid; place-items: center;
+  font-family: var(--mono); font-size: 11px; font-weight: 700;
+  color: var(--on-accent); background: var(--accent);
+}
+.user-meta { line-height: 1.2; padding-right: 8px; }
+.user-name { font-size: 11.5px; font-weight: 650; }
+.user-role {
+  font-family: var(--mono); font-size: 8.5px; color: var(--muted-2);
+  letter-spacing: 0.1em; text-transform: uppercase;
+}
 @media (max-width: 700px) { .user-meta, .topbar > a.icon-btn { display: none; } }
 </style>
