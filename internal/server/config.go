@@ -17,6 +17,8 @@ type Config struct {
 	DBPath        string
 	JWTSecret     string
 	PublicURL     string
+	ServeWeb      bool
+	FrontendURL   string
 	AdminUsername string
 	AdminPassword string
 	// AdminPasswordGenerated reports that no ADMIN_PASSWORD was configured and
@@ -44,6 +46,8 @@ func LoadConfig() Config {
 		DBPath:        env("DB_PATH", filepath.Join(dataDir, "panel.db")),
 		JWTSecret:     env("JWT_SECRET", ""),
 		PublicURL:     strings.TrimRight(env("PANEL_PUBLIC_URL", "http://localhost:8080"), "/"),
+		ServeWeb:      envBool("SERVE_WEB", true),
+		FrontendURL:   strings.TrimRight(env("FRONTEND_URL", ""), "/"),
 		AdminUsername: env("ADMIN_USERNAME", "admin"),
 		LogLevel:      env("LOG_LEVEL", "info"),
 		SessionTTL:    24 * time.Hour,

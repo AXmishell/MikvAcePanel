@@ -152,6 +152,39 @@ sudo systemctl enable --now mikvace-panel
 sudo systemctl status mikvace-panel
 ```
 
+## 前后端分离 / CDN
+
+默认发行方式仍是单二进制内嵌前端。需要把 SPA 放到 CDN 或独立域名时：
+
+```bash
+cd web
+VITE_BASE_PATH=/ \
+VITE_API_BASE_URL=https://api.example.com/api \
+npm run build
+```
+
+后端使用 API-only 构建与运行参数：
+
+```bash
+make server-api     # 使用 -tags noweb，不依赖 web/dist
+SERVE_WEB=false \
+FRONTEND_URL=https://panel.example.com \
+CORS_ORIGINS=https://panel.example.com \
+TRUSTED_PROXIES=127.0.0.1/32 \
+PANEL_PUBLIC_URL=https://api.example.com \
+./bin/mikvace-server-api -addr 127.0.0.1:8080 -data /var/lib/mikvace
+```
+
+| 变量 | 说明 |
+|------|------|
+| `SERVE_WEB` | `false` 时只提供 API，不再返回 `/panel/` |
+| `FRONTEND_URL` | 前端公网地址，根路径跳转使用 |
+| `CORS_ORIGINS` | 允许跨域的前端 Origin，必须精确匹配 |
+| `TRUSTED_PROXIES` | API 反向代理地址，用于客户端 IP 和登录限流 |
+| `PANEL_PUBLIC_URL` | API 公网地址，用于订阅链接和节点认证 |
+
+API 域名的 Nginx 示例见仓库根目录 `deploy/nginx-api.conf`。注意 `/api/*` 不要被 CDN 缓存，备份恢复需要调大 `client_max_body_size`。
+
 ## Redis（可选）
 
 Redis 用于：

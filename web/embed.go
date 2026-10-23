@@ -1,3 +1,5 @@
+//go:build !noweb
+
 // Package webui embeds the compiled Vue single-page application.
 package webui
 

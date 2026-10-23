@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1
+
+# API-only image for deployments where the Vue frontend is hosted separately
+# (for example on a CDN). The embedded frontend is excluded with -tags noweb.
+FROM golang:1.26-alpine AS go-build
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+WORKDIR /src
+RUN apk add --no-cache ca-certificates
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -tags noweb \
+    -ldflags "-s -w -X github.com/axmishell/mikvacepanel/internal/version.Version=${VERSION} -X github.com/axmishell/mikvacepanel/internal/version.Commit=${COMMIT} -X github.com/axmishell/mikvacepanel/internal/version.BuildDate=${BUILD_DATE}" \
+    -o /out/mikvace-server ./cmd/server
+
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates tzdata wget
+COPY --from=go-build /out/mikvace-server /usr/local/bin/mikvace-server
+ENV ADDR=:8080 \
+    DATA_DIR=/data \
+    SERVE_WEB=false \
+    PANEL_PUBLIC_URL=http://localhost:8080
+VOLUME ["/data"]
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8080/api/health >/dev/null || exit 1
+ENTRYPOINT ["/usr/local/bin/mikvace-server"]

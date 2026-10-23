@@ -294,16 +294,46 @@ func (s *Server) routes() http.Handler {
 		pr.Post("/api/api-keys/{id}/disable", s.handleDisableAPIKey)
 	})
 
-	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/panel/", http.StatusFound)
-	})
-	r.Get("/panel", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/panel/", http.StatusFound)
-	})
-	r.Get("/panel/*", s.serveSPA)
-	r.Get("/favicon.ico", s.serveSPA)
-	r.NotFound(s.serveSPA)
+	if s.cfg.ServeWeb {
+		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/panel/", http.StatusFound)
+		})
+		r.Get("/panel", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/panel/", http.StatusFound)
+		})
+		r.Get("/panel/*", s.serveSPA)
+		r.Get("/favicon.ico", s.serveSPA)
+		r.NotFound(s.serveSPA)
+	} else {
+		s.registerAPIOnlyRoutes(r)
+	}
 	return r
+}
+
+// registerAPIOnlyRoutes keeps the server usable as a pure API when the
+// frontend is deployed separately (for example behind a CDN).
+func (s *Server) registerAPIOnlyRoutes(r chi.Router) {
+	redirectToFrontend := func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.FrontendURL != "" {
+			http.Redirect(w, r, s.cfg.FrontendURL, http.StatusFound)
+			return
+		}
+		writeError(w, http.StatusNotFound, "frontend is served separately")
+	}
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.FrontendURL != "" {
+			http.Redirect(w, r, s.cfg.FrontendURL, http.StatusFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "service": "MikvAce Panel API", "frontend": "separate",
+		})
+	})
+	r.Get("/panel", redirectToFrontend)
+	r.Get("/panel/*", redirectToFrontend)
+	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusNotFound, "not found")
+	})
 }
 
 // ServeHTTP allows the server value to be used directly as an http.Handler.
@@ -421,12 +451,17 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" && s.originAllowed(origin) {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Max-Age", "600")
+		if origin != "" {
+			// Always vary on Origin so shared caches never reuse a response
+			// with the wrong CORS headers.
+			w.Header().Add("Vary", "Origin")
+			if s.originAllowed(origin) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Expose-Headers", "Content-Disposition, X-RateLimit-Limit, X-RateLimit-Remaining, Retry-After")
+				w.Header().Set("Access-Control-Max-Age", "600")
+			}
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

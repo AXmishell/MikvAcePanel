@@ -8,7 +8,7 @@ LDFLAGS := -s -w \
 	-X github.com/axmishell/mikvacepanel/internal/version.Commit=$(COMMIT) \
 	-X github.com/axmishell/mikvacepanel/internal/version.BuildDate=$(BUILD_DATE)
 
-.PHONY: all web server node client build test fmt vet clean docker docker-node dev docs docs-serve
+.PHONY: all web server server-api node client build test fmt vet clean docker docker-node dev docs docs-serve
 
 all: build
 
@@ -18,6 +18,11 @@ web:
 server:
 	@mkdir -p $(BIN)
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN)/mikvace-server ./cmd/server
+
+# API-only build for a separately hosted frontend (no web/dist required).
+server-api:
+	@mkdir -p $(BIN)
+	CGO_ENABLED=0 go build -trimpath -tags noweb -ldflags "$(LDFLAGS)" -o $(BIN)/mikvace-server-api ./cmd/server
 
 node:
 	@mkdir -p $(BIN)

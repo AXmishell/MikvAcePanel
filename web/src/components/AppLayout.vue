@@ -43,7 +43,7 @@
           <Moon v-if="theme.current === 'light'" :size="17" />
           <Sun v-else :size="17" />
         </button>
-        <a class="icon-btn" href="/api/health" target="_blank" title="健康检查" aria-label="健康检查"><Activity :size="17" /></a>
+        <a class="icon-btn" :href="API_BASE + '/health'" target="_blank" title="健康检查" aria-label="健康检查"><Activity :size="17" /></a>
         <div class="user-chip">
           <div class="avatar">{{ initial }}</div>
           <div class="user-meta">
@@ -75,7 +75,7 @@ import {
 } from 'lucide-vue-next'
 import { auth, clearSession } from '../store'
 import { theme, toggleTheme } from '../theme'
-import { api } from '../api'
+import { api, API_BASE } from '../api'
 
 const route = useRoute()
 const router = useRouter()

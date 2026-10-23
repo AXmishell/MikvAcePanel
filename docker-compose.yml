@@ -17,12 +17,15 @@ services:
       ADDR: ":8080"
       DATA_DIR: "/data"
       PANEL_PUBLIC_URL: "${PANEL_PUBLIC_URL:-http://localhost:8080}"
+      SERVE_WEB: "${SERVE_WEB:-true}"
+      FRONTEND_URL: "${FRONTEND_URL:-}"
       ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
       # Leave empty to generate a random password on first boot (printed once
       # in the panel logs). Set a strong value in .env for unattended installs.
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       JWT_SECRET: "${JWT_SECRET:-}"
       CORS_ORIGINS: "${CORS_ORIGINS:-}"
+      TRUSTED_PROXIES: "${TRUSTED_PROXIES:-}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       REDIS_URL: "${REDIS_URL:-}"
       REDIS_PREFIX: "${REDIS_PREFIX:-mikvace:}"

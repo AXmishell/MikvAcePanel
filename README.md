@@ -142,6 +142,7 @@ docker compose --profile redis up -d --build
 ```bash
 docker pull ghcr.io/axmishell/mikvacepanel:latest        # 面板
 docker pull ghcr.io/axmishell/mikvacepanel-node:main   # 节点 Agent
+docker pull ghcr.io/axmishell/mikvacepanel-api:main    # 纯 API（CDN 分离部署）
 ```
 
 标签规则：`main` 分支发布 `main`、`sha-<commit>`；`v1.2.3` 标签发布 `1.2.3`、`1.2`、`latest`、`sha-<commit>`。
@@ -163,6 +164,73 @@ cd web && npm install && npm run dev
 make build          # 先构建前端，再编译 server/node/client 到 bin/
 ./bin/mikvace-server -addr :8080 -data ./data
 ```
+
+### 前后端分离 / CDN 部署
+
+面板默认继续使用单二进制内嵌前端。需要把前端放到 CDN 或独立域名时，使用下面的模式。
+
+**1. 构建前端**
+
+CDN 根路径部署：
+
+```bash
+cd web
+VITE_BASE_PATH=/ \
+VITE_API_BASE_URL=https://api.example.com/api \
+npm run build
+```
+
+把 `web/dist/` 上传到 CDN，并把 SPA fallback 指向 `index.html`。
+
+如果前端仍部署在 `/panel/` 子路径下，保持：
+
+```bash
+VITE_BASE_PATH=/panel/
+VITE_API_BASE_URL=https://api.example.com/api
+```
+
+**2. 启动纯 API 服务**
+
+```bash
+SERVE_WEB=false \
+FRONTEND_URL=https://panel.example.com \
+CORS_ORIGINS=https://panel.example.com \
+TRUSTED_PROXIES=127.0.0.1/32 \
+PANEL_PUBLIC_URL=https://api.example.com \
+./bin/mikvace-server-api -addr 127.0.0.1:8080 -data /data
+```
+
+也可以使用 API-only 镜像：
+
+```bash
+docker build -f Dockerfile.api -t mikvacepanel/api:latest .
+```
+
+或直接编译：
+
+```bash
+make server-api     # bin/mikvace-server-api，使用 -tags noweb，不依赖 web/dist
+```
+
+API 域名的 Nginx 示例见 [`deploy/nginx-api.conf`](deploy/nginx-api.conf)。注意为备份恢复调大 `client_max_body_size`，并保留 `/api/node/ws` 的 WebSocket upgrade 头。
+
+**3. 环境变量**
+
+| 变量 | 说明 |
+|------|------|
+| `SERVE_WEB` | `true` 时由 Go 提供内嵌 `/panel/`；CDN 部署设为 `false` |
+| `FRONTEND_URL` | 前端公网地址，`SERVE_WEB=false` 时根路径跳转使用 |
+| `CORS_ORIGINS` | 允许跨域访问 API 的前端 Origin，必须精确匹配 |
+| `TRUSTED_PROXIES` | 反向代理 IP/CIDR，用于正确获取客户端 IP 和登录限流 |
+| `PANEL_PUBLIC_URL` | 后端公网地址，用于订阅链接和节点认证回调，不是 CDN 地址 |
+
+注意：
+
+- `PANEL_PUBLIC_URL` 必须指向可访问的 API 地址（例如 `https://api.example.com`），否则订阅链接和节点认证会指向错误域名。
+- 如果希望订阅链接继续使用面板域名，需要在面板域名反向代理 `/api/files/*` 到后端。
+- 当前认证使用 `Authorization: Bearer`，跨域不需要 Cookie/CSRF；不要把 CORS 配置成 `*`。
+- 前端静态资源与 `index.html` 建议分别设置长缓存和 `no-store`；CDN 不要缓存 `/api/*`。
+- 订阅落地页 `/api/files/:token` 仍由后端渲染，如果希望它使用面板域名，需要在面板域名反向代理该路径。
 
 ---
 

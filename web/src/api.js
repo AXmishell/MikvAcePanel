@@ -1,4 +1,7 @@
-const BASE = '/api'
+// Build-time API origin. Keep the default relative path for single-origin
+// deployments; set VITE_API_BASE_URL=https://api.example.com/api for CDN setups.
+export const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '')
+const BASE = API_BASE
 
 let unauthorizedHandler = null
 export function setUnauthorizedHandler(fn) {
@@ -119,7 +122,7 @@ export const api = {
   createBackup: () => request('/backups', { method: 'POST' }),
   deleteBackup: (name) => request(`/backups/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   async downloadBackup(name) {
-    const res = await fetch(`/api/backups/${encodeURIComponent(name)}`, {
+    const res = await fetch(`${BASE}/backups/${encodeURIComponent(name)}`, {
       headers: { Authorization: 'Bearer ' + token() },
     })
     if (!res.ok) throw new Error('Download failed (' + res.status + ')')
@@ -128,7 +131,7 @@ export const api = {
   async restoreBackup(file) {
     const fd = new FormData()
     fd.append('file', file)
-    const res = await fetch('/api/backups/restore', {
+    const res = await fetch(`${BASE}/backups/restore`, {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + token() },
       body: fd,
