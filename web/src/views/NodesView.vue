@@ -292,11 +292,6 @@
       </div>
 
       <div v-show="tab === 'hy2'" class="form-grid">
-        <div class="field full hy2-subtabs">
-          <button v-for="sec in HY2_SECTIONS" :key="sec.id" type="button" class="hy2-subtab" :class="{ active: hy2Section === sec.id }" @click="hy2Section = sec.id">{{ sec.label }}</button>
-        </div>
-
-        <template v-if="hy2Section === 'basic'">
         <div class="field full">
           <label>配置模板</label>
           <div class="flex" style="gap: 8px; flex-wrap: wrap">
@@ -306,6 +301,11 @@
             模板只覆盖 QUIC、拥塞控制、嗅探、伪装、SNI 校验和基础开关；ECH、mTLS、ACL、Realms、mimic 与额外 YAML 保持不变。应用后仍需点击“保存节点”才会下发。
           </span>
         </div>
+        <div class="field full hy2-subtabs">
+          <button v-for="sec in HY2_SECTIONS" :key="sec.id" type="button" class="hy2-subtab" :class="{ active: hy2Section === sec.id }" @click="hy2Section = sec.id">{{ sec.label }}</button>
+        </div>
+
+        <template v-if="hy2Section === 'basic'">
         <div class="field full"><strong>运行模式与监听</strong></div>
         <div class="field full">
           <label>Realms 牵线 URI</label>
