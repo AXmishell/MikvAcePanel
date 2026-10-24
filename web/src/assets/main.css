@@ -349,6 +349,18 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 input::placeholder, textarea::placeholder { color: var(--muted-2); opacity: 0.7; }
+
+/* One-time password / 2FA code input */
+input.otp-input {
+  max-width: 220px;
+  font-family: var(--mono);
+  font-size: 16px;
+  letter-spacing: 0.3em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  caret-color: var(--accent);
+}
+input.otp-input::placeholder { letter-spacing: 0.04em; }
 textarea { resize: vertical; min-height: 90px; font-family: var(--mono); font-size: 12px; }
 select {
   appearance: none;

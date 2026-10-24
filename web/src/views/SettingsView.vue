@@ -248,7 +248,10 @@
             <div class="banner banner-info">已启用，剩余恢复码 {{ twoFA.recoveryRemaining }} 个。关闭或重置需要当前密码和动态验证码/恢复码。</div>
             <div class="form-grid" style="max-width: 640px">
               <div class="field"><label>当前密码</label><input v-model="twoFA.password" type="password" autocomplete="current-password" /></div>
-              <div class="field"><label>动态验证码 / 恢复码</label><input v-model="twoFA.code" autocomplete="one-time-code" placeholder="6 位验证码" /></div>
+              <div class="field">
+                <label>动态验证码 / 恢复码</label>
+                <input v-model="twoFA.code" type="text" class="otp-input" autocomplete="one-time-code" spellcheck="false" autocapitalize="off" placeholder="6 位验证码" />
+              </div>
             </div>
             <div class="flex" style="gap: 8px">
               <button class="btn" :disabled="twoFA.busy" @click="regenerateRecovery">重新生成恢复码</button>
@@ -278,7 +281,7 @@
               </div>
               <div class="field" style="max-width: 320px; margin-top: 14px">
                 <label>输入验证器生成的 6 位验证码</label>
-                <input v-model="twoFA.code" inputmode="numeric" autocomplete="one-time-code" />
+                <input v-model="twoFA.code" type="text" class="otp-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" spellcheck="false" autocapitalize="off" placeholder="000000" />
               </div>
               <button class="btn btn-primary" :disabled="twoFA.busy" @click="enable2FA">确认启用</button>
             </template>
