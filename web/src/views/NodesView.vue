@@ -82,6 +82,7 @@
         <button class="tab" :class="{ active: tab === 'basic' }" @click="tab = 'basic'">连接</button>
         <button class="tab" :class="{ active: tab === 'tls' }" @click="tab = 'tls'">TLS 与传输</button>
         <button v-if="hasHysteria" class="tab" :class="{ active: tab === 'hy2' }" @click="tab = 'hy2'">Hysteria 2 设置</button>
+        <button v-if="hasXray" class="tab" :class="{ active: tab === 'xray' }" @click="tab = 'xray'">Xray 设置</button>
         <button v-if="hasHysteria" class="tab" :class="{ active: tab === 'advanced' }" @click="tab = 'advanced'">ACL 与高级</button>
         <button class="tab" :class="{ active: tab === 'ssh' }" @click="tab = 'ssh'">SSH 自动安装</button>
       </div>
@@ -93,24 +94,7 @@
             <button type="button" class="chip" :class="{ on: form.cores.includes('hysteria') }" @click="toggleCore('hysteria')">Hysteria 2（QUIC / UDP）</button>
             <button type="button" class="chip" :class="{ on: form.cores.includes('xray') }" @click="toggleCore('xray')">Xray（TCP：VLESS / VMess / Trojan / SS）</button>
           </div>
-          <span class="hint">可同时启用两个核心；第一个为核心类型，订阅会自动合并两个核心的入站。</span>
-        </div>
-        <div v-if="hasXray" class="field full">
-          <label>Xray 协议</label>
-          <div class="chip-list">
-            <button v-for="p in XRAY_PROTOCOLS" :key="p.id" type="button" class="chip" :class="{ on: protocolEnabled(p.id) }" @click="toggleProtocol(p.id)">{{ p.label }}</button>
-          </div>
-          <span class="hint">勾选即启用；取消只禁用，端口、REALITY 密钥和传输配置会保留。</span>
-        </div>
-        <div v-if="hasXray" class="field full">
-          <label>快速预设</label>
-          <div class="flex" style="gap: 8px; flex-wrap: wrap">
-            <button v-for="p in XRAY_PRESETS" :key="p.id" type="button" class="btn btn-sm" @click="applyPreset(p.protocols)">{{ p.label }}</button>
-          </div>
-          <span class="hint">预设会自动创建缺失的入站并启用对应协议，仍可在“TLS 与传输”中调整参数。</span>
-        </div>
-        <div v-if="hasXray && enabledInboundCount() === 0" class="field full">
-          <div class="banner banner-danger" style="margin: 0">至少启用一个 Xray 入站，否则无法保存。</div>
+          <span class="hint">可同时启用两个核心；第一个为核心类型。Xray 协议、预设与入站在“Xray 设置”页签配置。</span>
         </div>
         <div class="field"><label>名称</label><input v-model="form.name" type="text" placeholder="Tokyo Edge" /></div>
         <div class="field"><label>国旗 Emoji</label><input v-model="form.flag" type="text" placeholder="🇯🇵" maxlength="8" /></div>
@@ -176,80 +160,6 @@
         </div>
       </div>
 
-      <div v-show="tab === 'tls' && hasXray" class="form-grid" :class="{ 'section-gap': hasHysteria }">
-        <div class="field full"><strong>Xray 入站</strong></div>
-        <div class="field">
-          <label>API 端口</label>
-          <input v-model.number="form.xray.apiPort" type="number" min="1" max="65535" placeholder="61000" />
-          <span class="hint">仅监听 127.0.0.1，用于流量统计。</span>
-        </div>
-        <div class="field full">
-          <div class="flex" style="justify-content: space-between; align-items: center">
-            <label style="margin: 0">Xray 入站（{{ form.xray.inbounds.length }}）</label>
-            <button class="btn btn-sm" type="button" @click="addInbound"><Plus :size="13" /> 添加入站</button>
-          </div>
-          <span class="hint">每个入站可独立选择协议、端口、传输和安全方式。</span>
-        </div>
-        <div v-for="(ib, idx) in form.xray.inbounds" :key="ib._key" class="card" :style="'grid-column: 1 / -1; padding: 12px; margin-bottom: 8px;' + (ib.enabled === false ? ' opacity: .55' : '')">
-          <div class="flex" style="justify-content: space-between; align-items: center; margin-bottom: 8px">
-            <div class="flex" style="gap: 10px; align-items: center">
-              <label class="checkbox" style="margin: 0"><input v-model="ib.enabled" type="checkbox" /> 启用</label>
-              <strong>#{{ idx + 1 }} {{ ib.protocol }} : {{ ib.port }}</strong>
-            </div>
-            <button class="icon-btn danger" type="button" :disabled="form.xray.inbounds.length === 1" @click="removeInbound(idx)"><X :size="15" /></button>
-          </div>
-          <div class="form-grid">
-            <div class="field">
-              <label>协议</label>
-              <Select v-model="ib.protocol" :options="PROTOCOL_OPTIONS" @change="normalizeInbound(ib)" />
-            </div>
-            <div class="field"><label>入站标签</label><input v-model="ib.tag" type="text" placeholder="vless-in" /></div>
-            <div class="field"><label>端口</label><input v-model.number="ib.port" type="number" min="1" max="65535" placeholder="443" /></div>
-            <div class="field"><label>监听地址</label><input v-model="ib.listen" type="text" placeholder="0.0.0.0（默认）" /></div>
-            <div class="field">
-              <label>传输方式</label>
-              <Select v-model="ib.transport" :options="TRANSPORT_OPTIONS" @change="normalizeInbound(ib)" />
-            </div>
-            <div class="field">
-              <label>安全</label>
-              <Select v-model="ib.security" :options="securityOptions(ib)" :disabled="ib.protocol === 'shadowsocks'" />
-            </div>
-            <div v-if="ib.protocol === 'vless' && ib.transport === 'tcp' && ib.security !== 'none'" class="field"><label>Flow</label><input v-model="ib.flow" type="text" placeholder="xtls-rprx-vision" /></div>
-            <div v-if="ib.protocol === 'shadowsocks'" class="field">
-              <label>加密方式</label>
-              <Select v-model="ib.ssMethod" :options="SS_METHOD_OPTIONS" />
-            </div>
-            <div class="field"><label>uTLS 指纹</label><input v-model="ib.fingerprint" type="text" placeholder="chrome" /></div>
-            <template v-if="ib.security === 'reality'">
-              <div class="field"><label>REALITY 目标</label><input v-model="ib.realityDest" type="text" placeholder="www.cloudflare.com:443" /></div>
-              <div class="field"><label>服务器名称（逗号分隔）</label><input v-model="ib.sniText" type="text" placeholder="www.cloudflare.com" /></div>
-              <div class="field"><label>ALPN（逗号分隔）</label><input v-model="ib.alpnText" type="text" placeholder="h2,http/1.1" /></div>
-              <div class="field"><label>SpiderX</label><input v-model="ib.realitySpiderX" type="text" placeholder="/" /></div>
-              <div class="field"><label>REALITY 私钥</label><input v-model="ib.realityPrivateKey" type="text" placeholder="留空时自动生成" /></div>
-              <div class="field"><label>REALITY 公钥</label><input v-model="ib.realityPublicKey" type="text" placeholder="留空时自动生成" /></div>
-              <div class="field full"><label>Short ID（逗号分隔）</label><input v-model="ib.sidText" type="text" placeholder="随机 8 位十六进制" /></div>
-            </template>
-            <template v-if="ib.security === 'tls' && ib.protocol !== 'shadowsocks'">
-              <div class="field"><label>服务器名称（逗号分隔）</label><input v-model="ib.sniText" type="text" placeholder="node.example.com" /></div>
-              <div class="field"><label>ALPN（逗号分隔）</label><input v-model="ib.alpnText" type="text" placeholder="h2,http/1.1" /></div>
-            </template>
-            <template v-if="ib.transport === 'ws'">
-              <div class="field"><label>WebSocket 路径</label><input v-model="ib.wsPath" type="text" placeholder="/" /></div>
-              <div class="field"><label>WebSocket Host</label><input v-model="ib.wsHost" type="text" placeholder="cdn.example.com" /></div>
-            </template>
-            <template v-if="ib.transport === 'grpc'">
-              <div class="field"><label>gRPC 服务名</label><input v-model="ib.grpcServiceName" type="text" placeholder="grpc" /></div>
-            </template>
-            <template v-if="ib.transport === 'xhttp'">
-              <div class="field"><label>XHTTP 路径</label><input v-model="ib.xhttpPath" type="text" placeholder="/" /></div>
-              <div class="field"><label>XHTTP Host</label><input v-model="ib.xhttpHost" type="text" placeholder="cdn.example.com" /></div>
-              <div class="field"><label>XHTTP 模式</label><input v-model="ib.xhttpMode" type="text" placeholder="auto" /></div>
-            </template>
-            <div v-if="ib.transport === 'mkcp'" class="field full"><label>mKCP Seed</label><input v-model="ib.kcpSeed" type="text" placeholder="可留空" /></div>
-          </div>
-        </div>
-        <div class="field full"><span class="hint">REALITY 密钥留空时由面板自动生成；TLS 使用节点 Agent 管理的证书。Shadowsocks 使用 2022 系列以支持按用户限速与流量统计。</span></div>
-      </div>
       <div v-show="tab === 'ssh'" class="form-grid">
         <div class="field"><label>SSH 端口</label><input v-model.number="form.sshPort" type="number" min="1" max="65535" placeholder="22" /></div>
         <div class="field"><label>SSH 用户</label><input v-model="form.sshUser" type="text" placeholder="root" /></div>
@@ -496,6 +406,137 @@
         </template>
       </div>
 
+      <div v-show="tab === 'xray'" class="form-grid">
+        <div class="field full hy2-subtabs">
+          <button v-for="sec in XRAY_SECTIONS" :key="sec.id" type="button" class="hy2-subtab" :class="{ active: xraySection === sec.id }" @click="xraySection = sec.id">{{ sec.label }}</button>
+        </div>
+
+        <template v-if="xraySection === 'basic'">
+        <div class="field full"><strong>运行与统计</strong></div>
+        <div class="field">
+          <label>API 端口</label>
+          <input v-model.number="form.xray.apiPort" type="number" min="1" max="65535" placeholder="61000" />
+          <span class="hint">仅监听 127.0.0.1，用于流量统计。</span>
+        </div>
+        <div class="field">
+          <label>日志级别</label>
+          <Select v-model="form.xray.logLevel" :options="XRAY_LOG_LEVEL_OPTIONS" />
+        </div>
+        <div class="field">
+          <label>路由策略</label>
+          <Select v-model="form.xray.routeStrategy" :options="XRAY_ROUTE_OPTIONS" />
+          <span class="hint">对应 routing.domainStrategy，影响域名解析时机。</span>
+        </div>
+
+        <div class="field full"><strong>协议嗅探</strong></div>
+        <div class="field full">
+          <label class="checkbox"><input v-model="form.xray.sniffing.enabled" type="checkbox" /> 启用协议嗅探</label>
+          <label class="checkbox"><input v-model="form.xray.sniffing.routeOnly" type="checkbox" :disabled="!form.xray.sniffing.enabled" /> 仅用于路由（routeOnly）</label>
+          <span class="hint">关闭后直接按目标地址路由；routeOnly 可减少 DNS 泄漏。</span>
+        </div>
+        <div class="field full">
+          <label>嗅探目标</label>
+          <div class="chip-list">
+            <button v-for="d in XRAY_SNIFF_DESTS" :key="d" type="button" class="chip" :class="{ on: form.xray.sniffing.destOverride.includes(d) }" :disabled="!form.xray.sniffing.enabled" @click="toggleId(form.xray.sniffing.destOverride, d)">{{ d }}</button>
+          </div>
+          <span class="hint">建议保留 http / tls / quic；启用嗅探时至少选择一项。</span>
+        </div>
+        </template>
+
+        <template v-if="xraySection === 'protocols'">
+        <div class="field full">
+          <label>Xray 协议</label>
+          <div class="chip-list">
+            <button v-for="p in XRAY_PROTOCOLS" :key="p.id" type="button" class="chip" :class="{ on: protocolEnabled(p.id) }" @click="toggleProtocol(p.id)">{{ p.label }}</button>
+          </div>
+          <span class="hint">勾选即启用；取消只禁用，端口、REALITY 密钥和传输配置会保留。</span>
+        </div>
+        <div class="field full">
+          <label>快速预设</label>
+          <div class="flex" style="gap: 8px; flex-wrap: wrap">
+            <button v-for="p in XRAY_PRESETS" :key="p.id" type="button" class="btn btn-sm" @click="applyPreset(p.protocols)">{{ p.label }}</button>
+          </div>
+          <span class="hint">预设会自动创建缺失的入站并启用对应协议，参数可在“入站”中调整。</span>
+        </div>
+        <div v-if="enabledInboundCount() === 0" class="field full">
+          <div class="banner banner-danger" style="margin: 0">至少启用一个 Xray 入站，否则无法保存。</div>
+        </div>
+        </template>
+
+        <template v-if="xraySection === 'inbounds'">
+        <div class="field full">
+          <div class="flex" style="justify-content: space-between; align-items: center">
+            <label style="margin: 0">Xray 入站（{{ form.xray.inbounds.length }}）</label>
+            <button class="btn btn-sm" type="button" @click="addInbound"><Plus :size="13" /> 添加入站</button>
+          </div>
+          <span class="hint">每个入站可独立选择协议、端口、传输和安全方式；点击左侧箭头可折叠。</span>
+        </div>
+        <div v-for="(ib, idx) in form.xray.inbounds" :key="ib._key" class="card inbound-card" :class="{ 'is-disabled': ib.enabled === false }">
+          <div class="inbound-head">
+            <button class="icon-btn inbound-toggle" type="button" :aria-expanded="isInboundOpen(ib)" @click="toggleInboundCard(ib)">
+              <ChevronDown :size="15" :class="{ 'is-collapsed': !isInboundOpen(ib) }" />
+            </button>
+            <label class="checkbox" style="margin: 0"><input v-model="ib.enabled" type="checkbox" /> 启用</label>
+            <strong>#{{ idx + 1 }} {{ ib.protocol.toUpperCase() }} : {{ ib.port }}</strong>
+            <span class="badge badge-muted">{{ ib.transport }}</span>
+            <span class="badge badge-muted">{{ ib.security }}</span>
+            <div class="spacer"></div>
+            <button class="icon-btn danger" type="button" :disabled="form.xray.inbounds.length === 1" @click="removeInbound(idx)"><X :size="15" /></button>
+          </div>
+          <div v-show="isInboundOpen(ib)" class="form-grid" style="margin-top: 10px">
+            <div class="field">
+              <label>协议</label>
+              <Select v-model="ib.protocol" :options="PROTOCOL_OPTIONS" @change="normalizeInbound(ib)" />
+            </div>
+            <div class="field"><label>入站标签</label><input v-model="ib.tag" type="text" placeholder="vless-in" /></div>
+            <div class="field"><label>端口</label><input v-model.number="ib.port" type="number" min="1" max="65535" placeholder="443" /></div>
+            <div class="field"><label>监听地址</label><input v-model="ib.listen" type="text" placeholder="0.0.0.0（默认）" /></div>
+            <div class="field">
+              <label>传输方式</label>
+              <Select v-model="ib.transport" :options="TRANSPORT_OPTIONS" @change="normalizeInbound(ib)" />
+            </div>
+            <div class="field">
+              <label>安全</label>
+              <Select v-model="ib.security" :options="securityOptions(ib)" :disabled="ib.protocol === 'shadowsocks'" />
+            </div>
+            <div v-if="ib.protocol === 'vless' && ib.transport === 'tcp' && ib.security !== 'none'" class="field"><label>Flow</label><input v-model="ib.flow" type="text" placeholder="xtls-rprx-vision" /></div>
+            <div v-if="ib.protocol === 'shadowsocks'" class="field">
+              <label>加密方式</label>
+              <Select v-model="ib.ssMethod" :options="SS_METHOD_OPTIONS" />
+            </div>
+            <div class="field"><label>uTLS 指纹</label><input v-model="ib.fingerprint" type="text" placeholder="chrome" /></div>
+            <template v-if="ib.security === 'reality'">
+              <div class="field"><label>REALITY 目标</label><input v-model="ib.realityDest" type="text" placeholder="www.cloudflare.com:443" /></div>
+              <div class="field"><label>服务器名称（逗号分隔）</label><input v-model="ib.sniText" type="text" placeholder="www.cloudflare.com" /></div>
+              <div class="field"><label>ALPN（逗号分隔）</label><input v-model="ib.alpnText" type="text" placeholder="h2,http/1.1" /></div>
+              <div class="field"><label>SpiderX</label><input v-model="ib.realitySpiderX" type="text" placeholder="/" /></div>
+              <div class="field"><label>REALITY 私钥</label><input v-model="ib.realityPrivateKey" type="text" placeholder="留空时自动生成" /></div>
+              <div class="field"><label>REALITY 公钥</label><input v-model="ib.realityPublicKey" type="text" placeholder="留空时自动生成" /></div>
+              <div class="field full"><label>Short ID（逗号分隔）</label><input v-model="ib.sidText" type="text" placeholder="随机 8 位十六进制" /></div>
+            </template>
+            <template v-if="ib.security === 'tls' && ib.protocol !== 'shadowsocks'">
+              <div class="field"><label>服务器名称（逗号分隔）</label><input v-model="ib.sniText" type="text" placeholder="node.example.com" /></div>
+              <div class="field"><label>ALPN（逗号分隔）</label><input v-model="ib.alpnText" type="text" placeholder="h2,http/1.1" /></div>
+            </template>
+            <template v-if="ib.transport === 'ws'">
+              <div class="field"><label>WebSocket 路径</label><input v-model="ib.wsPath" type="text" placeholder="/" /></div>
+              <div class="field"><label>WebSocket Host</label><input v-model="ib.wsHost" type="text" placeholder="cdn.example.com" /></div>
+            </template>
+            <template v-if="ib.transport === 'grpc'">
+              <div class="field"><label>gRPC 服务名</label><input v-model="ib.grpcServiceName" type="text" placeholder="grpc" /></div>
+            </template>
+            <template v-if="ib.transport === 'xhttp'">
+              <div class="field"><label>XHTTP 路径</label><input v-model="ib.xhttpPath" type="text" placeholder="/" /></div>
+              <div class="field"><label>XHTTP Host</label><input v-model="ib.xhttpHost" type="text" placeholder="cdn.example.com" /></div>
+              <div class="field"><label>XHTTP 模式</label><input v-model="ib.xhttpMode" type="text" placeholder="auto" /></div>
+            </template>
+            <div v-if="ib.transport === 'mkcp'" class="field full"><label>mKCP Seed</label><input v-model="ib.kcpSeed" type="text" placeholder="可留空" /></div>
+          </div>
+        </div>
+        <div class="field full"><span class="hint">REALITY 密钥留空时由面板自动生成；TLS 使用节点 Agent 管理的证书。Shadowsocks 使用 2022 系列以支持按用户限速与流量统计。</span></div>
+        </template>
+      </div>
+
       <template #footer>
         <button class="btn" @click="modalOpen = false">取消</button>
         <button class="btn btn-primary" :disabled="saving" @click="save">{{ saving ? '保存中…' : editing ? '保存节点' : '创建节点' }}</button>
@@ -594,7 +635,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
-  Copy, Download, FileCode2, Pencil, Plus, RefreshCw, RotateCcw, ScrollText, Server, Square, Terminal, Trash2, X, Zap,
+  ChevronDown, Copy, Download, FileCode2, Pencil, Plus, RefreshCw, RotateCcw, ScrollText, Server, Square, Terminal, Trash2, X, Zap,
 } from 'lucide-vue-next'
 import { adminPath, api } from '../api'
 import { notify } from '../store'
@@ -612,6 +653,8 @@ const error = ref('')
 const modalOpen = ref(false)
 const tab = ref('basic')
 const hy2Section = ref('basic')
+const xraySection = ref('basic')
+const xrayOpen = ref(new Set())
 const editing = ref(null)
 const saving = ref(false)
 const formError = ref('')
@@ -693,6 +736,36 @@ function inboundsFromNode(n) {
     sidText: (x.realityShortIds || []).join(','),
   }]
 }
+
+function xrayFromNode(n) {
+  const x = n.xray || {}
+  const s = x.sniffing
+  return {
+    apiPort: x.apiPort || 61000,
+    logLevel: x.logLevel || 'warning',
+    routeStrategy: x.routeStrategy || 'IPIfNonMatch',
+    sniffing: {
+      enabled: s ? s.enabled !== false : true,
+      routeOnly: s ? s.routeOnly !== false : true,
+      destOverride: Array.isArray(s?.destOverride) && s.destOverride.length
+        ? [...s.destOverride] : ['http', 'tls', 'quic'],
+    },
+    inbounds: inboundsFromNode(n),
+  }
+}
+
+function resetInboundCards() {
+  const first = form.xray.inbounds[0]
+  xrayOpen.value = new Set(first ? [first._key] : [])
+}
+function isInboundOpen(ib) { return xrayOpen.value.has(ib._key) }
+function toggleInboundCard(ib) {
+  const next = new Set(xrayOpen.value)
+  if (next.has(ib._key)) next.delete(ib._key)
+  else next.add(ib._key)
+  xrayOpen.value = next
+}
+function openInboundCard(ib) { xrayOpen.value = new Set([...xrayOpen.value, ib._key]) }
 
 function hy2Defaults() {
   return {
@@ -837,6 +910,26 @@ const HY2_SECTIONS = [
   { id: 'advanced', label: 'Realms / 高级' },
 ]
 
+const XRAY_SECTIONS = [
+  { id: 'basic', label: '基础' },
+  { id: 'protocols', label: '协议与预设' },
+  { id: 'inbounds', label: '入站' },
+]
+
+const XRAY_LOG_LEVEL_OPTIONS = [
+  { value: 'debug', label: 'debug' },
+  { value: 'info', label: 'info' },
+  { value: 'warning', label: 'warning（默认）' },
+  { value: 'error', label: 'error' },
+  { value: 'none', label: 'none' },
+]
+const XRAY_ROUTE_OPTIONS = [
+  { value: 'IPIfNonMatch', label: 'IPIfNonMatch（默认）' },
+  { value: 'IPOnDemand', label: 'IPOnDemand' },
+  { value: 'AsIs', label: 'AsIs' },
+]
+const XRAY_SNIFF_DESTS = ['http', 'tls', 'quic']
+
 const HY2_TEMPLATE_PRESETS = [
   { id: 'official', label: '官方默认', values: hy2Template() },
   {
@@ -905,7 +998,13 @@ function emptyForm() {
     type: 'hysteria', cores: ['hysteria'], runtimeMode: 'process', maxOnline: 0, ranking: 1, active: true, groupIds: [], aclText: 'direct(all)',
     outbounds: [], sshPort: 22, sshUser: 'root', sshPassword: '', sshKey: '', sshHostKey: '', sshInstallDocker: false,
     hy2: hy2Defaults(),
-    xray: { apiPort: 61000, inbounds: [emptyInbound()] },
+    xray: {
+      apiPort: 61000,
+      logLevel: 'warning',
+      routeStrategy: 'IPIfNonMatch',
+      sniffing: { enabled: true, destOverride: ['http', 'tls', 'quic'], routeOnly: true },
+      inbounds: [emptyInbound()],
+    },
   }
 }
 function resetForm() { Object.assign(form, emptyForm()) }
@@ -1102,6 +1201,7 @@ function toggleCore(core) {
   }
   form.type = form.cores[0]
   if (!form.cores.includes('hysteria') && (tab.value === 'advanced' || tab.value === 'hy2')) tab.value = 'tls'
+  if (!form.cores.includes('xray') && tab.value === 'xray') tab.value = 'tls'
 }
 function addInbound() {
   const ib = emptyInbound()
@@ -1109,6 +1209,7 @@ function addInbound() {
   ib.port = allocatePort(last + 1)
   ib.tag = uniqueTag(`${ib.protocol}-in`)
   form.xray.inbounds.push(ib)
+  openInboundCard(ib)
 }
 function removeInbound(idx) {
   if (form.xray.inbounds.length > 1) form.xray.inbounds.splice(idx, 1)
@@ -1144,6 +1245,7 @@ function versionLabel(n) {
 }
 watch(() => form.cores.slice(), () => {
   if (!form.cores.includes('hysteria') && (tab.value === 'advanced' || tab.value === 'hy2')) tab.value = 'tls'
+  if (!form.cores.includes('xray') && tab.value === 'xray') tab.value = 'tls'
 })
 function toggleId(list, id) {
   const i = list.indexOf(id)
@@ -1184,9 +1286,11 @@ async function loadGroups() {
 function openCreate() {
   editing.value = null
   resetForm()
+  resetInboundCards()
   applyHy2Template('balanced', true)
   tab.value = 'basic'
   hy2Section.value = 'basic'
+  xraySection.value = 'basic'
   formError.value = ''
   modalOpen.value = true
   certInfo.value = null
@@ -1209,10 +1313,12 @@ function openEdit(n) {
     aclText: (n.acl || []).join('\n'),
     outbounds: (n.outbounds || []).map((o) => ({ ...o })),
     hy2: hy2FromNode(n),
-    xray: { apiPort: n.xray?.apiPort || 61000, inbounds: inboundsFromNode(n) },
+    xray: xrayFromNode(n),
   })
+  resetInboundCards()
   tab.value = 'basic'
   hy2Section.value = 'basic'
+  xraySection.value = 'basic'
   formError.value = ''
   modalOpen.value = true
   certInfo.value = null
@@ -1315,6 +1421,13 @@ async function save() {
       outbounds: form.outbounds.filter((o) => o.name),
       xray: {
         apiPort: Number(form.xray.apiPort) || 61000,
+        logLevel: form.xray.logLevel,
+        routeStrategy: form.xray.routeStrategy,
+        sniffing: {
+          enabled: !!form.xray.sniffing.enabled,
+          routeOnly: !!form.xray.sniffing.routeOnly,
+          destOverride: [...form.xray.sniffing.destOverride],
+        },
         inbounds: form.xray.inbounds.map((ib) => {
           const { _key, sniText, alpnText, sidText, ...rest } = ib
           return {
@@ -1487,6 +1600,11 @@ onBeforeUnmount(() => clearInterval(timer))
 <style scoped>
 .stack { display: flex; flex-direction: column; gap: 16px; }
 .outbound-row { display: flex; gap: 7px; align-items: center; margin-bottom: 7px; flex-wrap: wrap; }
+.inbound-card { grid-column: 1 / -1; padding: 12px; margin-bottom: 8px; }
+.inbound-card.is-disabled { opacity: 0.55; }
+.inbound-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.inbound-toggle svg { transition: transform 0.15s ease; }
+.inbound-toggle svg.is-collapsed { transform: rotate(-90deg); }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>

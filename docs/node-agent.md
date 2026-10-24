@@ -201,6 +201,16 @@ WantedBy=multi-user.target
 
 `apiPort` 是 Xray StatsService 的本地端口，默认 `61000`，只监听 `127.0.0.1`。
 
+面板还支持三个全局 Xray 选项，保存在节点 `xray` 对象中：
+
+| 字段 | 默认值 | 说明 |
+| --- | --- | --- |
+| `logLevel` | `warning` | 生成配置的 `log.loglevel` |
+| `routeStrategy` | `IPIfNonMatch` | 生成配置的 `routing.domainStrategy` |
+| `sniffing` | 启用，`http/tls/quic`，`routeOnly=true` | 每个入站的 `sniffing` 块；可整体关闭 |
+
+旧节点没有这些字段时自动使用默认值；新的「Xray 设置」页签可修改。
+
 节点启用 Xray 后，面板生成包含全部授权用户的 `config.json`，Agent 运行：
 
 ```bash

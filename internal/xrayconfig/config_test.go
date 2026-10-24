@@ -205,3 +205,86 @@ func TestNormalizeRejectsAllDisabledInbounds(t *testing.T) {
 		t.Fatal("expected an error when every inbound is disabled")
 	}
 }
+
+func TestNormalizeXrayGlobalDefaults(t *testing.T) {
+	n := &model.Node{ID: 20, Type: "xray", IP: "203.0.113.20", Port: 443}
+	if err := Normalize(n); err != nil {
+		t.Fatal(err)
+	}
+	if n.Xray.LogLevel != DefaultLogLevel {
+		t.Fatalf("log level = %q", n.Xray.LogLevel)
+	}
+	if n.Xray.RouteStrategy != DefaultRouteStrategy {
+		t.Fatalf("route strategy = %q", n.Xray.RouteStrategy)
+	}
+	if n.Xray.Sniffing == nil || !n.Xray.Sniffing.Enabled || !n.Xray.Sniffing.RouteOnly {
+		t.Fatalf("sniffing = %+v", n.Xray.Sniffing)
+	}
+	if got := strings.Join(n.Xray.Sniffing.DestOverride, ","); got != "http,tls,quic" {
+		t.Fatalf("sniff destinations = %q", got)
+	}
+}
+
+func TestNormalizeXrayGlobalValidation(t *testing.T) {
+	cases := []model.XraySettings{
+		{LogLevel: "verbose"},
+		{RouteStrategy: "sometimes"},
+		{Sniffing: &model.XraySniffing{Enabled: true, DestOverride: []string{"fakedns"}}},
+	}
+	for _, x := range cases {
+		n := &model.Node{ID: 21, Type: "xray", IP: "203.0.113.21", Port: 443, Xray: x}
+		if err := Normalize(n); err == nil {
+			t.Fatalf("expected validation error for %+v", x)
+		}
+	}
+}
+
+func TestRenderXrayGlobalSettings(t *testing.T) {
+	n, users := fixture()
+	n.Xray.LogLevel = "debug"
+	n.Xray.RouteStrategy = "AsIs"
+	n.Xray.Sniffing = &model.XraySniffing{
+		Enabled: true, DestOverride: []string{"tls"}, RouteOnly: false,
+	}
+	text, _, err := Render(n, users)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(text), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg["log"].(map[string]any)["loglevel"]; got != "debug" {
+		t.Fatalf("loglevel = %v", got)
+	}
+	if got := cfg["routing"].(map[string]any)["domainStrategy"]; got != "AsIs" {
+		t.Fatalf("domainStrategy = %v", got)
+	}
+	sniff := cfg["inbounds"].([]any)[1].(map[string]any)["sniffing"].(map[string]any)
+	if sniff["enabled"] != true || sniff["routeOnly"] != false {
+		t.Fatalf("sniffing = %#v", sniff)
+	}
+	if got := sniff["destOverride"].([]any); len(got) != 1 || got[0] != "tls" {
+		t.Fatalf("destOverride = %#v", got)
+	}
+}
+
+func TestRenderXraySniffingDisabled(t *testing.T) {
+	n, users := fixture()
+	n.Xray.Sniffing = &model.XraySniffing{Enabled: false}
+	text, _, err := Render(n, users)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(text), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	sniff := cfg["inbounds"].([]any)[1].(map[string]any)["sniffing"].(map[string]any)
+	if sniff["enabled"] != false {
+		t.Fatalf("sniffing = %#v", sniff)
+	}
+	if _, ok := sniff["destOverride"]; ok {
+		t.Fatalf("disabled sniffing should not include destOverride: %#v", sniff)
+	}
+}

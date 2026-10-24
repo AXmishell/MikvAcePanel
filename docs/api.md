@@ -298,6 +298,18 @@ Hysteria 2 扩展选项放在请求体的 `hy2` 对象中（证书私钥等敏�
 | `extraYaml` | 深合并到生成配置；禁止覆盖 `listen/auth/trafficStats/tls/acme/ech/realm/mimic` |
 | `echPem`（顶层） | `hysteria ech` 生成的完整 `ech.pem`，只写不读；`clearEch: true` 可清除 |
 
+Xray 扩展选项放在请求体的 `xray` 对象中：
+
+| 字段 | 说明 |
+| --- | --- |
+| `apiPort` | StatsService 本地端口，默认 `61000`，只监听 `127.0.0.1` |
+| `logLevel` | `debug` / `info` / `warning` / `error` / `none`，默认 `warning` |
+| `routeStrategy` | `IPIfNonMatch` / `IPOnDemand` / `AsIs`，默认 `IPIfNonMatch` |
+| `sniffing.enabled` | 是否启用协议嗅探 |
+| `sniffing.routeOnly` | 嗅探结果是否只用于路由 |
+| `sniffing.destOverride` | 嗅探目标，可选 `http`、`tls`、`quic` |
+| `inbounds` | 入站数组；协议、端口、传输、安全与 REALITY/TLS 参数，见 [node-agent.md](node-agent.md) |
+
 
 ### 备份
 

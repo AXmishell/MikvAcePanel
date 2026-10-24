@@ -138,11 +138,22 @@ func (ib XrayInbound) IsEnabled() bool {
 	return ib.Enabled == nil || *ib.Enabled
 }
 
+// XraySniffing controls protocol sniffing for every Xray inbound. A nil value
+// means legacy behavior: sniffing enabled for HTTP/TLS/QUIC, route-only mode.
+type XraySniffing struct {
+	Enabled      bool     `json:"enabled"`
+	DestOverride []string `json:"destOverride,omitempty"`
+	RouteOnly    bool     `json:"routeOnly"`
+}
+
 // XraySettings holds the Xray inbounds of a node. The legacy single-inbound
 // fields are kept so that nodes created before multi-inbound support keep
 // working; Normalize folds them into Inbounds.
 type XraySettings struct {
-	Transport         string        `json:"transport"`
+	LogLevel      string        `json:"logLevel,omitempty"`
+	RouteStrategy string        `json:"routeStrategy,omitempty"`
+	Sniffing      *XraySniffing `json:"sniffing,omitempty"`
+	Transport     string        `json:"transport"`
 	Security          string        `json:"security"`
 	Flow              string        `json:"flow"`
 	Fingerprint       string        `json:"fingerprint"`

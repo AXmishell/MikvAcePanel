@@ -77,7 +77,7 @@
 - 上行/下行带宽；
 - ACL 规则与自定义出站；
 - masquerade URL；
-- Xray：入站列表（协议、端口、传输）、REALITY 密钥、SNI、short id、uTLS 指纹、ALPN、API 端口、入站标签、XHTTP/mKCP 参数。
+- Xray：独立「Xray 设置」页签，支持协议/预设、入站列表（协议、端口、传输）、REALITY 密钥、SNI、short id、uTLS 指纹、ALPN、API 端口、日志级别、路由策略、协议嗅探、XHTTP/mKCP 参数。
 
 ## 日志
 

@@ -28,7 +28,14 @@ const (
 	// DefaultSSMethod is used when a Shadowsocks inbound does not specify one.
 	// 2022 methods are required for per-user passwords and traffic statistics.
 	DefaultSSMethod = "2022-blake3-aes-128-gcm"
+
+	// DefaultLogLevel is Xray's balanced production default.
+	DefaultLogLevel = "warning"
+	// DefaultRouteStrategy resolves domains only when a routing rule needs an IP.
+	DefaultRouteStrategy = "IPIfNonMatch"
 )
+
+var defaultSniffDestinations = []string{"http", "tls", "quic"}
 
 // GenerateRealityKeypair creates an X25519 keypair in the encoding expected by
 // Xray REALITY (raw URL-safe base64).
@@ -102,11 +109,64 @@ func foldLegacyInbounds(n *model.Node) {
 	n.Xray.Inbounds = ibs
 }
 
+func normalizeGlobals(x *model.XraySettings) error {
+	x.LogLevel = strings.ToLower(strings.TrimSpace(x.LogLevel))
+	if x.LogLevel == "" {
+		x.LogLevel = DefaultLogLevel
+	}
+	switch x.LogLevel {
+	case "debug", "info", "warning", "error", "none":
+	default:
+		return fmt.Errorf("unsupported Xray log level %q", x.LogLevel)
+	}
+
+	x.RouteStrategy = strings.TrimSpace(x.RouteStrategy)
+	if x.RouteStrategy == "" {
+		x.RouteStrategy = DefaultRouteStrategy
+	}
+	switch x.RouteStrategy {
+	case "IPIfNonMatch", "IPOnDemand", "AsIs":
+	default:
+		return fmt.Errorf("unsupported Xray routing strategy %q", x.RouteStrategy)
+	}
+
+	if x.Sniffing == nil {
+		x.Sniffing = &model.XraySniffing{
+			Enabled: true, DestOverride: append([]string{}, defaultSniffDestinations...), RouteOnly: true,
+		}
+		return nil
+	}
+	seen := map[string]bool{}
+	dest := make([]string, 0, len(x.Sniffing.DestOverride))
+	for _, raw := range x.Sniffing.DestOverride {
+		value := strings.ToLower(strings.TrimSpace(raw))
+		switch value {
+		case "http", "tls", "quic":
+		case "":
+			continue
+		default:
+			return fmt.Errorf("unsupported Xray sniffing destination %q", value)
+		}
+		if !seen[value] {
+			seen[value] = true
+			dest = append(dest, value)
+		}
+	}
+	if x.Sniffing.Enabled && len(dest) == 0 {
+		dest = append(dest, defaultSniffDestinations...)
+	}
+	x.Sniffing.DestOverride = dest
+	return nil
+}
+
 // Normalize fills defaults for an Xray node. It also guarantees that REALITY
 // key material and at least one short id exist and folds the legacy
 // single-inbound fields into Inbounds.
 func Normalize(n *model.Node) error {
 	x := &n.Xray
+	if err := normalizeGlobals(x); err != nil {
+		return err
+	}
 	// Fold legacy fields into a single inbound when the node predates
 	// multi-inbound support.
 	if len(x.Inbounds) == 0 {
@@ -338,8 +398,10 @@ func Render(n *model.Node, users []model.User) (string, string, error) {
 	rules := []map[string]any{{
 		"type": "field", "inboundTag": []string{"API_INBOUND"}, "outboundTag": "API",
 	}}
+	logLevel := firstNonEmpty(x.LogLevel, DefaultLogLevel)
+	routeStrategy := firstNonEmpty(x.RouteStrategy, DefaultRouteStrategy)
 	config := map[string]any{
-		"log":   map[string]any{"loglevel": "warning", "access": AccessLog, "error": ""},
+		"log":   map[string]any{"loglevel": logLevel, "access": AccessLog, "error": ""},
 		"api":   map[string]any{"tag": "API", "services": []string{"HandlerService", "StatsService"}},
 		"stats": map[string]any{},
 		"policy": map[string]any{
@@ -357,7 +419,7 @@ func Render(n *model.Node, users []model.User) (string, string, error) {
 			{"protocol": "blackhole", "tag": "block"},
 		},
 		"routing": map[string]any{
-			"domainStrategy": "IPIfNonMatch",
+			"domainStrategy": routeStrategy,
 			"rules":          rules,
 		},
 	}
@@ -374,7 +436,7 @@ func renderInbound(n *model.Node, ib model.XrayInbound, users []model.User, nowT
 		"listen": firstNonEmpty(ib.Listen, "0.0.0.0"),
 		"port":   ib.Port, "protocol": ib.Protocol, "tag": ib.Tag,
 		"streamSettings": streamSettings(n, ib),
-		"sniffing":       map[string]any{"enabled": true, "destOverride": []string{"http", "tls", "quic"}, "routeOnly": true},
+		"sniffing":       sniffingSettings(n.Xray),
 	}
 	switch ib.Protocol {
 	case "vless":
@@ -423,6 +485,24 @@ func renderInbound(n *model.Node, ib model.XrayInbound, users []model.User, nowT
 		inbound["settings"] = map[string]any{"method": method, "password": SSServerKey(n, ib.Tag, method), "clients": clients}
 	}
 	return inbound, nil
+}
+
+func sniffingSettings(x model.XraySettings) map[string]any {
+	if x.Sniffing == nil {
+		return map[string]any{
+			"enabled": true, "destOverride": append([]string{}, defaultSniffDestinations...), "routeOnly": true,
+		}
+	}
+	if !x.Sniffing.Enabled {
+		return map[string]any{"enabled": false}
+	}
+	dest := x.Sniffing.DestOverride
+	if len(dest) == 0 {
+		dest = defaultSniffDestinations
+	}
+	return map[string]any{
+		"enabled": true, "destOverride": append([]string{}, dest...), "routeOnly": x.Sniffing.RouteOnly,
+	}
 }
 
 func userActive(u model.User, nowT time.Time) bool {
