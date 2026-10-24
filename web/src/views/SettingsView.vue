@@ -458,7 +458,7 @@
           <div class="form-grid">
             <div class="field">
               <label>ACME 目录</label>
-              <Select v-model="certForm.ca" :options="ACME_CA_OPTIONS" />
+              <Select v-model="certForm.ca" :options="acmeCaOptions" />
             </div>
             <div class="field"><label>ACME 邮箱</label><input v-model="certForm.email" type="email" placeholder="admin@example.com" /></div>
             <template v-if="isLiteSSL">
@@ -660,6 +660,17 @@ const ACME_CA_OPTIONS = [
   { value: 'https://acme-v02.api.letsencrypt.org/directory', label: "Let's Encrypt" },
   { value: 'https://acme.litessl.com/acme/v2/directory', label: 'LiteSSL' },
 ]
+// Keep a previously saved directory visible even after it is removed from the
+// built-in list (for example the old Let's Encrypt Staging endpoint), so the
+// operator can see which CA is actually in use.
+const acmeCaOptions = computed(() => {
+  const ca = String(certForm.ca || '')
+  if (!ca || ACME_CA_OPTIONS.some((o) => o.value === ca)) return ACME_CA_OPTIONS
+  const label = ca.includes('acme-staging-v02.api.letsencrypt.org')
+    ? "Let's Encrypt Staging（已弃用）"
+    : ca
+  return [...ACME_CA_OPTIONS, { value: ca, label }]
+})
 const DNS_PROVIDER_OPTIONS = [
   { value: 'manual', label: '手动 TXT（无 API）' },
   { value: 'cloudflare', label: 'Cloudflare' },
@@ -1019,8 +1030,10 @@ async function saveCertSettings() {
   certSaving.value = true
   try {
     const payload = { ca: certForm.ca, email: certForm.email, provider: certForm.provider, renewDays: Number(certForm.renewDays) || 30 }
-    if (eabKid) payload.eabKid = eabKid
-    if (eabHmac) payload.eabHmac = eabHmac
+    if (isLiteSSL.value) {
+      if (eabKid) payload.eabKid = eabKid
+      if (eabHmac) payload.eabHmac = eabHmac
+    }
     const dns = {}
     if (certForm.provider === 'cloudflare' && certForm.apiToken) dns.apiToken = certForm.apiToken
     if (certForm.provider === 'alidns') {

@@ -129,7 +129,7 @@ PEBBLE_BIN=/usr/local/bin/pebble make test-cert-e2e
 ## 清理
 
 1. 删除 `_acme-challenge` 测试 TXT 记录；
-2. 将 ACME 目录切回 Let's Encrypt 或继续使用 LiteSSL；
+2. 将 ACME 目录切回 Let's Encrypt 或继续使用 LiteSSL（切回 Let's Encrypt 会自动清除 EAB 凭据）；
 3. 删除测试节点上不再使用的 `previous-*.pem`；
 4. 轮换或删除测试 DNS API Token；
 5. 恢复节点 TLS 模式与测试前一致。

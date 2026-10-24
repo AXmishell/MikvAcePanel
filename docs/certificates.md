@@ -47,6 +47,7 @@ Agent 在以下时机自动申请/续期：
 - ACME 目录：Let's Encrypt / LiteSSL；
 - ACME 邮箱；
 - LiteSSL 需要额外填写 EAB Key ID 与 EAB HMAC Key，HMAC 会加密保存且不回显；
+- 从 LiteSSL 切换到其它 ACME 目录时会自动清除已保存的 EAB 凭据；切回 LiteSSL 需要重新填写；
 - DNS 服务商：手动 TXT、Cloudflare、阿里云 DNS、DNSPod；
 - 提前续期天数（默认 30）；
 - DNS 凭据加密保存在 `panel.db`，加密密钥为 `data/cert.key`（0600）。也可以通过 `security.cert_key_file` 指向 32 字节密钥文件；`data/cert.key` 会随备份归档一起保存。

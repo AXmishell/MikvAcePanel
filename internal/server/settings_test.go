@@ -37,6 +37,34 @@ func TestSettingsNeverReturnDNSConfig(t *testing.T) {
 	check(env.do(t, http.MethodPut, "/api/settings", env.token, map[string]any{"panel_name": "MikvAce"}))
 }
 
+func TestSettingsNeverReturnEABHMAC(t *testing.T) {
+	env := newTestEnv(t)
+	if err := env.store.SetSetting(context.Background(), "cert_acme_eab_hmac", "SECRET-CIPHER"); err != nil {
+		t.Fatal(err)
+	}
+	check := func(resp *http.Response) {
+		t.Helper()
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d", resp.StatusCode)
+		}
+		var out struct {
+			Settings map[string]string `json:"settings"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := out.Settings["cert_acme_eab_hmac"]; ok {
+			t.Fatal("cert_acme_eab_hmac leaked in settings response")
+		}
+		if out.Settings["cert_acme_eab_hmac_set"] != "true" {
+			t.Fatalf("cert_acme_eab_hmac_set = %q", out.Settings["cert_acme_eab_hmac_set"])
+		}
+	}
+	check(env.do(t, http.MethodGet, "/api/settings", env.token, nil))
+	check(env.do(t, http.MethodPut, "/api/settings", env.token, map[string]any{"panel_name": "MikvAce"}))
+}
+
 func TestAdminSecurityEntrance(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()

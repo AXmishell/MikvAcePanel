@@ -490,7 +490,7 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w}
 		next.ServeHTTP(sw, r)
-		if strings.HasPrefix(r.URL.Path, "/assets/") {
+		if strings.HasPrefix(r.URL.Path, "/assets/") || strings.HasPrefix(r.URL.Path, "/homepage/") {
 			return
 		}
 		status := sw.status

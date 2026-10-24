@@ -226,12 +226,17 @@ func (s *Server) handleUpdateCertSettings(w http.ResponseWriter, r *http.Request
 	}
 	eabKID := strings.TrimSpace(raw.EABKID)
 	eabHMAC := strings.TrimSpace(raw.EABHMAC)
+	current, _ := s.certs.LoadSettings(r.Context())
 	if certmanager.RequiresEAB(raw.CA) {
-		current, _ := s.certs.LoadSettings(r.Context())
 		if raw.ClearEAB || (eabKID == "" && current.EABKID == "") || (eabHMAC == "" && current.EABHMAC == "") {
 			writeError(w, http.StatusBadRequest, "LiteSSL requires EAB Key ID and HMAC key")
 			return
 		}
+	} else if !raw.ClearEAB && certmanager.RequiresEAB(current.CA) && eabKID == "" && eabHMAC == "" {
+		// Switching away from LiteSSL without supplying new EAB credentials:
+		// drop the old binding so it is not sent to an unrelated ACME directory
+		// on the next issuance.
+		raw.ClearEAB = true
 	}
 	settings := certmanager.Settings{
 		CA: strings.TrimSpace(raw.CA), Email: strings.TrimSpace(raw.Email),

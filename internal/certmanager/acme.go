@@ -308,6 +308,16 @@ func decodeEABKey(value string) ([]byte, error) {
 	if value == "" {
 		return nil, errors.New("EAB HMAC key is empty")
 	}
+	// Every hex character is also valid in base64url, so trying base64 first
+	// would silently reinterpret a hex-encoded key as a shorter, unrelated
+	// byte string. Treat an even-length all-hex value as hex. A base64 key that
+	// happens to contain only hex characters would be misread here, but that
+	// is vanishingly unlikely and hex is the only unambiguous choice.
+	if len(value)%2 == 0 && isHexString(value) {
+		if b, err := hex.DecodeString(value); err == nil && len(b) > 0 {
+			return b, nil
+		}
+	}
 	for _, encoding := range []*base64.Encoding{
 		base64.RawURLEncoding, base64.URLEncoding, base64.StdEncoding, base64.RawStdEncoding,
 	} {
@@ -319,6 +329,18 @@ func decodeEABKey(value string) ([]byte, error) {
 		return b, nil
 	}
 	return nil, errors.New("EAB HMAC key must be base64 or hex encoded")
+}
+
+func isHexString(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // accountKey loads or creates the persisted ACME account key.

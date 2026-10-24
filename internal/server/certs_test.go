@@ -109,6 +109,45 @@ func TestCertSettingsLiteSSLRequiresEAB(t *testing.T) {
 	}
 }
 
+func TestCertSettingsSwitchingCADropsEAB(t *testing.T) {
+	env := newTestEnv(t)
+	liteSSL := certmanager.LiteSSLCADir
+	hmac := base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef"))
+
+	resp := env.do(t, "PUT", "/api/cert/settings", env.token, map[string]any{
+		"ca": liteSSL, "email": "admin@example.com", "provider": "manual", "renewDays": 30,
+		"eabKid": "eab-kid-1", "eabHmac": hmac,
+	})
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("save LiteSSL EAB = %d: %s", resp.StatusCode, b)
+	}
+	resp.Body.Close()
+
+	// Switching to a CA that does not use EAB must not leave the binding behind,
+	// otherwise it would be sent to the new directory on the next issuance.
+	resp = env.do(t, "PUT", "/api/cert/settings", env.token, map[string]any{
+		"ca": certmanager.DefaultCADir, "email": "admin@example.com", "provider": "manual", "renewDays": 30,
+	})
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("switch CA = %d: %s", resp.StatusCode, b)
+	}
+	resp.Body.Close()
+
+	settings := decode[map[string]any](t, env.do(t, "GET", "/api/cert/settings", env.token, nil))
+	if settings["eabConfigured"] == true || settings["eabKid"] != "" {
+		t.Fatalf("EAB was not cleared after switching CA: %+v", settings)
+	}
+	stored, err := env.store.GetSetting(t.Context(), certmanager.SettingEABHMAC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored != "" {
+		t.Fatalf("EAB HMAC still stored after switching CA: %q", stored)
+	}
+}
+
 func TestNodeCertificateUpload(t *testing.T) {
 	env := newTestEnv(t)
 	created := decode[map[string]any](t, env.do(t, "POST", "/api/nodes", env.token, map[string]any{

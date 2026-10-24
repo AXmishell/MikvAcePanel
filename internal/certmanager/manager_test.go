@@ -9,10 +9,12 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"io"
 	"log/slog"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +33,8 @@ func TestEABHelpers(t *testing.T) {
 		base64.RawURLEncoding.EncodeToString(raw),
 		base64.URLEncoding.EncodeToString(raw),
 		base64.StdEncoding.EncodeToString(raw),
+		hex.EncodeToString(raw),
+		strings.ToUpper(hex.EncodeToString(raw)),
 	} {
 		got, err := decodeEABKey(value)
 		if err != nil {

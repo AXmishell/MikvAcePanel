@@ -198,6 +198,35 @@ func TestHomepageUploadZipAndPreview(t *testing.T) {
 	}
 }
 
+func TestHomepagePreviewRejectsMalformedJSON(t *testing.T) {
+	env := newHomepageEnv(t)
+
+	up := env.uploadHomepage(t, "index.html", []byte("<html>preview</html>"))
+	var uploaded struct {
+		Version string `json:"version"`
+	}
+	_ = json.NewDecoder(up.Body).Decode(&uploaded)
+	up.Body.Close()
+	if resp := env.do(t, "POST", "/api/homepage/activate", env.token, map[string]any{"version": uploaded.Version}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("activate = %d", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+
+	req, _ := http.NewRequest("POST", env.srv.URL+"/api/homepage/preview", strings.NewReader("{"))
+	req.Header.Set("Authorization", "Bearer "+env.token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("malformed preview = %d: %s", resp.StatusCode, b)
+	}
+}
+
 func TestHomepageRejectsZipSlip(t *testing.T) {
 	env := newHomepageEnv(t)
 	var buf bytes.Buffer

@@ -47,13 +47,15 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // redactSettings removes write-only secrets before settings are returned to a
-// client. The DNS credentials remain available through /api/cert/settings,
-// which reports only whether they are configured.
+// client. The credentials remain available through their dedicated endpoints,
+// which report only whether they are configured.
 func redactSettings(settings map[string]string) map[string]string {
-	if token := strings.TrimSpace(settings["cert_dns_config"]); token != "" {
-		settings["cert_dns_config_set"] = "true"
+	for _, key := range []string{"cert_dns_config", "cert_acme_eab_hmac"} {
+		if token := strings.TrimSpace(settings[key]); token != "" {
+			settings[key+"_set"] = "true"
+		}
+		delete(settings, key)
 	}
-	delete(settings, "cert_dns_config")
 	return settings
 }
 

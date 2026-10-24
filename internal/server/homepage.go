@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -127,7 +128,10 @@ func (s *Server) homepageActive(ctx context.Context) (string, bool) {
 	s.homepageCacheMu.Lock()
 	cached := s.homepageCache
 	s.homepageCacheMu.Unlock()
-	if cached.Active && time.Since(cached.At) < 5*time.Second {
+	if !cached.At.IsZero() && time.Since(cached.At) < 5*time.Second {
+		if !cached.Active {
+			return "", false
+		}
 		if _, err := os.Stat(filepath.Join(s.homepageVersionDir(cached.Version), "index.html")); err == nil {
 			return cached.Version, true
 		}
@@ -138,19 +142,26 @@ func (s *Server) homepageActive(ctx context.Context) (string, bool) {
 		return "", false
 	}
 	if strings.ToLower(strings.TrimSpace(settings["homepage_mode"])) != homepageModeUpload {
+		s.cacheHomepageState("", false)
 		return "", false
 	}
 	version := strings.TrimSpace(settings["homepage_version"])
 	if !validHomepageVersion(version) {
+		s.cacheHomepageState("", false)
 		return "", false
 	}
 	if _, err := os.Stat(filepath.Join(s.homepageVersionDir(version), "index.html")); err != nil {
+		s.cacheHomepageState("", false)
 		return "", false
 	}
-	s.homepageCacheMu.Lock()
-	s.homepageCache = homepageCacheEntry{Version: version, Active: true, At: time.Now()}
-	s.homepageCacheMu.Unlock()
+	s.cacheHomepageState(version, true)
 	return version, true
+}
+
+func (s *Server) cacheHomepageState(version string, active bool) {
+	s.homepageCacheMu.Lock()
+	s.homepageCache = homepageCacheEntry{Version: version, Active: active, At: time.Now()}
+	s.homepageCacheMu.Unlock()
 }
 
 func (s *Server) invalidateHomepageCache() {
@@ -589,7 +600,10 @@ func (s *Server) handleHomepagePreview(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Version string `json:"version"`
 	}
-	_ = decodeJSON(r, &req)
+	if err := decodeJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
 	version := strings.TrimSpace(req.Version)
 	if version == "" {
 		settings, _ := s.store.GetSettings(r.Context())
