@@ -69,14 +69,13 @@ func (s *Store) InsertLogBatch(ctx context.Context, nodeID int64, batchID string
 		return false, err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx,
-		`INSERT OR IGNORE INTO log_batches (node_id, batch_id, received_at) VALUES (?, ?, ?)`,
+	inserted, err := s.InsertIgnoreTx(ctx, tx, "log_batches",
+		[]string{"node_id", "batch_id", "received_at"}, []string{"node_id", "batch_id"},
 		nodeID, batchID, ts(now()))
 	if err != nil {
 		return false, err
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
+	if !inserted {
 		return false, nil // duplicate
 	}
 	stmt, err := tx.PrepareContext(ctx,
@@ -400,7 +399,7 @@ func (s *Store) AuthFailuresByIP(ctx context.Context, o model.LogStatsOptions, m
 // AuthFailuresByNode aggregates failed authentications per node.
 func (s *Store) AuthFailuresByNode(ctx context.Context, o model.LogStatsOptions, min int64) ([]NodeCount, error) {
 	where, args := analysisWhere(o)
-	q := `SELECT l.node_id, COALESCE(n.name,''), COUNT(*) FROM hy2_logs l
+	q := `SELECT l.node_id, COALESCE(MAX(n.name),''), COUNT(*) FROM hy2_logs l
 		LEFT JOIN nodes n ON n.id = l.node_id
 		WHERE ` + strings.ReplaceAll(where, "node_id", "l.node_id") + ` AND l.event='auth_fail'
 		GROUP BY l.node_id HAVING COUNT(*) >= ? ORDER BY COUNT(*) DESC`
@@ -453,7 +452,7 @@ func (s *Store) UnknownAuthUsers(ctx context.Context, o model.LogStatsOptions, l
 // LogNodeStats returns headline counters grouped by node.
 func (s *Store) LogNodeStats(ctx context.Context, o model.LogStatsOptions) ([]NodeLogStat, error) {
 	where, args := analysisWhere(o)
-	q := `SELECT l.node_id, COALESCE(n.name,''), COUNT(*),
+	q := `SELECT l.node_id, COALESCE(MAX(n.name),''), COUNT(*),
 		COALESCE(SUM(CASE WHEN l.level IN ('ERROR','FATAL') THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN l.level = 'WARN' THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN l.event = 'auth_fail' THEN 1 ELSE 0 END),0)
@@ -479,7 +478,7 @@ func (s *Store) LogNodeStats(ctx context.Context, o model.LogStatsOptions) ([]No
 // NodeEventCounts counts a classified event per node.
 func (s *Store) NodeEventCounts(ctx context.Context, event string, o model.LogStatsOptions) ([]NodeCount, error) {
 	where, args := analysisWhere(o)
-	q := `SELECT l.node_id, COALESCE(n.name,''), COUNT(*) FROM hy2_logs l
+	q := `SELECT l.node_id, COALESCE(MAX(n.name),''), COUNT(*) FROM hy2_logs l
 		LEFT JOIN nodes n ON n.id = l.node_id
 		WHERE ` + strings.ReplaceAll(where, "node_id", "l.node_id") + ` AND l.event = ?
 		GROUP BY l.node_id ORDER BY COUNT(*) DESC`
@@ -531,7 +530,7 @@ func (s *Store) DeleteLogsBefore(ctx context.Context, before time.Time) (int64, 
 // TableCount is a small helper used by tests and diagnostics.
 func (s *Store) TableCount(ctx context.Context, table string) (int64, error) {
 	var n int64
-	allowed := map[string]bool{"users": true, "nodes": true, "hy2_logs": true, "groups": true}
+	allowed := map[string]bool{"users": true, "nodes": true, "hy2_logs": true, "panel_groups": true}
 	if !allowed[table] {
 		return 0, fmt.Errorf("unsupported table")
 	}

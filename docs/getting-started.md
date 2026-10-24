@@ -42,7 +42,7 @@ docker compose up -d --build
 docker compose logs -f panel
 ```
 
-打开 `http://服务器IP:8080/` 查看公开首页。首次启动且 `admin.password_file` 为空时，打开 `/install` 创建第一个管理员；管理员控制台位于 `/admin`（旧地址 `/panel` 会自动跳转到 `/admin/dashboard`）。
+打开 `http://服务器IP:8080/` 查看公开首页。首次启动且 `admin.password_file` 为空时，打开 `/install`：先选择 SQLite / PostgreSQL / MySQL，再创建第一个管理员；管理员控制台位于 `/admin`（旧地址 `/panel` 会自动跳转到 `/admin/dashboard`）。
 
 ### 使用 GHCR 预构建镜像
 
@@ -56,16 +56,24 @@ docker run -d --name mikvace-panel --restart unless-stopped \
   ghcr.io/axmishell/mikvacepanel:latest --config /config/panel.yaml
 ```
 
-使用目录映射而非命名卷：数据会写入当前目录的 `./data`，直接打包该目录即可完成备份。`panel.yaml` 需要可写，`/install` 会把面板名称、公共地址和管理员用户名写回该文件。
+使用目录映射而非命名卷：数据会写入当前目录的 `./data`，直接打包该目录即可完成备份。`panel.yaml` 需要可写，`/install` 会把面板名称、公共地址、管理员用户名和数据库配置写回该文件；远程数据库的 DSN 单独写入 `./data/database.dsn`，不会进入 YAML。
 
 镜像标签：`main`、`latest`（main 分支）与 `sha-<commit>`；发布 `v*.*.*` 标签时同时提供语义化版本，并更新 `latest`。`latest` 指向最后一次成功构建的镜像，需要固定版本请使用语义化版本标签。
 
 ## 2. 首次登录
 
-应用配置只从 `panel.yaml` 读取，不读取环境变量，也不使用 `.env`。首次启动有两种初始化方式：
+应用配置只从 `panel.yaml` 读取，不读取环境变量，也不使用 `.env`。`panel.example.yaml` 默认 `database.driver: setup`：首次启动进入**安装器模式**，只提供 `/install` 和数据库配置接口，**不会打开或创建 SQLite 文件**；保存后端后进程重启，才进入完整面板。
 
-- **`admin.password_file` 为空**：访问 `http://服务器IP:8080/install`，在向导中设置管理员用户名、密码、面板名称和公共访问地址。提交后会自动登录，并把非敏感字段写回 `panel.yaml`。
+首次启动有两种初始化方式：
+
+- **`admin.password_file` 为空**：访问 `http://服务器IP:8080/install`。第一步选择数据后端：SQLite 保存后才创建 `data/panel.db`；PostgreSQL / MySQL 需要填写 DSN，向导会先测试连接，再写入配置并自动重启面板。第二步设置管理员用户名、密码、面板名称和公共访问地址。提交后会自动登录，并把非敏感字段写回 `panel.yaml`。
 - **配置了 `admin.password_file`**：启动时读取密钥文件并自动创建 `admin.username` 对应的管理员，直接打开 `/admin` 登录即可。文件内容只保存密码，权限保持 0600。
+
+!!! note "数据库配置的写入位置"
+
+    `panel.yaml` 只保存 `database.driver`、SQLite 的 `database.path` 和 `database.dsn_file` 路径。PostgreSQL / MySQL 的 DSN 写入 `server.data_dir/database.dsn`（权限 0600），与配置文件分离。切换后端不会迁移旧库数据；初始化向导只在创建第一个管理员之前可用，完成后不能再通过 `/install` 改数据库。
+
+    如果希望跳过安装器模式、直接用 SQLite，把 `database.driver` 改为 `sqlite` 后启动即可；已有配置文件缺少 `database` 段时也按 SQLite 处理。
 
 !!! note "安装入口只在首次运行开放"
 

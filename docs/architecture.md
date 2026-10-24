@@ -82,7 +82,7 @@ Agent 断线重连时：
 | --- | --- |
 | `admins` | 管理员、密码哈希、TOTP 密钥与恢复码 |
 | `users` | 代理用户、订阅 Token、流量、到期、设备数 |
-| `groups` / `user_groups` / `node_groups` | 分组与可见性 |
+| `panel_groups` / `user_groups` / `node_groups` | 分组与可见性 |
 | `nodes` | 节点设置、Token 哈希、状态、证书元数据 |
 | `node_configs` | 配置 revision、YAML、hash、应用结果 |
 | `certificates` / `node_certificates` | 证书、节点映射、指纹与有效期 |
@@ -93,10 +93,11 @@ Agent 断线重连时：
 | `api_keys` | 作用域、限流、过期 |
 | `settings` | 面板设置、加密后的 DNS 凭据 |
 | `acme_accounts` | 持久化 ACME 账户密钥 |
+| `schema_migrations` | schema 与数据迁移版本 |
 
 SQLite 使用 WAL 模式；`VACUUM INTO` 生成一致性备份快照。
 
-存储层通过 `internal/store/dialect` 和 `store.DB` 包装层隔离方言：业务 SQL 继续使用 `?`，PostgreSQL 自动重写为 `$1`。SQLite 仍是默认后端；PostgreSQL 18 与 MySQL 8.0 作为可选后端分阶段接入，当前版本若选择远程后端会在启动时明确拒绝，避免写入未完成迁移的库。
+存储层通过 `internal/store/dialect` 和 `store.DB` 包装层隔离方言：业务 SQL 继续使用 `?`，PostgreSQL 自动重写为 `$1`。SQLite 是安装向导的默认后端，PostgreSQL 18 和 MySQL 8.0 也可直接作为面板数据库使用；`database.driver: setup` 会先启动不打开数据库的安装器。DDL 由 `internal/store/schema` 元数据生成，`schema_migrations` 记录版本。远程库的备份/恢复尚未实现，仍会返回明确的未实现错误。
 
 ## 安全边界
 

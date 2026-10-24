@@ -87,11 +87,11 @@ hide:
 git clone https://github.com/AXmishell/MikvAcePanel.git
 cd MikvAcePanel
 cp panel.example.yaml panel.yaml
-# 修改 panel.public_url；admin.password_file 留空则走 /install
+# 修改 panel.public_url；database.driver 默认 setup，/install 会先选数据库
 docker compose up -d --build
 ```
 
-访问 `http://服务器IP:8080/` 查看公开首页。未配置 `admin.password_file` 时先打开 `/install` 创建管理员；管理员控制台是 `/admin`。登录后：
+访问 `http://服务器IP:8080/` 查看公开首页。未配置 `admin.password_file` 时先打开 `/install`：第一步选择 SQLite / PostgreSQL / MySQL（`setup` 模式不会提前创建 SQLite 文件），第二步创建管理员；管理员控制台是 `/admin`。登录后：
 
 1. 修改默认密码，建议同时启用两步验证；
 2. 在 **节点** 页面添加节点，复制生成的安装命令；

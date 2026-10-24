@@ -217,13 +217,9 @@ func (s *Store) EnsureDefaultSettings(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
-	stmt, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
 	for k, v := range DefaultSettings {
-		if _, err := stmt.ExecContext(ctx, k, v); err != nil {
+		if _, err := s.InsertIgnoreTx(ctx, tx, "settings",
+			[]string{"setting_key", "value"}, []string{"setting_key"}, k, v); err != nil {
 			return err
 		}
 	}
@@ -233,7 +229,7 @@ func (s *Store) EnsureDefaultSettings(ctx context.Context) error {
 // GetSettings returns all settings as a string map.
 func (s *Store) GetSettings(ctx context.Context) (map[string]string, error) {
 	out := map[string]string{}
-	rows, err := s.DB.QueryContext(ctx, `SELECT key, value FROM settings`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT setting_key, value FROM settings`)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +247,7 @@ func (s *Store) GetSettings(ctx context.Context) (map[string]string, error) {
 // GetSetting reads a single setting.
 func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
 	var v string
-	err := s.DB.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
+	err := s.DB.QueryRowContext(ctx, `SELECT value FROM settings WHERE setting_key = ?`, key).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -260,10 +256,8 @@ func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
 
 // SetSetting writes a single setting.
 func (s *Store) SetSetting(ctx context.Context, key, value string) error {
-	_, err := s.DB.ExecContext(ctx,
-		`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-		key, value)
-	return err
+	return s.Upsert(ctx, "settings",
+		[]string{"setting_key", "value"}, []string{"setting_key"}, []string{"value"}, key, value)
 }
 
 // UpdateSettings writes several settings in one transaction.
@@ -274,9 +268,8 @@ func (s *Store) UpdateSettings(ctx context.Context, values map[string]string) er
 	}
 	defer tx.Rollback()
 	for k, v := range values {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-			k, v); err != nil {
+		if err := s.UpsertTx(ctx, tx, "settings",
+			[]string{"setting_key", "value"}, []string{"setting_key"}, []string{"value"}, k, v); err != nil {
 			return err
 		}
 	}

@@ -65,7 +65,9 @@ API Key（`Authorization: Bearer ck_...`）不受安全入口限制。
 | Method | Path | 说明 |
 | --- | --- | --- |
 | GET | `/api/health` | 健康检查、版本、uptime、Agent Hub 状态、数据库驱动 |
-| GET | `/api/install/status` | 首次初始化状态（是否已安装、面板名称、数据库驱动） |
+| GET | `/api/install/status` | 首次初始化状态（是否已安装、面板名称、数据库驱动与配置） |
+| POST | `/api/install/database/test` | 测试 SQLite / PostgreSQL / MySQL 连接；仅在管理员表为空时可用 |
+| POST | `/api/install/database` | 保存数据库配置；切换后端后需要重启面板 |
 | POST | `/api/install` | 创建第一个管理员；仅在管理员表为空时可用 |
 | GET | `/api/agent/version` | Agent 可用版本信息 |
 | GET | `/api/agent/install.sh` | 节点安装脚本（通过参数传 panel/token） |
@@ -82,12 +84,43 @@ API Key（`Authorization: Bearer ck_...`）不受安全入口限制。
 {
   "installed": false,
   "needsSetup": true,
+  "setupMode": true,
   "panelName": "MikvAce Panel",
   "publicUrl": "https://panel.example.com",
   "database": "sqlite",
+  "databaseConfig": {
+    "driver": "sqlite",
+    "path": "/data/panel.db",
+    "dsnFile": "",
+    "dsnConfigured": false
+  },
+  "configPath": "/config/panel.yaml",
+  "configWritable": true,
+  "startedAt": "2026-10-24T09:00:00Z",
   "version": "v1.2.3"
 }
 ```
+
+`databaseConfig` 只描述磁盘上的配置，**不会返回 DSN 内容**。`startedAt` 在进程重启后变化，安装页用它判断数据库切换是否完成。
+
+`setupMode: true` 表示当前进程还没有选择数据库（`database.driver: setup` 或配置文件不存在），此时不会打开或创建 SQLite；保存数据库后进程重启，`setupMode` 变为 `false`。
+
+`POST /api/install/database/test` 与 `POST /api/install/database` 接收相同请求体：
+
+```json
+{
+  "driver": "postgres",
+  "path": "/data/panel.db",
+  "dsn": "postgres://user:pass@db:5432/mikvace?sslmode=disable"
+}
+```
+
+- SQLite 只使用 `path`，留空默认为 `data_dir/panel.db`；
+- PostgreSQL / MySQL 只使用 `dsn`；若与当前驱动相同，可留空表示沿用现有 DSN；
+- 测试接口只建立连接，不建表；保存接口会先连接并执行一次幂等迁移，确认建表权限后再写入配置；
+- 保存时 DSN 写入 `data_dir/database.dsn`（0600），`panel.yaml` 只记录文件路径；
+- 返回 `{"ok":true,"driver":"postgres","restartRequired":true}`。`restartRequired` 为 `true` 时进程会自行重启；
+- 已有管理员时两个接口都返回 `409`。
 
 `POST /api/install` 创建第一个管理员，请求体：
 

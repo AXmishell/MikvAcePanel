@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/axmishell/mikvacepanel/internal/model"
+	"github.com/axmishell/mikvacepanel/internal/store/dialect"
 )
 
 const certificateColumns = `id, domains_json, common_name, cert_pem, key_cipher, key_nonce,
@@ -189,20 +190,37 @@ func (s *Store) UpsertNodeCertificate(ctx context.Context, nc *model.NodeCertifi
 	if nc.Status == "" {
 		nc.Status = "pending"
 	}
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO node_certificates
-		(node_id, cert_id, revision, key_fingerprint, applied_fingerprint, status, last_error, requested_at, applied_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(node_id) DO UPDATE SET
-			cert_id = excluded.cert_id,
-			revision = excluded.revision,
-			key_fingerprint = excluded.key_fingerprint,
-			applied_fingerprint = CASE WHEN excluded.applied_fingerprint <> '' THEN excluded.applied_fingerprint ELSE node_certificates.applied_fingerprint END,
-			status = excluded.status,
-			last_error = excluded.last_error,
-			requested_at = COALESCE(excluded.requested_at, node_certificates.requested_at),
-			applied_at = COALESCE(excluded.applied_at, node_certificates.applied_at)`,
-		nc.NodeID, nc.CertID, nc.Revision, nc.KeyFingerprint, nc.AppliedFingerprint,
-		nc.Status, nc.LastError, tsPtr(nc.RequestedAt), tsPtr(nc.AppliedAt))
+	args := []any{nc.NodeID, nc.CertID, nc.Revision, nc.KeyFingerprint, nc.AppliedFingerprint,
+		nc.Status, nc.LastError, tsPtr(nc.RequestedAt), tsPtr(nc.AppliedAt)}
+	var query string
+	if s.Dialect().Name() == dialect.MySQL {
+		query = `INSERT INTO node_certificates
+			(node_id, cert_id, revision, key_fingerprint, applied_fingerprint, status, last_error, requested_at, applied_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON DUPLICATE KEY UPDATE
+				cert_id = VALUES(cert_id),
+				revision = VALUES(revision),
+				key_fingerprint = VALUES(key_fingerprint),
+				applied_fingerprint = IF(VALUES(applied_fingerprint) <> '', VALUES(applied_fingerprint), applied_fingerprint),
+				status = VALUES(status),
+				last_error = VALUES(last_error),
+				requested_at = COALESCE(VALUES(requested_at), requested_at),
+				applied_at = COALESCE(VALUES(applied_at), applied_at)`
+	} else {
+		query = `INSERT INTO node_certificates
+			(node_id, cert_id, revision, key_fingerprint, applied_fingerprint, status, last_error, requested_at, applied_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(node_id) DO UPDATE SET
+				cert_id = excluded.cert_id,
+				revision = excluded.revision,
+				key_fingerprint = excluded.key_fingerprint,
+				applied_fingerprint = CASE WHEN excluded.applied_fingerprint <> '' THEN excluded.applied_fingerprint ELSE node_certificates.applied_fingerprint END,
+				status = excluded.status,
+				last_error = excluded.last_error,
+				requested_at = COALESCE(excluded.requested_at, node_certificates.requested_at),
+				applied_at = COALESCE(excluded.applied_at, node_certificates.applied_at)`
+	}
+	_, err := s.DB.ExecContext(ctx, query, args...)
 	return err
 }
 
@@ -225,15 +243,27 @@ func (s *Store) SetNodeCertApplied(ctx context.Context, nodeID int64, fingerprin
 // SetNodeCertPending marks a mapping as requesting a fresh certificate.
 func (s *Store) SetNodeCertPending(ctx context.Context, nodeID int64, keyFingerprint string) error {
 	t := ts(now())
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO node_certificates
-		(node_id, cert_id, revision, key_fingerprint, status, requested_at)
-		VALUES (?, 0, 0, ?, 'requesting', ?)
-		ON CONFLICT(node_id) DO UPDATE SET
-			key_fingerprint = excluded.key_fingerprint,
-			status = 'requesting',
-			last_error = '',
-			requested_at = excluded.requested_at`,
-		nodeID, keyFingerprint, t)
+	var query string
+	if s.Dialect().Name() == dialect.MySQL {
+		query = `INSERT INTO node_certificates
+			(node_id, cert_id, revision, key_fingerprint, status, requested_at)
+			VALUES (?, 0, 0, ?, 'requesting', ?)
+			ON DUPLICATE KEY UPDATE
+				key_fingerprint = VALUES(key_fingerprint),
+				status = 'requesting',
+				last_error = '',
+				requested_at = VALUES(requested_at)`
+	} else {
+		query = `INSERT INTO node_certificates
+			(node_id, cert_id, revision, key_fingerprint, status, requested_at)
+			VALUES (?, 0, 0, ?, 'requesting', ?)
+			ON CONFLICT(node_id) DO UPDATE SET
+				key_fingerprint = excluded.key_fingerprint,
+				status = 'requesting',
+				last_error = '',
+				requested_at = excluded.requested_at`
+	}
+	_, err := s.DB.ExecContext(ctx, query, nodeID, keyFingerprint, t)
 	return err
 }
 

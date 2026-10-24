@@ -84,7 +84,7 @@ func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
 func (s *Store) ListNodeGroups(ctx context.Context, nodeID int64) ([]model.Group, error) {
 	rows, err := s.DB.QueryContext(ctx,
 		`SELECT g.id, g.name, g.description, g.color, g.subscription_title, g.max_devices, g.created_at, g.updated_at
-		 FROM groups g JOIN node_groups ng ON ng.group_id = g.id WHERE ng.node_id = ? ORDER BY g.name`, nodeID)
+		 FROM panel_groups g JOIN node_groups ng ON ng.group_id = g.id WHERE ng.node_id = ? ORDER BY g.name`, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +129,8 @@ func (s *Store) SetNodeGroups(ctx context.Context, nodeID int64, groupIDs []int6
 		return err
 	}
 	for _, gid := range uniqueIDs(groupIDs) {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO node_groups (node_id, group_id) VALUES (?, ?)`, nodeID, gid); err != nil {
+		if _, err := s.InsertIgnoreTx(ctx, tx, "node_groups",
+			[]string{"node_id", "group_id"}, []string{"node_id", "group_id"}, nodeID, gid); err != nil {
 			return err
 		}
 	}
@@ -412,7 +413,7 @@ func (s *Store) NodesForUser(ctx context.Context, userID int64) ([]model.Node, e
 		return nil, err
 	}
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT g.id FROM user_groups ug JOIN groups g ON g.id = ug.group_id WHERE ug.user_id = ?`, userID)
+		`SELECT g.id FROM user_groups ug JOIN panel_groups g ON g.id = ug.group_id WHERE ug.user_id = ?`, userID)
 	if err != nil {
 		return nil, err
 	}

@@ -127,7 +127,8 @@ services:
 - 需要修改宿主机端口时，直接改 compose 的 `ports`，或用 `compose.override.yaml` 覆盖；不再使用 `.env` 插值；
 - 如果面板直接暴露，改为 `8080:8080` 并配置防火墙；
 - 数据使用当前目录映射（`./data`），不使用 Docker 命名卷。`./data` 必须持久化，否则重启后用户、节点、证书全部丢失。
-- `panel.yaml` 需要可写，`/install` 会把面板名称、公共地址和管理员用户名写回；也可以预先配置 `admin.password_file` 进行无人值守初始化。
+- `panel.yaml` 需要可写，`/install` 会把面板名称、公共地址、管理员用户名和数据库配置写回；也可以预先配置 `admin.password_file` 进行无人值守初始化。
+- 通过 `/install` 选择 PostgreSQL / MySQL 时，DSN 会写到 `/data/database.dsn`，请确保 `./data` 持久化。
 - 使用反向代理时在 `server.trusted_proxies` 中填写代理地址，否则面板会忽略 `X-Forwarded-For`，把所有客户端当成代理 IP，登录限流和审计日志将不准确。
 
 !!! warning "从命名卷迁移"
@@ -148,23 +149,37 @@ services:
 
 ### 数据库后端
 
-默认使用 SQLite，数据文件为 `./data/panel.db`。代码已经引入方言层（`internal/store/dialect`）和统一的 `DB` 包装层，PostgreSQL 18 与 MySQL 8.0 作为可选后端分阶段接入：
+SQLite 是零配置后端，PostgreSQL 18 和 MySQL 8.0 也已可直接使用。`panel.example.yaml` 默认 `database.driver: setup`：首次启动只运行安装器，**不会创建 SQLite 文件**；打开 `/install` 选择后端后才打开数据库：
+
+- 选择 SQLite 后创建 `server.data_dir/panel.db`；
+- 选择 PostgreSQL / MySQL 时，向导先测试连接并执行一次幂等迁移，再写入配置；
+- `panel.yaml` 写入 `database.driver` 与 `database.dsn_file`；
+- DSN 写入 `server.data_dir/database.dsn`（权限 0600），不进入 YAML；
+- 保存后面板自动重启一次，随后继续创建管理员。
+
+安装完成后 `/install` 关闭，数据库连接只能通过修改 `panel.yaml` 后重启来调整。以下为手工配置示例：
 
 ```yaml
-# SQLite（默认）
+# SQLite
 database:
   driver: sqlite
   path: /data/panel.db
 
-# PostgreSQL（待启用）
+# PostgreSQL 18
 database:
   driver: postgres
   dsn_file: /run/secrets/database_url
+  max_open: 20
+  max_idle: 10
+  conn_max_lifetime: "30m"
 
-# MySQL 8.0（待启用）
+# MySQL 8.0（建议 8.0.13+）
 database:
   driver: mysql
   dsn_file: /run/secrets/database_url
+  max_open: 10
+  max_idle: 5
+  conn_max_lifetime: "30m"
 ```
 
 `dsn_file` 内容示例：
@@ -177,7 +192,38 @@ postgres://user:pass@postgres:5432/mikvace?sslmode=require
 user:pass@tcp(mysql:3306)/mikvace?charset=utf8mb4&collation=utf8mb4_bin&parseTime=false&loc=UTC
 ```
 
-当前版本若选择 `postgres` 或 `mysql` 会在启动时明确报错，不会半途写入远程库。切换到远程库前请先在 **设置 → 备份** 创建备份；跨库迁移工具会在后续阶段提供。
+注意事项：
+
+- 面板启动时自动创建表、索引和 `schema_migrations`，并通过 advisory lock 防止多实例同时迁移；
+- PostgreSQL 使用 `pgx` 驱动，DSN 中的 `sslmode` 按实际环境设置；
+- MySQL 表使用 `utf8mb4_bin` 排序规则，Token、哈希等字段区分大小写；建议使用上面的 DSN 参数；
+- MySQL 8.0.13+ 才支持 `TEXT` 列的表达式默认值，低版本请先升级；
+- 远程库的 SQLite 备份/恢复接口会返回“未实现”，请使用数据库自身的备份工具；
+- 切换后端不会复制现有数据，跨库迁移工具将在后续提供；
+- 不要把数据库密码写进 `panel.yaml`，只通过 `dsn_file` 引用。
+
+Docker Compose 可选的 PostgreSQL 示例：
+
+```yaml
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mikvace
+      POSTGRES_USER: mikvace
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    secrets:
+      - postgres_password
+
+secrets:
+  postgres_password:
+    file: ./config/postgres_password
+```
+
+MySQL 对应使用 `mysql:8.0` 和 `./data/mysql:/var/lib/mysql`，并在启动参数中指定 `--character-set-server=utf8mb4 --collation-server=utf8mb4_bin`。
 
 ## HTTPS 反向代理
 
@@ -237,6 +283,8 @@ sudo install -d -m 700 /etc/mikvace /var/lib/mikvace
 sudo cp panel.example.yaml /etc/mikvace/panel.yaml
 # 编辑 /etc/mikvace/panel.yaml：server.data_dir、panel.public_url、admin.password_file 等
 ```
+
+`panel.example.yaml` 默认 `database.driver: setup`：首次启动只运行安装器，**不会创建 SQLite 文件**。打开 `/install` 选择 SQLite / PostgreSQL / MySQL 并保存后，进程自动重启并打开所选数据库。确定使用 SQLite 时也可以直接把 `driver` 改成 `sqlite`，跳过向导第一步。
 
 `/etc/systemd/system/mikvace-panel.service`：
 
@@ -365,14 +413,21 @@ docker pull ghcr.io/axmishell/mikvacepanel-node:latest
 
 ## 备份与恢复
 
-面板 **设置 → 备份**：
+面板 **设置 → 备份** 目前只支持 SQLite：
 
 - 立即备份生成 `data/backups/mikvace-*.tar.gz`，包含 SQLite 一致性快照、`meta.json` 和 `cert.key`；
 - 自动备份默认 24 小时一次，保留 7 份；
 - 上传恢复后需要 **重启面板** 才会替换数据库；
 - 原数据库会保留为 `panel.db.pre-restore-<时间>`。
 
-手动恢复前请停止面板，避免 WAL 写入：
+PostgreSQL / MySQL 后端：
+
+- 面板内的备份/恢复接口返回 **501 Not Implemented**；
+- 自动备份会跳过，不会每小时写失败日志；
+- 请使用 `pg_dump` / `mysqldump` 等数据库原生工具，并同时备份 `server.data_dir/cert.key` 与 `jwt.secret`；
+- 可移植 NDJSON 备份/导入工具会在后续版本提供。
+
+手动恢复 SQLite 前请停止面板，避免 WAL 写入：
 
 ```bash
 docker compose stop panel

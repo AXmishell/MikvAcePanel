@@ -15,27 +15,68 @@ import (
 // the account settings page.
 const minInstallPasswordLength = 12
 
-// installStatus is public. It only reveals whether first-run setup is pending,
-// which is already obvious from the /install page being reachable.
+// installStatus is public. It exposes setup state and non-secret database
+// paths, which are already obvious from the /install page being reachable.
+// DSN contents are never included.
 type installStatus struct {
-	Installed      bool   `json:"installed"`
-	NeedsSetup     bool   `json:"needsSetup"`
-	PanelName      string `json:"panelName"`
-	PublicURL      string `json:"publicUrl"`
-	Driver         string `json:"database"`
-	Version        string `json:"version"`
-	ConfigPath     string `json:"configPath"`
-	ConfigWritable bool   `json:"configWritable"`
+	Installed  bool `json:"installed"`
+	NeedsSetup bool `json:"needsSetup"`
+	// SetupMode is true until the first database has been selected. In this
+	// mode the process has no store and has not opened SQLite.
+	SetupMode      bool           `json:"setupMode"`
+	PanelName      string         `json:"panelName"`
+	PublicURL      string         `json:"publicUrl"`
+	Driver         string         `json:"database"`
+	DatabaseConfig databaseStatus `json:"databaseConfig"`
+	Version        string         `json:"version"`
+	ConfigPath     string         `json:"configPath"`
+	ConfigWritable bool           `json:"configWritable"`
+	// StartedAt changes after the process re-executes, which lets the wizard
+	// wait for a database switch instead of polling a still-running old store.
+	StartedAt time.Time `json:"startedAt"`
+}
+
+// databaseStatus describes the on-disk database configuration. It never
+// contains the DSN itself; the installer only needs to know whether one exists.
+type databaseStatus struct {
+	Driver        string `json:"driver"`
+	Path          string `json:"path,omitempty"`
+	DSNFile       string `json:"dsnFile,omitempty"`
+	DSNConfigured bool   `json:"dsnConfigured"`
 }
 
 func (s *Server) installStatus(r *http.Request) installStatus {
 	status := installStatus{
-		Installed:      true,
-		PanelName:      "MikvAce Panel",
-		Driver:         s.store.Dialect().Name(),
+		Installed:  true,
+		NeedsSetup: false,
+		PanelName:  s.cfg.PanelName,
+		PublicURL:  s.cfg.PublicURL,
+		DatabaseConfig: databaseStatus{
+			Driver:        s.cfg.DBDriver,
+			Path:          s.cfg.DBPath,
+			DSNFile:       s.cfg.DBDSNFile,
+			DSNConfigured: strings.TrimSpace(s.cfg.DBDSN) != "",
+		},
 		Version:        version.String(),
 		ConfigPath:     s.cfg.ConfigPath,
 		ConfigWritable: configfile.Writable(s.cfg.ConfigPath),
+		StartedAt:      s.started,
+	}
+	if status.PanelName == "" {
+		status.PanelName = "MikvAce Panel"
+	}
+	if s.store == nil {
+		// Setup-only process: no database has been opened, so there is no
+		// administrator table to inspect.
+		status.Installed = false
+		status.NeedsSetup = true
+		status.SetupMode = true
+		status.Driver = SetupDriver
+		return status
+	}
+	status.Driver = s.store.Dialect().Name()
+	if status.DatabaseConfig.Driver == "" {
+		status.DatabaseConfig.Driver = status.Driver
 	}
 	if n, err := s.store.CountAdmins(r.Context()); err == nil {
 		status.Installed = n > 0

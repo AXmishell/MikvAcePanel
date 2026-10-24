@@ -82,6 +82,37 @@ func SecretBytes(path string) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
+// WriteSecret writes a secret file with mode 0600, replacing it atomically.
+// /install uses it for database DSNs so credentials never land in panel.yaml.
+func WriteSecret(path string, data []byte) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return errors.New("secret path is empty")
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".secret-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
+}
+
 // Set updates dotted paths (for example "panel.name") in an existing YAML
 // document, creating missing mappings and preserving comments on existing
 // nodes. The file is written atomically with mode 0600.

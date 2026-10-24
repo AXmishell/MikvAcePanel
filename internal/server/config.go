@@ -12,6 +12,11 @@ import (
 	"github.com/axmishell/mikvacepanel/internal/configfile"
 )
 
+// SetupDriver is the sentinel database.driver value for a first-run panel that
+// has not selected a backend yet. It starts the setup-only server, which never
+// opens SQLite (or any other database) until the operator saves a choice.
+const SetupDriver = "setup"
+
 // Config is the panel runtime configuration, loaded from panel.yaml.
 type Config struct {
 	ConfigPath    string
@@ -19,6 +24,7 @@ type Config struct {
 	DataDir       string
 	DBDriver      string
 	DBDSN         string
+	DBDSNFile     string
 	DBPath        string
 	DBMaxOpen     int
 	DBMaxIdle     int
@@ -40,6 +46,10 @@ type Config struct {
 	RedisURL       string
 	RedisPrefix    string
 	RedisRequired  bool
+
+	// Restart re-executes the panel after /install saves a new database
+	// configuration. It is wired by cmd/server and is nil in tests.
+	Restart func()
 }
 
 // fileConfig mirrors panel.yaml.
@@ -119,11 +129,16 @@ func LoadConfig(path string) (Config, error) {
 	if path == "" {
 		path = DefaultPanelConfigPath()
 	}
+	existed := configfile.Exists(path)
 	fc := defaultFileConfig()
-	if configfile.Exists(path) {
+	if existed {
 		if err := configfile.Load(path, &fc); err != nil {
 			return Config{}, err
 		}
+	} else {
+		// A fresh deployment must not create data/panel.db just to show the
+		// wizard. /install writes the chosen driver before the next start.
+		fc.Database.Driver = SetupDriver
 	}
 	ttl := 24 * time.Hour
 	if strings.TrimSpace(fc.Session.TTL) != "" {
@@ -146,6 +161,7 @@ func LoadConfig(path string) (Config, error) {
 		Addr:           strings.TrimSpace(fc.Server.Addr),
 		DataDir:        strings.TrimSpace(fc.Server.DataDir),
 		DBDriver:       strings.ToLower(strings.TrimSpace(fc.Database.Driver)),
+		DBDSNFile:      strings.TrimSpace(fc.Database.DSNFile),
 		DBPath:         strings.TrimSpace(fc.Database.Path),
 		DBMaxOpen:      fc.Database.MaxOpen,
 		DBMaxIdle:      fc.Database.MaxIdle,
@@ -172,6 +188,17 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if cfg.DBDriver == "" {
 		cfg.DBDriver = "sqlite"
+	}
+	switch cfg.DBDriver {
+	case "sqlite3":
+		cfg.DBDriver = "sqlite"
+	case "postgresql", "pg":
+		cfg.DBDriver = "postgres"
+	case "mariadb":
+		cfg.DBDriver = "mysql"
+	case "none", "unset", "ask":
+		// Explicit aliases for the first-run no-database mode.
+		cfg.DBDriver = SetupDriver
 	}
 	if cfg.DBPath == "" {
 		cfg.DBPath = filepath.Join(cfg.DataDir, "panel.db")

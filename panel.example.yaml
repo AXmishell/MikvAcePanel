@@ -35,9 +35,13 @@ security:
   cert_key_file: ""
 
 database:
-  driver: "sqlite"          # sqlite | postgres | mysql
+  # setup starts the first-run wizard without opening any database. Choosing
+  # PostgreSQL / MySQL writes data_dir/database.dsn (0600); every change
+  # restarts the panel once. Use sqlite/postgres/mysql to skip the wizard.
+  driver: "setup"           # setup | sqlite | postgres | mysql
   path: "/data/panel.db"    # sqlite only
-  # Remote DSN is read from this file, e.g. /run/secrets/database_url.
+  # PostgreSQL / MySQL: set driver above and point dsn_file at a file
+  # containing the DSN, e.g. /run/secrets/database_url.
   dsn_file: ""
   max_open: 8
   max_idle: 4

@@ -18,14 +18,13 @@ func (s *Store) ApplyStatsBatch(ctx context.Context, nodeID int64, batchID strin
 		return false, err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx,
-		`INSERT OR IGNORE INTO stats_batches (node_id, batch_id, received_at) VALUES (?, ?, ?)`,
+	inserted, err := s.InsertIgnoreTx(ctx, tx, "stats_batches",
+		[]string{"node_id", "batch_id", "received_at"}, []string{"node_id", "batch_id"},
 		nodeID, batchID, ts(now()))
 	if err != nil {
 		return false, err
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
+	if !inserted {
 		return false, nil
 	}
 	stmt, err := tx.PrepareContext(ctx,
@@ -76,15 +75,18 @@ type TrafficPoint struct {
 }
 
 // TrafficSeries aggregates heartbeat deltas per hour (or per minute for short
-// ranges).
+// ranges). substr() works identically on the portable timestamp text format
+// used by all three backends.
 func (s *Store) TrafficSeries(ctx context.Context, since time.Time, nodeID int64, minute bool) ([]TrafficPoint, error) {
-	format := "%Y-%m-%dT%H:00"
+	bucket := `substr(ts,1,13)||':00'`
+	format := "2006-01-02T15:00"
 	if minute {
-		format = "%Y-%m-%dT%H:%M"
+		bucket = `substr(ts,1,16)`
+		format = "2006-01-02T15:04"
 	}
-	q := `SELECT strftime(?, ts), COALESCE(SUM(traffic_tx),0), COALESCE(SUM(traffic_rx),0)
+	q := `SELECT ` + bucket + `, COALESCE(SUM(traffic_tx),0), COALESCE(SUM(traffic_rx),0)
 		FROM node_metrics WHERE ts >= ?`
-	args := []any{format, ts(since)}
+	args := []any{ts(since)}
 	if nodeID > 0 {
 		q += ` AND node_id = ?`
 		args = append(args, nodeID)
@@ -102,11 +104,7 @@ func (s *Store) TrafficSeries(ctx context.Context, since time.Time, nodeID int64
 		if err := rows.Scan(&label, &p.Tx, &p.Rx); err != nil {
 			return nil, err
 		}
-		if minute {
-			p.Time, _ = time.Parse("2006-01-02T15:04", label)
-		} else {
-			p.Time, _ = time.Parse("2006-01-02T15:00", label)
-		}
+		p.Time, _ = time.Parse(format, label)
 		out = append(out, p)
 	}
 	return out, rows.Err()

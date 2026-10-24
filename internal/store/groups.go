@@ -29,7 +29,7 @@ func (s *Store) ListGroups(ctx context.Context) ([]model.Group, error) {
 		`SELECT g.id, g.name, g.description, g.color, g.subscription_title, g.max_devices, g.created_at, g.updated_at,
 		        (SELECT COUNT(*) FROM user_groups ug WHERE ug.group_id = g.id),
 		        (SELECT COUNT(*) FROM node_groups ng WHERE ng.group_id = g.id)
-		 FROM groups g ORDER BY g.name`)
+		 FROM panel_groups g ORDER BY g.name`)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +55,7 @@ func (s *Store) GetGroup(ctx context.Context, id int64) (*model.Group, error) {
 		`SELECT g.id, g.name, g.description, g.color, g.subscription_title, g.max_devices, g.created_at, g.updated_at,
 		        (SELECT COUNT(*) FROM user_groups ug WHERE ug.group_id = g.id),
 		        (SELECT COUNT(*) FROM node_groups ng WHERE ng.group_id = g.id)
-		 FROM groups g WHERE g.id = ?`, id)
+		 FROM panel_groups g WHERE g.id = ?`, id)
 	var g model.Group
 	var created, updated string
 	err := row.Scan(&g.ID, &g.Name, &g.Description, &g.Color, &g.SubscriptionTitle, &g.MaxDevices,
@@ -76,7 +76,7 @@ func (s *Store) CreateGroup(ctx context.Context, g *model.Group) (*model.Group, 
 	nowT := now()
 	g.CreatedAt, g.UpdatedAt = nowT, nowT
 	id, err := s.InsertID(ctx,
-		`INSERT INTO groups (name, description, color, subscription_title, max_devices, created_at, updated_at)
+		`INSERT INTO panel_groups (name, description, color, subscription_title, max_devices, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		g.Name, g.Description, g.Color, g.SubscriptionTitle, g.MaxDevices, ts(nowT), ts(nowT))
 	if err != nil {
@@ -88,7 +88,7 @@ func (s *Store) CreateGroup(ctx context.Context, g *model.Group) (*model.Group, 
 // UpdateGroup updates a group.
 func (s *Store) UpdateGroup(ctx context.Context, g *model.Group) (*model.Group, error) {
 	res, err := s.DB.ExecContext(ctx,
-		`UPDATE groups SET name = ?, description = ?, color = ?, subscription_title = ?, max_devices = ?, updated_at = ?
+		`UPDATE panel_groups SET name = ?, description = ?, color = ?, subscription_title = ?, max_devices = ?, updated_at = ?
 		 WHERE id = ?`,
 		g.Name, g.Description, g.Color, g.SubscriptionTitle, g.MaxDevices, ts(now()), g.ID)
 	if err != nil {
@@ -103,7 +103,7 @@ func (s *Store) UpdateGroup(ctx context.Context, g *model.Group) (*model.Group, 
 
 // DeleteGroup removes a group.
 func (s *Store) DeleteGroup(ctx context.Context, id int64) error {
-	res, err := s.DB.ExecContext(ctx, `DELETE FROM groups WHERE id = ?`, id)
+	res, err := s.DB.ExecContext(ctx, `DELETE FROM panel_groups WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}

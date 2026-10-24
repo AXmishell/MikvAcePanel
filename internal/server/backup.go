@@ -17,6 +17,7 @@ import (
 
 	"github.com/axmishell/mikvacepanel/internal/celerity"
 	"github.com/axmishell/mikvacepanel/internal/store"
+	"github.com/axmishell/mikvacepanel/internal/store/dialect"
 	"github.com/axmishell/mikvacepanel/internal/version"
 )
 
@@ -33,6 +34,9 @@ func (s *Server) backupDir() string { return filepath.Join(s.cfg.DataDir, "backu
 // snapshot uses VACUUM INTO, so the resulting file is consistent even while
 // the panel is serving requests.
 func (s *Server) CreateBackup(ctx context.Context) (*BackupInfo, error) {
+	if s.store.Dialect().Name() != dialect.SQLite {
+		return nil, fmt.Errorf("backup is not implemented for the %s backend yet", s.store.Dialect().Name())
+	}
 	s.backupMu.Lock()
 	defer s.backupMu.Unlock()
 	dir := s.backupDir()
@@ -171,6 +175,10 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
+	if s.store.Dialect().Name() != dialect.SQLite {
+		writeError(w, http.StatusNotImplemented, "backup is not implemented for the "+s.store.Dialect().Name()+" backend yet")
+		return
+	}
 	info, err := s.CreateBackup(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -221,6 +229,10 @@ func (s *Server) safeBackupPath(name string) (string, bool) {
 // is staged next to the live file and swapped in on the next panel start,
 // which avoids closing the SQLite connection underneath running requests.
 func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
+	if s.store.Dialect().Name() != dialect.SQLite {
+		writeError(w, http.StatusNotImplemented, "restore is not implemented for the "+s.store.Dialect().Name()+" backend yet")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 512<<20)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid upload: "+err.Error())
@@ -397,6 +409,9 @@ func extractNamedFile(tarPath, name, dest string, mode os.FileMode) error {
 
 // MaybeAutoBackup creates a backup when the configured interval has elapsed.
 func (s *Server) MaybeAutoBackup(ctx context.Context) {
+	if s.store.Dialect().Name() != dialect.SQLite {
+		return
+	}
 	settings, err := s.store.GetSettings(ctx)
 	if err != nil || !parseBoolSetting(settings["backup_enabled"], true) {
 		return

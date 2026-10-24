@@ -99,7 +99,7 @@ cp panel.example.yaml panel.yaml  # 修改 panel.public_url、server.data_dir �
 docker compose up -d --build
 ```
 
-打开 `http://服务器IP:8080/` 查看公开首页。首次启动且 `admin.password_file` 为空时，访问 `/install` 按向导创建管理员账号；配置了密码文件的无人值守部署会在启动时自动创建。管理员控制台是 `/admin`（旧地址 `/panel` 会自动跳转到 `/admin/dashboard`），终端用户入口是 `/user`。
+打开 `http://服务器IP:8080/` 查看公开首页。首次启动且 `admin.password_file` 为空时，访问 `/install`：向导第一步选择数据后端（SQLite / PostgreSQL / MySQL），第二步创建管理员账号。配置了密码文件的无人值守部署会在启动时自动创建。管理员控制台是 `/admin`（旧地址 `/panel` 会自动跳转到 `/admin/dashboard`），终端用户入口是 `/user`。
 
 应用配置**只从 `panel.yaml` 读取**，不读取环境变量，也不使用 `.env`。Compose 只负责端口和数据目录映射。
 
@@ -107,6 +107,8 @@ docker compose up -d --build
 
 - 用户名：`admin.username`，初始化向导会更新该字段；
 - 密码：`admin.password_file` 指向的密钥文件；留空则由 `/install` 创建管理员（密码只以 bcrypt 存入数据库，不写入 YAML）。
+
+数据库也可以在 `/install` 第一步选择。`panel.example.yaml` 默认使用 `database.driver: setup`：**首次启动只运行安装向导，不会创建 SQLite 文件**；选择并保存后端后才真正打开数据库。SQLite 使用 `database.path`；选择 PostgreSQL / MySQL 时，向导会先测试连接，再把 DSN 写入 `data_dir/database.dsn`（权限 0600），并更新 `panel.yaml` 的 `database.driver` / `database.dsn_file`。**保存后面板会自动重启一次**，管理员创建页面会在重启完成后继续。DSN 不会写进 `panel.yaml`。
 
 首次登录后请到 **Settings → Security** 修改密码。初始化完成后 `/install` 会按 404 处理，不再暴露安装入口。同一页面还可以开启 **管理员安全入口**（默认关闭）：开启后 `/admin` 不再可用，必须使用 `/admin/<入口路径>/login` 访问，管理 API 也会校验该入口。
 
@@ -155,8 +157,9 @@ docker pull ghcr.io/axmishell/mikvacepanel-node:latest   # 节点 Agent
 ### 本地开发
 
 ```bash
-# 终端 1：后端
-go run ./cmd/server -addr :8080 -data ./data
+# 终端 1：后端（配置只从 panel.yaml 读取）
+cp panel.example.yaml panel.yaml
+go run ./cmd/server --config ./panel.yaml
 
 # 终端 2：前端（Vite，自动代理 /api 到 8080）
 cd web && npm install && npm run dev
@@ -167,8 +170,10 @@ cd web && npm install && npm run dev
 
 ```bash
 make build          # 先构建前端，再编译 server/node/client 到 bin/
-./bin/mikvace-server -addr :8080 -data ./data
+./bin/mikvace-server --config ./panel.yaml
 ```
+
+首次启动打开 `http://localhost:8080/install`，先选择 SQLite / PostgreSQL / MySQL，再创建管理员。直接运行二进制时 `server.data_dir` 默认是 `./data`，`panel.yaml` 需要可写，`/install` 才能把配置写回。
 
 ### 前后端分离 / CDN 部署（可选）
 
@@ -407,6 +412,7 @@ Agent 会把 Hysteria 的 stdout/stderr 按 2 秒 / 100 行聚合，带 batch id
 - **立即备份**：生成 `data/backups/mikvace-*.tar.gz`（SQLite `VACUUM INTO` 一致性快照 + 元数据）。
 - **自动备份**：默认每 24 小时一次，保留最近 7 份，可在页面调整。
 - **恢复**：上传 `.tar.gz` 后服务端会校验数据库结构并暂存为 `panel.db.restore`，**重启面板**后替换当前数据库；原库会保留为 `panel.db.pre-restore-*`。
+- **远程后端**：PostgreSQL / MySQL 的备份与恢复接口当前返回未实现，自动备份会跳过；请使用 `pg_dump` / `mysqldump` 并同时备份 `cert.key`、`jwt.secret`。
 - **CELERITY 备份导入**：可直接上传 CELERITY-panel 的 `celerity-backup-*.tar.gz`（mongodump 格式）。服务端会解析 BSON 并转换为 MikvAce SQLite，导入用户、分组、Hysteria/Xray 节点、管理员、API 密钥、流量、到期时间及订阅页面设置。
   - 不支持的类型（`virtual`、`cdn`、Xray `xhttp`）和诊断探针用户会跳过并给出提示。
   - CELERITY 的 SSH 凭据和 2FA 使用其 `ENCRYPTION_KEY` 加密，无法迁移，需要重新填写/启用。
@@ -437,10 +443,10 @@ go build -o mikvace-client ./cmd/client
 
 ## 项目结构 / 技术栈
 
-- **后端**：Go 1.26+、chi、gorilla/websocket、JWT、bcrypt、yaml.v3、modernc.org/sqlite（纯 Go）。
+- **后端**：Go 1.26+、chi、gorilla/websocket、JWT、bcrypt、yaml.v3、pgx/v5、go-sql-driver/mysql、modernc.org/sqlite（纯 Go）。
 - **前端**：Vue 3、Vue Router、Vite、lucide-vue-next，无 UI 框架，手写深色响应式界面。
 - **节点端**：Go，进程模式或 Docker 模式，SIGHUP/SIGTERM 管理，自签名证书，iptables 端口跳跃。
-- **数据**：SQLite（WAL），默认 `/data/panel.db`；PostgreSQL / MySQL 方言层已就位，作为可选后端分阶段接入；JWT secret 默认持久化在 `/data/jwt.secret`。
+- **数据**：SQLite（安装向导的默认选项，WAL）、PostgreSQL 18、MySQL 8.0 均可作为面板数据库；选择 SQLite 后文件默认为 `/data/panel.db`；JWT secret 默认持久化在 `/data/jwt.secret`。
 
 ---
 

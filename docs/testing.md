@@ -93,6 +93,48 @@ SMOKE_PANEL_PASSWORD=<password> \
 - 创建 hybrid 节点并检查同时生成 Hysteria YAML 和 Xray JSON；
 - 清理测试用户和节点。
 
+## 安装向导测试
+
+```bash
+go test ./internal/server -run 'TestInstall' -count=1
+```
+
+覆盖首次管理员创建、重复初始化拒绝、SQLite / 远程数据库配置保存、DSN 写入 0600 文件、状态接口不泄露 DSN，以及安装完成后数据库接口关闭。远程保存路径使用注入的连接检查，不需要真实 PostgreSQL / MySQL。
+
+另覆盖 `database.driver: setup` 安装器模式：启动后不创建 SQLite 文件、`setupMode` 状态正确、创建管理员被拒绝、保存首个数据库后触发重启。
+
+## 远程数据库测试
+
+SQLite 测试默认运行。PostgreSQL 18 / MySQL 8.0 使用同一套 store 契约测试，按环境变量启用：
+
+```bash
+TEST_POSTGRES_DSN='postgres://test:test@127.0.0.1:55432/mikvace?sslmode=disable' \
+TEST_MYSQL_DSN='test:test@tcp(127.0.0.1:53306)/mikvace?charset=utf8mb4&collation=utf8mb4_bin&parseTime=false&loc=UTC' \
+go test ./internal/store -run 'TestRemote' -v
+```
+
+覆盖：
+
+- `schema` 元数据生成三方言 DDL；
+- 迁移版本表、重复启动幂等；
+- 用户、分组、节点、配置 revision、证书、日志、指标、API Key、设置、批次幂等；
+- `INSERT IGNORE` / `UPSERT` / `substr` 时间分桶 / `ONLY_FULL_GROUP_BY` 兼容；
+- 旧 SQLite 库的 `groups`/`settings.key` 自动重命名。
+
+测试容器示例：
+
+```bash
+docker run -d --name mikvace-pg \
+  -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=mikvace \
+  -p 55432:5432 postgres:18
+
+docker run -d --name mikvace-mysql \
+  -e MYSQL_ROOT_PASSWORD=test -e MYSQL_DATABASE=mikvace \
+  -e MYSQL_USER=test -e MYSQL_PASSWORD=test \
+  -p 53306:3306 mysql:8.0 \
+  --character-set-server=utf8mb4 --collation-server=utf8mb4_bin
+```
+
 ## 服务器测试用例
 
 | ID | 用例 | 步骤 | 预期 |

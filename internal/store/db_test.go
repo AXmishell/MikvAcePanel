@@ -53,7 +53,7 @@ func TestInsertID(t *testing.T) {
 	if u.ID == 0 {
 		t.Fatal("CreateUser id = 0")
 	}
-	if _, err := st.InsertID(ctx, `INSERT INTO groups (name, created_at, updated_at) VALUES (?, ?, ?)`,
+	if _, err := st.InsertID(ctx, `INSERT INTO panel_groups (name, created_at, updated_at) VALUES (?, ?, ?)`,
 		"id-test-2", DBTime(now()), DBTime(now())); err != nil {
 		t.Fatal(err)
 	}

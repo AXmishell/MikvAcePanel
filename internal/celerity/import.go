@@ -306,7 +306,7 @@ func importGroups(ctx context.Context, st *store.Store, file string, ids map[pri
 			return err
 		}
 		ids[doc.ID] = g.ID
-		if _, err := st.DB.ExecContext(ctx, `UPDATE groups SET created_at = ?, updated_at = ? WHERE id = ?`,
+		if _, err := st.DB.ExecContext(ctx, `UPDATE panel_groups SET created_at = ?, updated_at = ? WHERE id = ?`,
 			created.UTC().Format(time.RFC3339Nano), created.UTC().Format(time.RFC3339Nano), g.ID); err != nil {
 			return err
 		}

@@ -28,6 +28,25 @@ func main() {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: parseLevel(cfg.LogLevel)}))
 	slog.SetDefault(logger)
+	// /install uses this hook after saving a different database backend. The
+	// process re-executes itself so the store, migrations and every component
+	// holding it are rebuilt from the new panel.yaml.
+	cfg.Restart = func() {
+		if err := restartProcess(); err != nil {
+			logger.Error("restart after database change", "error", err)
+		}
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if cfg.DBDriver == server.SetupDriver {
+		app := server.NewSetup(cfg, logger)
+		defer app.Close()
+		logger.Info("setup mode: no database selected", "config", cfg.ConfigPath, "path", "/install")
+		serveHTTP(ctx, cfg, app.Handler(), logger, stop)
+		return
+	}
 
 	st, err := store.OpenConfig(store.Config{
 		Driver:          cfg.DBDriver,
@@ -50,14 +69,17 @@ func main() {
 		os.Exit(1)
 	}
 	defer app.Close()
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	go app.Hub().Monitor(ctx)
 	go scheduler(ctx, app, logger)
+	serveHTTP(ctx, cfg, app.Handler(), logger, stop)
+}
 
+// serveHTTP runs the listener and waits for SIGINT/SIGTERM or a listener
+// failure. Both the setup-only app and the full panel share this path.
+func serveHTTP(ctx context.Context, cfg server.Config, handler http.Handler, logger *slog.Logger, stop context.CancelFunc) {
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           app.Handler(),
+		Handler:           handler,
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20,

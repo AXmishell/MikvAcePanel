@@ -8,9 +8,13 @@
 package dialect
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/axmishell/mikvacepanel/internal/store/schema"
 )
 
 // Driver names accepted by For.
@@ -39,6 +43,23 @@ type Dialect interface {
 	// IsRetryable reports whether the statement can be retried after a
 	// transient serialization or connection failure.
 	IsRetryable(err error) bool
+
+	// DDL generation.
+	ColumnDDL(c schema.Column) string
+	TableSuffix() string
+	CreateTable(t schema.Table) string
+	CreateIndex(table string, ix schema.Index) string
+	AddColumn(table string, c schema.Column) string
+
+	// DML fragments.
+	InsertIgnore(table string, cols, conflict []string) string
+	Upsert(table string, cols, conflict, updates []string) string
+
+	// Schema introspection and migration locking.
+	HasTable(ctx context.Context, q Querier, table string) (bool, error)
+	HasColumn(ctx context.Context, q Querier, table, column string) (bool, error)
+	HasIndex(ctx context.Context, q Querier, table, index string) (bool, error)
+	AcquireMigrationLock(ctx context.Context, db *sql.DB) (func(), error)
 }
 
 // For resolves a backend name. An empty name selects SQLite.

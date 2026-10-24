@@ -155,7 +155,7 @@ func (s *Store) hydrateUser(ctx context.Context, u *model.User) error {
 func (s *Store) GetUserGroups(ctx context.Context, userID int64) ([]model.Group, error) {
 	rows, err := s.DB.QueryContext(ctx,
 		`SELECT g.id, g.name, g.description, g.color, g.subscription_title, g.max_devices, g.created_at, g.updated_at
-		 FROM groups g JOIN user_groups ug ON ug.group_id = g.id
+		 FROM panel_groups g JOIN user_groups ug ON ug.group_id = g.id
 		 WHERE ug.user_id = ? ORDER BY g.name`, userID)
 	if err != nil {
 		return nil, err
@@ -196,7 +196,7 @@ func (s *Store) GetUserNodeIDs(ctx context.Context, userID int64) ([]int64, erro
 func (s *Store) GroupDeviceLimits(ctx context.Context) (map[int64]int, error) {
 	rows, err := s.DB.QueryContext(ctx,
 		`SELECT ug.user_id, MIN(g.max_devices)
-		 FROM user_groups ug JOIN groups g ON g.id = ug.group_id
+		 FROM user_groups ug JOIN panel_groups g ON g.id = ug.group_id
 		 WHERE g.max_devices > 0
 		 GROUP BY ug.user_id`)
 	if err != nil {
@@ -226,7 +226,8 @@ func (s *Store) SetUserGroups(ctx context.Context, userID int64, groupIDs []int6
 		return err
 	}
 	for _, gid := range uniqueIDs(groupIDs) {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO user_groups (user_id, group_id) VALUES (?, ?)`, userID, gid); err != nil {
+		if _, err := s.InsertIgnoreTx(ctx, tx, "user_groups",
+			[]string{"user_id", "group_id"}, []string{"user_id", "group_id"}, userID, gid); err != nil {
 			return err
 		}
 	}
@@ -244,7 +245,8 @@ func (s *Store) SetUserNodes(ctx context.Context, userID int64, nodeIDs []int64)
 		return err
 	}
 	for _, nid := range uniqueIDs(nodeIDs) {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO user_nodes (user_id, node_id) VALUES (?, ?)`, userID, nid); err != nil {
+		if _, err := s.InsertIgnoreTx(ctx, tx, "user_nodes",
+			[]string{"user_id", "node_id"}, []string{"user_id", "node_id"}, userID, nid); err != nil {
 			return err
 		}
 	}

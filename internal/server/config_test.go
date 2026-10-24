@@ -89,13 +89,47 @@ func TestLoadConfigRejectsUnknownField(t *testing.T) {
 	}
 }
 
-func TestLoadConfigMissingFileUsesDefaults(t *testing.T) {
+func TestLoadConfigMissingFileUsesSetupMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "panel.yaml")
 	cfg, err := LoadConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Addr != ":8080" || !cfg.ServeWeb || cfg.DBDriver != "sqlite" {
+	if cfg.Addr != ":8080" || !cfg.ServeWeb || cfg.DBDriver != SetupDriver {
 		t.Fatalf("defaults = %+v", cfg)
+	}
+	if cfg.DBPath == "" {
+		t.Fatal("setup mode should still expose the default SQLite path for the wizard")
+	}
+}
+
+func TestLoadConfigExistingFileWithoutDatabaseDefaultsToSQLite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "panel.yaml")
+	if err := os.WriteFile(path, []byte("version: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DBDriver != "sqlite" {
+		t.Fatalf("driver = %q, want sqlite", cfg.DBDriver)
+	}
+}
+
+func TestLoadConfigSetupAliases(t *testing.T) {
+	for _, driver := range []string{"setup", "none", "unset", "ask"} {
+		path := filepath.Join(t.TempDir(), "panel.yaml")
+		body := "version: 1\ndatabase:\n  driver: " + driver + "\n"
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadConfig(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.DBDriver != SetupDriver {
+			t.Fatalf("driver %q = %q", driver, cfg.DBDriver)
+		}
 	}
 }
