@@ -103,7 +103,7 @@ SQLite 使用 WAL 模式；`VACUUM INTO` 生成一致性备份快照。
 ### 面板
 
 - 管理员密码使用 bcrypt；
-- JWT HS256，密钥为 `jwt.secret` 或 `JWT_SECRET`；
+- JWT HS256，密钥来自 `security.jwt_secret_file`，未配置时自动生成 `data_dir/jwt.secret`；
 - 登录失败按 IP 限流；2FA challenge 一次性、5 分钟有效；
 - API Key 只存 SHA-256 哈希，带作用域与独立限流；
 - 敏感数据加密：证书私钥、DNS 凭据、TOTP 密钥使用 AES-256-GCM（`cert.key`）。
@@ -119,7 +119,7 @@ SQLite 使用 WAL 模式；`VACUUM INTO` 生成一致性备份快照。
 ### 传输
 
 - 生产环境必须使用 HTTPS/WSS；
-- 自签名面板可在 Agent 设置 `PANEL_INSECURE=true`，但不建议长期使用；
+- 自签名面板可在 `node.yaml` 设置 `panel.insecure: true`，但不建议长期使用；
 - 反向代理必须支持 WebSocket Upgrade；
 - ACME DNS-01 只产生面板到 DNS/CA 的出站连接。
 
@@ -129,7 +129,7 @@ SQLite 使用 WAL 模式；`VACUUM INTO` 生成一致性备份快照。
 | --- | --- |
 | 单面板 + 远程节点 | 最常见；节点通过公网 WebSocket 连接 |
 | 面板与节点同机 | 节点仍通过面板公开地址连接，便于统一管理 |
-| 节点单容器 | Agent 与 Hysteria/Xray 同一容器，`HY2_RUNTIME=process` |
+| 节点单容器 | Agent 与 Hysteria/Xray 同一容器，`runtime.type: process` |
 | 节点 Docker 运行时 | Agent 通过 docker.sock 启动兄弟代理容器 |
 
 ## 失败与恢复

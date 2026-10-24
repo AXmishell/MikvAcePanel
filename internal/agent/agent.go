@@ -166,7 +166,7 @@ func (a *Agent) prepareConfig(text string) string {
 }
 
 // refreshStoredConfigs updates auth URLs in the configs loaded from disk. This
-// keeps the offline gateway working when AUTH_LISTEN changes between restarts,
+// keeps the offline gateway working when offline_auth.listen changes between restarts,
 // and restores panel auth if the gateway could not bind.
 func (a *Agent) refreshStoredConfigs() {
 	runtimes, cores := a.runtimesState()

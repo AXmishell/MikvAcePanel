@@ -7,16 +7,21 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/axmishell/mikvacepanel/internal/configfile"
 )
 
-// Config is node agent configuration.
+// Config is node agent configuration, loaded from node.yaml.
 type Config struct {
+	ConfigPath    string
 	PanelURL      string
 	Token         string
+	TokenFile     string
 	DataDir       string
 	HostDataDir   string
 	Runtime       string // process | docker
@@ -39,67 +44,153 @@ type Config struct {
 	OfflineAuth bool
 }
 
-// ParseConfig reads environment variables and optional command line flags.
+// fileConfig mirrors node.yaml.
+type fileConfig struct {
+	Version int `yaml:"version"`
+	Panel   struct {
+		URL       string `yaml:"url"`
+		TokenFile string `yaml:"token_file"`
+		Insecure  bool   `yaml:"insecure"`
+	} `yaml:"panel"`
+	Agent struct {
+		DataDir       string `yaml:"data_dir"`
+		HostDataDir   string `yaml:"host_data_dir"`
+		LogLevel      string `yaml:"log_level"`
+		Heartbeat     string `yaml:"heartbeat"`
+		StatsInterval string `yaml:"stats_interval"`
+	} `yaml:"agent"`
+	Runtime struct {
+		Type          string `yaml:"type"`
+		HysteriaBin   string `yaml:"hysteria_bin"`
+		HysteriaImage string `yaml:"hysteria_image"`
+		XrayBin       string `yaml:"xray_bin"`
+		XrayImage     string `yaml:"xray_image"`
+		ContainerName string `yaml:"container_name"`
+	} `yaml:"runtime"`
+	OfflineAuth struct {
+		Enabled bool   `yaml:"enabled"`
+		Listen  string `yaml:"listen"`
+	} `yaml:"offline_auth"`
+}
+
+func defaultFileConfig() fileConfig {
+	f := fileConfig{Version: 1}
+	f.Agent.DataDir = "/data"
+	f.Agent.HostDataDir = "/var/lib/mikvace"
+	f.Agent.LogLevel = "info"
+	f.Agent.Heartbeat = "10s"
+	f.Agent.StatsInterval = "15s"
+	f.Runtime.Type = "process"
+	f.Runtime.HysteriaBin = "hysteria"
+	f.Runtime.HysteriaImage = "tobyxdd/hysteria:latest"
+	f.Runtime.XrayBin = "xray"
+	f.Runtime.XrayImage = "ghcr.io/xtls/xray-core:latest"
+	f.Runtime.ContainerName = "mikvace-hysteria"
+	f.OfflineAuth.Enabled = true
+	f.OfflineAuth.Listen = "127.0.0.1:9998"
+	return f
+}
+
+// DefaultNodeConfigPath returns the first conventional node.yaml location.
+func DefaultNodeConfigPath() string {
+	for _, p := range []string{"node.yaml", "config/node.yaml", "/config/node.yaml", "/data/node.yaml"} {
+		if configfile.Exists(p) {
+			return p
+		}
+	}
+	if st, err := os.Stat("/config"); err == nil && st.IsDir() {
+		return "/config/node.yaml"
+	}
+	return "node.yaml"
+}
+
+// ParseConfig loads node.yaml. Only the config path comes from a flag.
 func ParseConfig(args []string, version string) (Config, error) {
-	c := Config{
-		PanelURL:      envOr("PANEL_URL", ""),
-		Token:         envOr("NODE_TOKEN", ""),
-		DataDir:       envOr("DATA_DIR", "/data"),
-		HostDataDir:   envOr("HOST_DATA_DIR", "/var/lib/mikvace"),
-		Runtime:       envOr("HY2_RUNTIME", "process"),
-		HysteriaBin:   envOr("HYSTERIA_BIN", "hysteria"),
-		HysteriaImage: envOr("HY2_IMAGE", "tobyxdd/hysteria:latest"),
-		XrayBin:       envOr("XRAY_BIN", "xray"),
-		XrayImage:     envOr("XRAY_IMAGE", "ghcr.io/xtls/xray-core:latest"),
-		ContainerName: envOr("HY2_CONTAINER", "mikvace-hysteria"),
-		PanelInsecure: envBool("PANEL_INSECURE", false),
-		LogLevel:      envOr("LOG_LEVEL", "info"),
-		Heartbeat:     10 * time.Second,
-		StatsInterval: 15 * time.Second,
-		Version:       version,
-		AuthListen:    envOr("AUTH_LISTEN", "127.0.0.1:9998"),
-		OfflineAuth:   envBool("OFFLINE_AUTH", true),
-	}
+	path := DefaultNodeConfigPath()
 	fs := flag.NewFlagSet("mikvace-node", flag.ContinueOnError)
-	fs.StringVar(&c.PanelURL, "panel", c.PanelURL, "panel base URL (e.g. https://panel.example.com)")
-	fs.StringVar(&c.Token, "token", c.Token, "node agent token")
-	fs.StringVar(&c.DataDir, "data-dir", c.DataDir, "persistent data directory")
-	fs.StringVar(&c.HostDataDir, "host-data-dir", c.HostDataDir, "host path of the data directory (docker runtime)")
-	fs.StringVar(&c.Runtime, "runtime", c.Runtime, "hysteria runtime: process or docker")
-	fs.StringVar(&c.HysteriaBin, "hysteria-bin", c.HysteriaBin, "path to the hysteria binary")
-	fs.StringVar(&c.HysteriaImage, "hysteria-image", c.HysteriaImage, "hysteria docker image")
-	fs.StringVar(&c.XrayBin, "xray-bin", c.XrayBin, "path to the Xray binary")
-	fs.StringVar(&c.XrayImage, "xray-image", c.XrayImage, "Xray docker image")
-	fs.StringVar(&c.ContainerName, "container", c.ContainerName, "hysteria docker container name")
-	fs.BoolVar(&c.PanelInsecure, "insecure", c.PanelInsecure, "skip panel TLS certificate verification")
-	fs.StringVar(&c.LogLevel, "log-level", c.LogLevel, "log level")
-	fs.StringVar(&c.AuthListen, "auth-listen", c.AuthListen, "loopback address for the local Hysteria auth gateway")
-	fs.BoolVar(&c.OfflineAuth, "offline-auth", c.OfflineAuth, "enable cached authentication when the panel is down")
+	fs.StringVar(&path, "config", path, "path to node.yaml")
 	if err := fs.Parse(args); err != nil {
-		return c, err
+		return Config{}, err
 	}
-	c.PanelURL = strings.TrimRight(strings.TrimSpace(c.PanelURL), "/")
-	c.Token = strings.TrimSpace(c.Token)
-	c.DataDir = filepath.Clean(c.DataDir)
-	c.HostDataDir = filepath.Clean(c.HostDataDir)
+	if !configfile.Exists(path) {
+		return Config{}, fmt.Errorf("config file %q not found", path)
+	}
+	fc := defaultFileConfig()
+	if err := configfile.Load(path, &fc); err != nil {
+		return Config{}, err
+	}
+	token, err := configfile.Secret(fc.Panel.TokenFile)
+	if err != nil {
+		return Config{}, fmt.Errorf("panel.token_file: %w", err)
+	}
+	heartbeat, err := parseDuration(fc.Agent.Heartbeat, 10*time.Second, "agent.heartbeat")
+	if err != nil {
+		return Config{}, err
+	}
+	statsInterval, err := parseDuration(fc.Agent.StatsInterval, 15*time.Second, "agent.stats_interval")
+	if err != nil {
+		return Config{}, err
+	}
+	c := Config{
+		ConfigPath:    path,
+		PanelURL:      strings.TrimRight(strings.TrimSpace(fc.Panel.URL), "/"),
+		Token:         token,
+		TokenFile:     strings.TrimSpace(fc.Panel.TokenFile),
+		DataDir:       filepath.Clean(strings.TrimSpace(fc.Agent.DataDir)),
+		HostDataDir:   filepath.Clean(strings.TrimSpace(fc.Agent.HostDataDir)),
+		Runtime:       strings.ToLower(strings.TrimSpace(fc.Runtime.Type)),
+		HysteriaBin:   strings.TrimSpace(fc.Runtime.HysteriaBin),
+		HysteriaImage: strings.TrimSpace(fc.Runtime.HysteriaImage),
+		XrayBin:       strings.TrimSpace(fc.Runtime.XrayBin),
+		XrayImage:     strings.TrimSpace(fc.Runtime.XrayImage),
+		ContainerName: strings.TrimSpace(fc.Runtime.ContainerName),
+		PanelInsecure: fc.Panel.Insecure,
+		LogLevel:      strings.TrimSpace(fc.Agent.LogLevel),
+		Heartbeat:     heartbeat,
+		StatsInterval: statsInterval,
+		Version:       version,
+		AuthListen:    strings.TrimSpace(fc.OfflineAuth.Listen),
+		OfflineAuth:   fc.OfflineAuth.Enabled,
+	}
 	if c.PanelURL == "" {
-		return c, fmt.Errorf("--panel or PANEL_URL is required")
+		return c, fmt.Errorf("panel.url is required")
+	}
+	u, err := url.Parse(c.PanelURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return c, fmt.Errorf("panel.url must start with http:// or https://")
+	}
+	if c.TokenFile == "" {
+		return c, fmt.Errorf("panel.token_file is required")
 	}
 	if c.Token == "" {
-		return c, fmt.Errorf("--token or NODE_TOKEN is required")
+		return c, fmt.Errorf("panel.token_file %q is empty", c.TokenFile)
+	}
+	if c.DataDir == "" || c.DataDir == "." {
+		c.DataDir = "/data"
+	}
+	if c.HostDataDir == "" || c.HostDataDir == "." {
+		c.HostDataDir = "/var/lib/mikvace"
 	}
 	if c.Runtime != "process" && c.Runtime != "docker" {
-		return c, fmt.Errorf("--runtime must be process or docker")
+		return c, fmt.Errorf("runtime.type must be process or docker")
 	}
-	if c.OfflineAuth {
-		host, _, err := net.SplitHostPort(c.AuthListen)
-		if err != nil {
-			return c, fmt.Errorf("AUTH_LISTEN must be host:port: %w", err)
-		}
-		ip := net.ParseIP(host)
-		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-			return c, fmt.Errorf("AUTH_LISTEN must bind to loopback (got %q); disable OFFLINE_AUTH to use panel auth only", c.AuthListen)
-		}
+	if c.HysteriaBin == "" {
+		c.HysteriaBin = "hysteria"
+	}
+	if c.XrayBin == "" {
+		c.XrayBin = "xray"
+	}
+	if c.HysteriaImage == "" {
+		c.HysteriaImage = "tobyxdd/hysteria:latest"
+	}
+	if c.XrayImage == "" {
+		c.XrayImage = "ghcr.io/xtls/xray-core:latest"
+	}
+	if c.ContainerName == "" {
+		c.ContainerName = "mikvace-hysteria"
+	}
+	if c.LogLevel == "" {
+		c.LogLevel = "info"
 	}
 	if c.Heartbeat < 3*time.Second {
 		c.Heartbeat = 3 * time.Second
@@ -107,26 +198,30 @@ func ParseConfig(args []string, version string) (Config, error) {
 	if c.StatsInterval < 5*time.Second {
 		c.StatsInterval = 5 * time.Second
 	}
+	if c.OfflineAuth {
+		if c.AuthListen == "" {
+			c.AuthListen = "127.0.0.1:9998"
+		}
+		host, _, err := net.SplitHostPort(c.AuthListen)
+		if err != nil {
+			return c, fmt.Errorf("offline_auth.listen must be host:port: %w", err)
+		}
+		ip := net.ParseIP(host)
+		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			return c, fmt.Errorf("offline_auth.listen must bind to loopback (got %q); set offline_auth.enabled=false to disable", c.AuthListen)
+		}
+	}
 	return c, nil
 }
 
-func envOr(key, def string) string {
-	if v, ok := os.LookupEnv(key); ok && strings.TrimSpace(v) != "" {
-		return v
+func parseDuration(raw string, def time.Duration, field string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return def, nil
 	}
-	return def
-}
-
-func envBool(key string, def bool) bool {
-	v, ok := os.LookupEnv(key)
-	if !ok {
-		return def
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("%s: invalid duration %q", field, raw)
 	}
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	}
-	return def
+	return d, nil
 }

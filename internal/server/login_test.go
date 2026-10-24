@@ -37,16 +37,3 @@ func TestLoginRateLimitCannotBeBypassedWithForwardedHeaders(t *testing.T) {
 		t.Fatalf("spoofed XFF bypassed the limiter, got %d", code)
 	}
 }
-
-func TestLoadConfigGeneratesAdminPassword(t *testing.T) {
-	t.Setenv("ADMIN_PASSWORD", "")
-	cfg := LoadConfig()
-	if !cfg.AdminPasswordGenerated || len(cfg.AdminPassword) < 24 {
-		t.Fatalf("generated password = %q (generated=%v)", cfg.AdminPassword, cfg.AdminPasswordGenerated)
-	}
-	t.Setenv("ADMIN_PASSWORD", "a-strong-password-123")
-	cfg = LoadConfig()
-	if cfg.AdminPasswordGenerated || cfg.AdminPassword != "a-strong-password-123" {
-		t.Fatalf("configured password = %q (generated=%v)", cfg.AdminPassword, cfg.AdminPasswordGenerated)
-	}
-}

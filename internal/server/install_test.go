@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,10 +23,11 @@ func newSetupEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
+	configPath := filepath.Join(dir, "panel.yaml")
 	cfg := Config{
-		Addr: ":0", DataDir: dir, DBDriver: "sqlite", DBPath: filepath.Join(dir, "panel.db"),
+		ConfigPath: configPath,
+		Addr:       ":0", DataDir: dir, DBDriver: "sqlite", DBPath: filepath.Join(dir, "panel.db"),
 		PublicURL: "http://panel.test", AdminUsername: "admin",
-		AdminPassword: "generated-placeholder", AdminPasswordGenerated: true,
 		ServeWeb: true, SessionTTL: time.Hour,
 	}
 	app, err := New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -89,6 +92,18 @@ func TestInstallFlow(t *testing.T) {
 	if settings["install_completed_at"] == "" {
 		t.Fatal("install_completed_at not set")
 	}
+	raw, err := os.ReadFile(env.app.cfg.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"name: My Panel", "public_url: https://panel.example.com", "username: ops"} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("config file missing %q:\n%s", want, raw)
+		}
+	}
+	if strings.Contains(string(raw), "a-strong-password-123") {
+		t.Fatal("installer must not write the admin password to panel.yaml")
+	}
 
 	status = decode[map[string]any](t, env.do(t, "GET", "/api/install/status", "", nil))
 	if status["installed"] != true || status["needsSetup"] != false {
@@ -130,7 +145,7 @@ func TestInstallRejectsInvalidUsername(t *testing.T) {
 }
 
 func TestExplicitAdminPasswordSkipsInstall(t *testing.T) {
-	env := newTestEnv(t) // config carries an explicit ADMIN_PASSWORD
+	env := newTestEnv(t) // config carries an explicit admin password
 	status := decode[map[string]any](t, env.do(t, "GET", "/api/install/status", "", nil))
 	if status["installed"] != true {
 		t.Fatalf("status = %+v", status)

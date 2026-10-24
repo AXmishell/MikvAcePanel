@@ -19,19 +19,14 @@ import (
 )
 
 func main() {
-	cfg := server.LoadConfig()
-	addr := flag.String("addr", cfg.Addr, "HTTP listen address")
-	dataDir := flag.String("data", cfg.DataDir, "data directory")
-	logLevel := flag.String("log-level", cfg.LogLevel, "log level")
+	configPath := flag.String("config", server.DefaultPanelConfigPath(), "path to panel.yaml")
 	flag.Parse()
-	originalDataDir := cfg.DataDir
-	cfg.Addr = *addr
-	cfg.DataDir = *dataDir
-	if cfg.DBPath == "" || *dataDir != originalDataDir {
-		cfg.DBPath = *dataDir + "/panel.db"
+	cfg, err := server.LoadConfig(*configPath)
+	if err != nil {
+		slog.Error("load config", "error", err, "path", *configPath)
+		os.Exit(1)
 	}
-
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: parseLevel(*logLevel)}))
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: parseLevel(cfg.LogLevel)}))
 	slog.SetDefault(logger)
 
 	st, err := store.OpenConfig(store.Config{
@@ -47,7 +42,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer st.Close()
-	logger.Info("database ready", "driver", st.Dialect().Name())
+	logger.Info("database ready", "driver", st.Dialect().Name(), "config", cfg.ConfigPath)
 
 	app, err := server.New(cfg, st, logger)
 	if err != nil {

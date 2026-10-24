@@ -86,12 +86,12 @@ hide:
 ```bash
 git clone https://github.com/AXmishell/MikvAcePanel.git
 cd MikvAcePanel
-cp .env.panel.example .env
-# 修改 PANEL_PUBLIC_URL；ADMIN_PASSWORD 可留空，首次启动走 /install 向导
+cp panel.example.yaml panel.yaml
+# 修改 panel.public_url；admin.password_file 留空则走 /install
 docker compose up -d --build
 ```
 
-访问 `http://服务器IP:8080/` 查看公开首页。未设置 `ADMIN_PASSWORD` 时先打开 `/install` 创建管理员；管理员控制台是 `/admin`。登录后：
+访问 `http://服务器IP:8080/` 查看公开首页。未配置 `admin.password_file` 时先打开 `/install` 创建管理员；管理员控制台是 `/admin`。登录后：
 
 1. 修改默认密码，建议同时启用两步验证；
 2. 在 **节点** 页面添加节点，复制生成的安装命令；

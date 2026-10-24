@@ -188,21 +188,52 @@ func TestRewriteGeneratedHysteriaConfig(t *testing.T) {
 	}
 }
 
-func TestLocalAuthConfigDefaults(t *testing.T) {
-	t.Setenv("PANEL_URL", "https://panel.example.com")
-	t.Setenv("NODE_TOKEN", "token")
-	t.Setenv("AUTH_LISTEN", "")
-	t.Setenv("OFFLINE_AUTH", "")
-	cfg, err := ParseConfig(nil, "test")
+func TestParseConfigYAML(t *testing.T) {
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "node.token")
+	if err := os.WriteFile(tokenPath, []byte("token-123\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "node.yaml")
+	write := func(listen string) {
+		body := `version: 1
+panel:
+  url: https://panel.example.com/
+  token_file: "` + tokenPath + `"
+  insecure: true
+agent:
+  data_dir: /data
+  host_data_dir: /var/lib/mikvace
+  log_level: debug
+  heartbeat: 12s
+  stats_interval: 20s
+runtime:
+  type: process
+offline_auth:
+  enabled: true
+  listen: "` + listen + `"
+`
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("127.0.0.1:9998")
+	cfg, err := ParseConfig([]string{"--config", path}, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.OfflineAuth || cfg.AuthListen != "127.0.0.1:9998" {
-		t.Fatalf("defaults = %+v", cfg)
+	if cfg.PanelURL != "https://panel.example.com" || cfg.Token != "token-123" || !cfg.PanelInsecure {
+		t.Fatalf("panel cfg = %+v", cfg)
 	}
-	t.Setenv("AUTH_LISTEN", "0.0.0.0:9998")
-	if _, err := ParseConfig(nil, "test"); err == nil {
-		t.Fatal("non-loopback AUTH_LISTEN must be rejected")
+	if !cfg.OfflineAuth || cfg.AuthListen != "127.0.0.1:9998" {
+		t.Fatalf("offline cfg = %+v", cfg)
+	}
+	if cfg.Heartbeat != 12*time.Second || cfg.StatsInterval != 20*time.Second || cfg.LogLevel != "debug" {
+		t.Fatalf("agent cfg = %+v", cfg)
+	}
+	write("0.0.0.0:9998")
+	if _, err := ParseConfig([]string{"--config", path}, "test"); err == nil {
+		t.Fatal("non-loopback offline_auth.listen must be rejected")
 	}
 }
 

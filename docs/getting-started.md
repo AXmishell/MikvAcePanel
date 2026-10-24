@@ -11,7 +11,7 @@
 | 端口 | 面板 `8080/TCP`；节点代理端口（默认 `443/UDP`）；端口跳跃为一段 UDP 端口 |
 | 可选 | Redis 7+（会话、限流、二维码缓存）、Nginx / Caddy（HTTPS） |
 
-节点需要能够访问面板的 `PANEL_URL`；面板不需要主动连接节点（SSH 自动安装除外）。
+节点需要能够访问面板的 `panel.url`；面板不需要主动连接节点（SSH 自动安装除外）。
 
 ## 1. 部署面板
 
@@ -20,17 +20,19 @@
 ```bash
 git clone https://github.com/AXmishell/MikvAcePanel.git
 cd MikvAcePanel
-cp .env.panel.example .env
+cp panel.example.yaml panel.yaml
 ```
 
-编辑 `.env`：
+编辑 `panel.yaml`：
 
-```ini
-PANEL_PORT=8080
-PANEL_PUBLIC_URL=https://panel.example.com
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=请替换为强密码
-JWT_SECRET=请填入至少32字节的随机值
+```yaml
+panel:
+  public_url: "https://panel.example.com"
+server:
+  data_dir: "/data"
+admin:
+  username: "admin"
+  password_file: ""      # 留空则使用 /install
 ```
 
 启动：
@@ -40,31 +42,30 @@ docker compose up -d --build
 docker compose logs -f panel
 ```
 
-打开 `http://服务器IP:8080/` 查看公开首页。首次启动且没有设置 `ADMIN_PASSWORD` 时，打开 `/install` 创建第一个管理员；管理员控制台位于 `/admin`（旧地址 `/panel` 会自动跳转到 `/admin/dashboard`）。
+打开 `http://服务器IP:8080/` 查看公开首页。首次启动且 `admin.password_file` 为空时，打开 `/install` 创建第一个管理员；管理员控制台位于 `/admin`（旧地址 `/panel` 会自动跳转到 `/admin/dashboard`）。
 
 ### 使用 GHCR 预构建镜像
 
 ```bash
+cp panel.example.yaml panel.yaml
+# 编辑 panel.yaml 后：
 docker run -d --name mikvace-panel --restart unless-stopped \
   -p 8080:8080 \
-  -e PANEL_PUBLIC_URL="https://panel.example.com" \
-  -e ADMIN_USERNAME="admin" \
-  -e ADMIN_PASSWORD="请替换为强密码" \
-  -e JWT_SECRET="$(openssl rand -hex 32)" \
+  -v "$PWD/panel.yaml:/config/panel.yaml" \
   -v "$PWD/data:/data" \
-  ghcr.io/axmishell/mikvacepanel:latest
+  ghcr.io/axmishell/mikvacepanel:latest --config /config/panel.yaml
 ```
 
-使用目录映射而非命名卷：数据会写入当前目录的 `./data`，直接打包该目录即可完成备份。
+使用目录映射而非命名卷：数据会写入当前目录的 `./data`，直接打包该目录即可完成备份。`panel.yaml` 需要可写，`/install` 会把面板名称、公共地址和管理员用户名写回该文件。
 
 镜像标签：`main`、`latest`（main 分支）与 `sha-<commit>`；发布 `v*.*.*` 标签时同时提供语义化版本，并更新 `latest`。`latest` 指向最后一次成功构建的镜像，需要固定版本请使用语义化版本标签。
 
 ## 2. 首次登录
 
-首次启动有两种初始化方式：
+应用配置只从 `panel.yaml` 读取，不读取环境变量，也不使用 `.env`。首次启动有两种初始化方式：
 
-- **未设置 `ADMIN_PASSWORD`**：访问 `http://服务器IP:8080/install`，在向导中设置管理员用户名、密码、面板名称和公共访问地址。提交后会自动登录。
-- **已设置 `ADMIN_PASSWORD`**：启动时自动创建 `ADMIN_USERNAME` 对应的管理员，直接打开 `/admin` 登录即可。
+- **`admin.password_file` 为空**：访问 `http://服务器IP:8080/install`，在向导中设置管理员用户名、密码、面板名称和公共访问地址。提交后会自动登录，并把非敏感字段写回 `panel.yaml`。
+- **配置了 `admin.password_file`**：启动时读取密钥文件并自动创建 `admin.username` 对应的管理员，直接打开 `/admin` 登录即可。文件内容只保存密码，权限保持 0600。
 
 !!! note "安装入口只在首次运行开放"
 
@@ -78,8 +79,7 @@ docker run -d --name mikvace-panel --restart unless-stopped \
 
 !!! tip "纯 API 部署"
 
-    `SERVE_WEB=false` 时没有 `/install` 页面。此时若未设置 `ADMIN_PASSWORD`，面板会随机生成一个强密码并在首次启动日志中打印一次。
-    管理员只在数据库首次初始化时创建，之后修改环境变量不会覆盖已有密码。
+    `server.serve_web: false` 时没有 `/install` 页面。请通过 `admin.password_file` 提供初始密码，或直接调用 `POST /api/install`。管理员只在数据库首次初始化时创建，之后修改配置文件不会覆盖已有密码。
 
 ## 3. 添加第一个节点
 
@@ -93,23 +93,38 @@ docker run -d --name mikvace-panel --restart unless-stopped \
   - `节点自签 ACME`：Hysteria 自己申请，使用 TLS-ALPN，不占用 80；
 - 端口跳跃、obfs、ACL、出站等可选。
 
-保存后点击 **安装**，复制生成的命令到节点执行：
+保存后点击 **安装**，复制生成的命令到节点执行。命令会创建 `/etc/mikvace/node.yaml` 和 `/etc/mikvace/node.token`，并通过 `--config` 启动 Agent：
 
 ```bash
+sudo install -d -m 700 /etc/mikvace /var/lib/mikvace
+printf '%s' 'mtn_xxx' | sudo tee /etc/mikvace/node.token >/dev/null
+sudo tee /etc/mikvace/node.yaml >/dev/null <<'EOF'
+version: 1
+panel:
+  url: "https://panel.example.com"
+  token_file: "/config/node.token"
+agent:
+  data_dir: "/data"
+  host_data_dir: "/var/lib/mikvace"
+runtime:
+  type: "process"
+offline_auth:
+  enabled: true
+  listen: "127.0.0.1:9998"
+EOF
 docker run -d --name mikvace-node --restart unless-stopped \
   --network host --cap-add NET_ADMIN \
-  -e PANEL_URL="https://panel.example.com" \
-  -e NODE_TOKEN="mtn_xxx" \
-  -e HY2_RUNTIME=process \
-  -v "$PWD/data-node:/data" \
-  ghcr.io/axmishell/mikvacepanel-node:latest
+  -v /etc/mikvace:/config:ro \
+  -v /var/lib/mikvace:/data \
+  ghcr.io/axmishell/mikvacepanel-node:latest --config /config/node.yaml
 ```
 
-如果使用 Compose 部署节点，复制节点模板并填写参数：
+如果使用 Compose 部署节点：
 
 ```bash
-cp .env.node.example .env
-# 填写 PANEL_URL、NODE_TOKEN 等
+cp node.example.yaml node.yaml
+printf '%s' 'mtn_xxx' > node.token && chmod 600 node.token
+# 编辑 node.yaml：panel.url、agent.host_data_dir 等
 docker compose -f docker-compose.node.yml up -d
 ```
 
@@ -118,7 +133,7 @@ docker compose -f docker-compose.node.yml up -d
 !!! warning "网络模式"
 
     Hysteria 使用 UDP，端口跳跃需要修改宿主机 iptables，因此节点容器使用 `--network host` 和 `--cap-add NET_ADMIN`。
-    `HY2_RUNTIME=docker` 还会挂载 `/var/run/docker.sock`，这等同于宿主机 root 权限，请只在受控节点使用。
+    `runtime.type: docker` 还会挂载 `/var/run/docker.sock`，这等同于宿主机 root 权限，请只在受控节点使用。
 
 ## 4. 创建用户与订阅
 

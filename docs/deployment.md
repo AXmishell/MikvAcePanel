@@ -12,39 +12,100 @@
 
 面板自身不终止 TLS，生产环境建议使用 Nginx、Caddy 或云负载均衡提供 HTTPS。
 
-## 环境变量
+## 配置文件
 
-仓库根目录提供两份带中英注释的模板：面板使用 `.env.panel.example`，节点使用 `.env.node.example`。复制为 `.env` 后按需修改即可。
+应用配置**只从 YAML 读取**，不读取任何环境变量，也不使用 `.env`。面板模板为 `panel.example.yaml`，节点模板为 `node.example.yaml`；复制为 `panel.yaml` / `node.yaml` 后按需修改。
 
-| 变量 | 默认 | 说明 |
+查找顺序：`--config` 参数 → `panel.yaml` → `config/panel.yaml` → `/config/panel.yaml` → `/data/panel.yaml`。
+
+面板主要字段：
+
+| 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `ADDR` | `:8080` | 面板监听地址 |
-| `DATA_DIR` | `./data` | 数据目录，Docker 镜像内为 `/data` |
-| `DB_DRIVER` | `sqlite` | 数据库后端：`sqlite` / `postgres` / `mysql`（远程后端分阶段接入） |
-| `DATABASE_URL` | 空 | 远程数据库 DSN，例如 `postgres://user:pass@db:5432/mikvace?sslmode=require` |
-| `DB_PATH` | `<DATA_DIR>/panel.db` | SQLite 路径 |
-| `DB_MAX_OPEN` | 后端默认 | 最大连接数（SQLite 默认 8，远程后端预留更高值） |
-| `DB_MAX_IDLE` | 后端默认 | 最大空闲连接数 |
-| `DB_CONN_LIFETIME` | 后端默认 | 连接最长复用时间，例如 `30m` |
-| `PANEL_PUBLIC_URL` | `http://localhost:8080` | 对外地址，用于订阅和节点认证回调 |
-| `ADMIN_USERNAME` | `admin` | 自动初始化时的管理员用户名 |
-| `ADMIN_PASSWORD` | 空 | 设置后启动时自动创建管理员；留空且 `SERVE_WEB=true` 时改用 `/install` 向导 |
-| `JWT_SECRET` | 自动生成 | JWT/恢复码签名密钥；未设置时写入 `DATA_DIR/jwt.secret` |
-| `SESSION_TTL_HOURS` | `24` | 管理员会话有效期（小时） |
-| `CERT_ENC_KEY` | 自动生成 | 证书私钥/DNS 凭据/2FA 密钥的加密密钥；未设置时写入 `DATA_DIR/cert.key` |
-| `CORS_ORIGINS` | 空 | 前端开发时的允许来源，逗号分隔 |
-| `TRUSTED_PROXIES` | 空 | 可信反向代理的 IP/CIDR，逗号分隔；仅这些来源的 `X-Forwarded-For` / `X-Real-IP` 会被采信 |
-| `LOG_LEVEL` | `info` | `debug/info/warn/error` |
-| `REDIS_URL` | 空 | 可选 Redis，例如 `redis://127.0.0.1:6379/0` |
-| `REDIS_PREFIX` | `mikvace:` | Redis key 前缀 |
-| `REDIS_REQUIRED` | `false` | Redis 不可用时是否拒绝启动 |
+| `server.addr` | `:8080` | 面板监听地址 |
+| `server.data_dir` | `./data` | 数据目录，Docker 镜像内为 `/data` |
+| `server.serve_web` | `true` | 是否由面板提供内嵌前端 |
+| `server.frontend_url` | 空 | 前后端分离时的前端地址 |
+| `server.cors_origins` | 空 | 允许跨域的前端 Origin |
+| `server.trusted_proxies` | 空 | 可信反向代理的 IP/CIDR |
+| `server.log_level` | `info` | `debug/info/warn/error` |
+| `panel.name` | `MikvAce Panel` | 面板名称，`/install` 会更新 |
+| `panel.public_url` | 空 | 对外地址，用于订阅和节点认证回调 |
+| `admin.username` | `admin` | 初始化管理员用户名 |
+| `admin.password_file` | 空 | 密码文件；留空走 `/install`。不允许内联密码 |
+| `session.ttl` | `24h` | 管理员会话有效期 |
+| `security.jwt_secret_file` | 空 | JWT/恢复码签名密钥文件；留空自动生成 `data_dir/jwt.secret` |
+| `security.cert_key_file` | 空 | 证书/DNS/2FA 加密密钥文件；留空自动生成 `data_dir/cert.key` |
+| `database.driver` | `sqlite` | `sqlite` / `postgres` / `mysql` |
+| `database.path` | `<data_dir>/panel.db` | SQLite 路径 |
+| `database.dsn_file` | 空 | 远程数据库 DSN 文件 |
+| `database.max_open` / `max_idle` | 后端默认 | 连接池大小 |
+| `database.conn_max_lifetime` | `1h` | 连接最长复用时间 |
+| `redis.url_file` | 空 | Redis URL 文件；为空则使用进程内存 |
+| `redis.prefix` | `mikvace:` | Redis key 前缀 |
+| `redis.required` | `false` | Redis 不可用时是否拒绝启动 |
 
-`JWT_SECRET` 与 `CERT_ENC_KEY` 一旦使用后不要随意更换：
+**密钥只能用 `*_file` 引用**，配置文件中不出现明文密码、Token、JWT secret、DSN 或证书加密密钥。最小示例：
+
+```bash
+sudo install -d -m 700 /etc/mikvace
+sudo install -m 600 /dev/null /etc/mikvace/admin.password
+printf '%s' '请替换为强密码' | sudo tee /etc/mikvace/admin.password >/dev/null
+```
+
+然后在 `panel.yaml` 中设置：
+
+```yaml
+admin:
+  password_file: "/etc/mikvace/admin.password"
+```
+
+Docker 部署时把密钥文件放到 `./config/`，并在 compose 中追加只读挂载：
+
+```yaml
+    volumes:
+      - ./panel.yaml:/config/panel.yaml
+      - ./config/admin.password:/config/admin.password:ro
+```
+
+配置中写 `/config/admin.password` 即可。
+
+`jwt_secret_file` 与 `cert_key_file` 一旦使用后不要随意更换：
 
 - 更换 JWT secret 会使所有管理员会话和 2FA 恢复码失效；
 - 更换 cert key 会导致已保存的证书私钥、DNS 凭据和 TOTP 密钥无法解密。
 
 两者都会随面板备份归档，恢复数据库时请一起恢复。
+
+### 从 `.env` 迁移
+
+应用不再读取环境变量。旧版 `.env` 与 YAML 的对应关系：
+
+| 旧变量 | 新字段 |
+| --- | --- |
+| `ADDR` | `server.addr` |
+| `DATA_DIR` | `server.data_dir` |
+| `PANEL_PUBLIC_URL` | `panel.public_url` |
+| `ADMIN_USERNAME` | `admin.username` |
+| `ADMIN_PASSWORD` | `admin.password_file`（先写入文件） |
+| `JWT_SECRET` | `security.jwt_secret_file`（或留空自动生成） |
+| `CERT_ENC_KEY` | `security.cert_key_file`（或留空自动生成） |
+| `SESSION_TTL_HOURS` | `session.ttl`（如 `24h`） |
+| `CORS_ORIGINS` | `server.cors_origins` |
+| `TRUSTED_PROXIES` | `server.trusted_proxies` |
+| `LOG_LEVEL` | `server.log_level` |
+| `REDIS_URL` | `redis.url_file`（先写入文件） |
+| `REDIS_PREFIX` | `redis.prefix` |
+| `REDIS_REQUIRED` | `redis.required` |
+| `DB_DRIVER` | `database.driver` |
+| `DATABASE_URL` | `database.dsn_file`（先写入文件） |
+| `DB_PATH` | `database.path` |
+| `DB_MAX_OPEN` / `DB_MAX_IDLE` | `database.max_open` / `max_idle` |
+| `DB_CONN_LIFETIME` | `database.conn_max_lifetime` |
+| `SERVE_WEB` | `server.serve_web` |
+| `FRONTEND_URL` | `server.frontend_url` |
+
+节点侧对应关系见 [节点 Agent](node-agent.md#配置文件)。
 
 ## Docker Compose
 
@@ -54,22 +115,20 @@ services:
     image: ghcr.io/axmishell/mikvacepanel:latest
     container_name: mikvace-panel
     restart: unless-stopped
+    command: ["--config", "/config/panel.yaml"]
     ports:
       - "127.0.0.1:8080:8080"
-    environment:
-      PANEL_PUBLIC_URL: "https://panel.example.com"
-      ADMIN_USERNAME: "admin"
-      ADMIN_PASSWORD: "请替换"
-      JWT_SECRET: "请替换为至少32字节随机值"
     volumes:
       - ./data:/data
+      - ./panel.yaml:/config/panel.yaml
 ```
 
 - 只监听 `127.0.0.1:8080`，由反向代理对外提供 HTTPS；
+- 需要修改宿主机端口时，直接改 compose 的 `ports`，或用 `compose.override.yaml` 覆盖；不再使用 `.env` 插值；
 - 如果面板直接暴露，改为 `8080:8080` 并配置防火墙；
-- 数据使用当前目录映射（`./data`），不使用 Docker 命名卷。权限、备份和迁移都按普通目录处理；`./data` 必须持久化，否则重启后用户、节点、证书全部丢失。
-- 如果 `ADMIN_PASSWORD` 留空，首次启动后访问 `/install` 完成管理员初始化；无人值守部署建议直接设置强密码。
-- 使用反向代理时设置 `TRUSTED_PROXIES=127.0.0.1`（Docker 网桥场景填代理的容器地址），否则面板会忽略 `X-Forwarded-For`，把所有客户端当成代理 IP，登录限流和审计日志将不准确。
+- 数据使用当前目录映射（`./data`），不使用 Docker 命名卷。`./data` 必须持久化，否则重启后用户、节点、证书全部丢失。
+- `panel.yaml` 需要可写，`/install` 会把面板名称、公共地址和管理员用户名写回；也可以预先配置 `admin.password_file` 进行无人值守初始化。
+- 使用反向代理时在 `server.trusted_proxies` 中填写代理地址，否则面板会忽略 `X-Forwarded-For`，把所有客户端当成代理 IP，登录限流和审计日志将不准确。
 
 !!! warning "从命名卷迁移"
 
@@ -91,17 +150,31 @@ services:
 
 默认使用 SQLite，数据文件为 `./data/panel.db`。代码已经引入方言层（`internal/store/dialect`）和统一的 `DB` 包装层，PostgreSQL 18 与 MySQL 8.0 作为可选后端分阶段接入：
 
-```bash
+```yaml
 # SQLite（默认）
-DB_DRIVER=sqlite
+database:
+  driver: sqlite
+  path: /data/panel.db
 
 # PostgreSQL（待启用）
-DB_DRIVER=postgres
-DATABASE_URL=postgres://user:pass@postgres:5432/mikvace?sslmode=require
+database:
+  driver: postgres
+  dsn_file: /run/secrets/database_url
 
 # MySQL 8.0（待启用）
-DB_DRIVER=mysql
-DATABASE_URL=user:pass@tcp(mysql:3306)/mikvace?charset=utf8mb4&collation=utf8mb4_bin&parseTime=false&loc=UTC
+database:
+  driver: mysql
+  dsn_file: /run/secrets/database_url
+```
+
+`dsn_file` 内容示例：
+
+```text
+# PostgreSQL
+postgres://user:pass@postgres:5432/mikvace?sslmode=require
+
+# MySQL
+user:pass@tcp(mysql:3306)/mikvace?charset=utf8mb4&collation=utf8mb4_bin&parseTime=false&loc=UTC
 ```
 
 当前版本若选择 `postgres` 或 `mysql` 会在启动时明确报错，不会半途写入远程库。切换到远程库前请先在 **设置 → 备份** 创建备份；跨库迁移工具会在后续阶段提供。
@@ -160,7 +233,9 @@ Caddy 会自动处理证书、HTTP/2 和 WebSocket。
 ```bash
 make build
 sudo install -m 0755 bin/mikvace-server /usr/local/bin/
-sudo mkdir -p /var/lib/mikvace && sudo chmod 700 /var/lib/mikvace
+sudo install -d -m 700 /etc/mikvace /var/lib/mikvace
+sudo cp panel.example.yaml /etc/mikvace/panel.yaml
+# 编辑 /etc/mikvace/panel.yaml：server.data_dir、panel.public_url、admin.password_file 等
 ```
 
 `/etc/systemd/system/mikvace-panel.service`：
@@ -174,10 +249,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/var/lib/mikvace
-Environment=PANEL_PUBLIC_URL=https://panel.example.com
-Environment=ADDR=127.0.0.1:8080
-Environment=DATA_DIR=/var/lib/mikvace
-ExecStart=/usr/local/bin/mikvace-server
+ExecStart=/usr/local/bin/mikvace-server --config /etc/mikvace/panel.yaml
 Restart=always
 RestartSec=3
 User=root
@@ -204,25 +276,36 @@ VITE_API_BASE_URL=https://api.example.com/api \
 npm run build
 ```
 
-后端使用 API-only 构建与运行参数：
+后端使用 API-only 构建与运行参数，配置示例 `api-panel.yaml`：
+
+```yaml
+version: 1
+panel:
+  public_url: "https://api.example.com"
+server:
+  addr: "127.0.0.1:8080"
+  data_dir: "/var/lib/mikvace"
+  serve_web: false
+  frontend_url: "https://panel.example.com"
+  cors_origins: ["https://panel.example.com"]
+  trusted_proxies: ["127.0.0.1/32"]
+admin:
+  username: "admin"
+  password_file: "/etc/mikvace/admin.password"
+```
 
 ```bash
 make server-api     # 使用 -tags noweb，不依赖 web/dist
-SERVE_WEB=false \
-FRONTEND_URL=https://panel.example.com \
-CORS_ORIGINS=https://panel.example.com \
-TRUSTED_PROXIES=127.0.0.1/32 \
-PANEL_PUBLIC_URL=https://api.example.com \
-./bin/mikvace-server-api -addr 127.0.0.1:8080 -data /var/lib/mikvace
+./bin/mikvace-server-api --config ./api-panel.yaml
 ```
 
-| 变量 | 说明 |
-|------|------|
-| `SERVE_WEB` | `false` 时只提供 API，不再返回内嵌前端（`/admin`、`/user` 等） |
-| `FRONTEND_URL` | 前端公网地址，API-only 模式下 `/` 与 `/panel` 跳转使用 |
-| `CORS_ORIGINS` | 允许跨域的前端 Origin，必须精确匹配 |
-| `TRUSTED_PROXIES` | API 反向代理地址，用于客户端 IP 和登录限流 |
-| `PANEL_PUBLIC_URL` | API 公网地址，用于订阅链接和节点认证 |
+| 字段 | 说明 |
+| --- | --- |
+| `server.serve_web` | `false` 时只提供 API，不再返回内嵌前端（`/admin`、`/user` 等） |
+| `server.frontend_url` | 前端公网地址，API-only 模式下 `/` 与 `/panel` 跳转使用 |
+| `server.cors_origins` | 允许跨域的前端 Origin，必须精确匹配 |
+| `server.trusted_proxies` | API 反向代理地址，用于客户端 IP 和登录限流 |
+| `panel.public_url` | API 公网地址，用于订阅链接和节点认证 |
 
 API 域名的 Nginx 示例见仓库根目录 `deploy/nginx-api.conf`。注意 `/api/*` 不要被 CDN 缓存，备份恢复需要调大 `client_max_body_size`。
 
@@ -234,16 +317,21 @@ Redis 用于：
 - 登录 / API Key 限流计数；
 - 订阅二维码缓存。
 
+```yaml
+redis:
+  url_file: "/config/redis.url"   # 文件内容：redis://127.0.0.1:6379/0
+  prefix: "mikvace:"
+  required: false
+```
+
 ```bash
-REDIS_URL=redis://127.0.0.1:6379/0
-REDIS_PREFIX=mikvace:
-REDIS_REQUIRED=false
+install -m 600 /dev/null /etc/mikvace/redis.url
+printf '%s' 'redis://127.0.0.1:6379/0' | sudo tee /etc/mikvace/redis.url >/dev/null
 ```
 
 Compose 内置 profile：
 
 ```bash
-# .env: REDIS_URL=redis://redis:6379/0
 docker compose --profile redis up -d
 ```
 
@@ -257,7 +345,7 @@ git pull
 docker compose up -d --build
 ```
 
-数据库迁移是幂等的，启动时自动补齐表与列。升级前建议备份 `DATA_DIR`，尤其是：
+数据库迁移是幂等的，启动时自动补齐表与列。升级前建议备份 `server.data_dir`，尤其是：
 
 ```text
 panel.db

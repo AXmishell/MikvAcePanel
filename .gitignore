@@ -27,12 +27,14 @@ data-*/
 web/node_modules/
 web/.vite/
 
-# environment (keep the checked-in templates)
+# local configuration and secrets
+panel.yaml
+node.yaml
+node.token
+*.token
+config/*.yaml
+!config/*.example.yaml
 .env
-.env.*
-!.env.example
-!.env.panel.example
-!.env.node.example
 docker.env
 
 # editor / OS

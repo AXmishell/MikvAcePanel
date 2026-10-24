@@ -3,9 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,9 +14,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
-	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -127,7 +123,7 @@ func New(cfg Config, st *store.Store, logger *slog.Logger) (*Server, error) {
 	s.sessions = newSessionStore(redisClient, cfg.SessionTTL, logger)
 	s.hub = NewHub(st, logger)
 	s.analyzer = logs.New(st)
-	certKey, err := certcrypto.LoadKey(cfg.DataDir)
+	certKey, err := certcrypto.LoadKey(cfg.DataDir, cfg.CertKeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("certificate encryption key: %w", err)
 	}
@@ -168,64 +164,39 @@ func (s *Server) bootstrap(ctx context.Context) error {
 	if err := s.store.EnsureDefaultSettings(ctx); err != nil {
 		return err
 	}
-	// With the embedded web UI and no explicit ADMIN_PASSWORD, first-run setup
-	// belongs to the /install wizard. API-only deployments and unattended
-	// installs keep the previous auto-bootstrap behaviour.
-	if s.cfg.AdminPasswordGenerated && s.cfg.ServeWeb {
-		if n, err := s.store.CountAdmins(ctx); err == nil && n == 0 {
-			s.log.Info("panel installation required", "path", "/install")
-		}
-	} else {
-		hash, err := bcrypt.GenerateFromPassword([]byte(s.cfg.AdminPassword), bcrypt.DefaultCost)
-		if err != nil {
-			return err
-		}
-		created, err := s.store.EnsureAdmin(ctx, s.cfg.AdminUsername, string(hash))
-		if err != nil {
-			return err
-		}
-		if created {
-			if s.cfg.AdminPasswordGenerated {
-				// Print the generated password exactly once so the operator can
-				// log in; it is not stored in plaintext anywhere else.
-				s.log.Warn("bootstrap administrator created with a generated password; store it now and change it after login",
-					"username", s.cfg.AdminUsername, "password", s.cfg.AdminPassword)
-			} else {
-				s.log.Warn("bootstrap administrator created", "username", s.cfg.AdminUsername,
-					"password_source", "ADMIN_PASSWORD environment variable")
-			}
-		}
-		if created && (s.cfg.AdminPasswordGenerated || s.cfg.AdminPassword == "admin123" ||
-			s.cfg.AdminPassword == "change-me-now" || len(s.cfg.AdminPassword) < 12) {
-			_ = s.store.SetSetting(ctx, "bootstrap_warning", "The administrator password is weak or was generated automatically. Change it in Settings → Security.")
+	if s.cfg.PanelName != "" {
+		if name, _ := s.store.GetSetting(ctx, "panel_name"); name == "" || name == "MikvAce Panel" {
+			_ = s.store.SetSetting(ctx, "panel_name", s.cfg.PanelName)
 		}
 	}
 	if pub, _ := s.store.GetSetting(ctx, "public_url"); strings.TrimSpace(pub) == "" && s.cfg.PublicURL != "" {
 		_ = s.store.SetSetting(ctx, "public_url", strings.TrimRight(s.cfg.PublicURL, "/"))
 	}
+	// Admin bootstrap is optional. Without admin.password_file the panel starts
+	// uninstalled and the /install wizard creates the first administrator.
+	if s.cfg.AdminPassword == "" {
+		if n, err := s.store.CountAdmins(ctx); err == nil && n == 0 {
+			s.log.Info("panel installation required", "path", "/install", "config", s.cfg.ConfigPath)
+		}
+		return nil
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(s.cfg.AdminPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	created, err := s.store.EnsureAdmin(ctx, s.cfg.AdminUsername, string(hash))
+	if err != nil {
+		return err
+	}
+	if created {
+		s.log.Warn("bootstrap administrator created", "username", s.cfg.AdminUsername,
+			"password_source", "admin.password_file")
+	}
+	if created && (s.cfg.AdminPassword == "admin123" ||
+		s.cfg.AdminPassword == "change-me-now" || len(s.cfg.AdminPassword) < 12) {
+		_ = s.store.SetSetting(ctx, "bootstrap_warning", "The administrator password is weak. Change it in Settings → Security.")
+	}
 	return nil
-}
-
-func loadJWTSecret(cfg Config) ([]byte, error) {
-	if strings.TrimSpace(cfg.JWTSecret) != "" {
-		return []byte(cfg.JWTSecret), nil
-	}
-	path := filepath.Join(cfg.DataDir, "jwt.secret")
-	if b, err := os.ReadFile(path); err == nil && len(b) >= 32 {
-		return b, nil
-	}
-	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
-		return nil, err
-	}
-	buf := make([]byte, 48)
-	if _, err := rand.Read(buf); err != nil {
-		return nil, err
-	}
-	secret := []byte(base64.RawURLEncoding.EncodeToString(buf))
-	if err := os.WriteFile(path, secret, 0o600); err != nil {
-		return nil, err
-	}
-	return secret, nil
 }
 
 func (s *Server) routes() http.Handler {

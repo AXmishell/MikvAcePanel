@@ -445,8 +445,11 @@ func TestSSHInstallScript(t *testing.T) {
 	n := &model.Node{Token: "mtn_test_token", SSHInstallDocker: true}
 	script := env.app.sshInstallScript(n)
 	for _, want := range []string{
-		"NODE_TOKEN='mtn_test_token'",
-		"PANEL_URL='http://panel.test'",
+		"mtn_test_token",
+		`url: http://panel.test`,
+		"/etc/mikvace/node.yaml",
+		"/etc/mikvace/node.token",
+		"--config /config/node.yaml",
 		"--network host",
 		"curl -fsSL https://get.docker.com",
 		"ghcr.io/axmishell/mikvacepanel-node:latest",

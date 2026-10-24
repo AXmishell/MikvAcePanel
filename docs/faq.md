@@ -5,7 +5,7 @@
 可以，取决于使用的核心：
 
 - **Xray**：用户 UUID/密码本来就写在节点本地 `config.json` 中，面板故障不会影响正在运行的 Xray；Agent 重启也会从本地配置启动。
-- **Hysteria 2**：新版 Agent 会把认证地址改写为 `127.0.0.1:9998` 的本地网关。面板可达时网关代理到面板，行为不变；面板不可达时使用 `DATA_DIR/state/users.json` 的最后一次用户快照。需要保持 `OFFLINE_AUTH=true`（默认）。
+- **Hysteria 2**：新版 Agent 会把认证地址改写为 `127.0.0.1:9998` 的本地网关。面板可达时网关代理到面板，行为不变；面板不可达时使用 `agent.data_dir/state/users.json` 的最后一次用户快照。需要保持 `offline_auth.enabled: true`（默认）。
 
 离线期间的新密码、禁用、配额和设备数判断都基于最后一次快照，无法实时同步；面板恢复后 Agent 会自动刷新快照。详见 [节点 Agent](node-agent.md#面板故障时的离线认证)。
 
@@ -16,10 +16,10 @@
    docker logs -f mikvace-node
    ```
 
-2. 确认 `PANEL_URL` 能从节点访问，且协议为 `https://`（或内网 `http://`）；
+2. 确认 `node.yaml` 的 `panel.url` 能从节点访问，且协议为 `https://`（或内网 `http://`）；
 3. 确认反向代理支持 WebSocket Upgrade（`/api/node/ws`）；
 4. 确认节点 Token 未被重置：重置后需要重新执行安装命令；
-5. 面板使用自签名 HTTPS 时，设置 `PANEL_INSECURE=true`。
+5. 面板使用自签名 HTTPS 时，设置 `panel.insecure: true`。
 
 ## Agent 返回 401 / invalid node token
 
@@ -34,7 +34,7 @@
 - 端口被占用；
 - 证书路径不存在或私钥不匹配；
 - ACME 域名不可达 / 443 被占用；
-- `HY2_RUNTIME=docker` 时 `HOST_DATA_DIR` 与 Agent 数据目录不一致；
+- `runtime.type: docker` 时 `agent.host_data_dir` 与 Agent 数据目录不一致；
 - Xray 配置字段非法；
 - REALITY 只支持 TCP / XHTTP / gRPC 传输；
 - Shadowsocks 多用户只支持 `2022-blake3-aes-128-gcm` / `2022-blake3-aes-256-gcm`；
@@ -48,12 +48,12 @@ Agent 容器内的 `/data` 和兄弟代理容器的 `/data` 必须指向宿主�
 
 ```text
 agent:   -v /var/lib/mikvace:/data
-env:     HOST_DATA_DIR=/var/lib/mikvace
+node.yaml: agent.host_data_dir: /var/lib/mikvace
 sibling: -v /var/lib/mikvace:/data
 ```
 
-- `HOST_DATA_DIR` 必须是绝对路径且存在；
-- 使用 Docker 命名卷时，不能把命名卷名当作 `HOST_DATA_DIR`；
+- `agent.host_data_dir` 必须是绝对路径且存在；
+- 使用 Docker 命名卷时，不能把命名卷名当作 `agent.host_data_dir`；
 - 如果 Agent 的 `/data` 是命名卷，兄弟容器看不到 Agent 生成的证书。
 
 ## 端口跳跃不生效

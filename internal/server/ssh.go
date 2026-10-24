@@ -75,11 +75,6 @@ func (s *Server) handleNodeSSHInstall(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sshInstallScript(n *model.Node) string {
-	pub, _ := s.store.GetSetting(contextBackground(), "public_url")
-	pub = strings.TrimRight(strings.TrimSpace(pub), "/")
-	if pub == "" {
-		pub = s.cfg.PublicURL
-	}
 	installDocker := ""
 	if n.SSHInstallDocker {
 		installDocker = `
@@ -108,23 +103,28 @@ if [[ ! -S /var/run/docker.sock ]]; then
   exit 1
 fi
 `
-		extra = "  -e HOST_DATA_DIR=/var/lib/mikvace \\\n  -v /var/run/docker.sock:/var/run/docker.sock \\\n"
+		extra = "  -v /var/run/docker.sock:/var/run/docker.sock \\\n"
 	}
+	yamlText := s.generatedNodeYAML(n, runtime)
 	return fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
 %s%s%s
-mkdir -p /var/lib/mikvace
+mkdir -p /etc/mikvace /var/lib/mikvace
+chmod 700 /etc/mikvace
+umask 077
+printf '%%s' %s > /etc/mikvace/node.token
+chmod 600 /etc/mikvace/node.token
+cat > /etc/mikvace/node.yaml <<'EOF'
+%sEOF
+chmod 600 /etc/mikvace/node.yaml
 docker rm -f mikvace-node >/dev/null 2>&1 || true
 docker run -d --name mikvace-node --restart unless-stopped \
   --network host --cap-add NET_ADMIN \
-  -e PANEL_URL=%s \
-  -e NODE_TOKEN=%s \
-  -e HY2_RUNTIME=%s \
-%s  -e DATA_DIR=/data \
+%s  -v /etc/mikvace:/config:ro \
   -v /var/lib/mikvace:/data \
-  ghcr.io/axmishell/mikvacepanel-node:latest
+  ghcr.io/axmishell/mikvacepanel-node:latest --config /config/node.yaml
 echo "MikvAce node agent started."
-`, dockerCheck, installDocker, sockCheck, shellQuote(pub), shellQuote(n.Token), runtime, extra)
+`, dockerCheck, installDocker, sockCheck, shellQuote(n.Token), yamlText, extra)
 }
 
 func runSSHInstall(host string, port int, user, password, key, expectedHostKey, script string) (sshInstallResult, string) {
@@ -239,5 +239,3 @@ func truncateOutput(s string, max int) string {
 	}
 	return s[:max] + "\n… output truncated"
 }
-
-func contextBackground() context.Context { return context.Background() }

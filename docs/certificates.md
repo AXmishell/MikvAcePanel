@@ -48,7 +48,7 @@ Agent 在以下时机自动申请/续期：
 - ACME 邮箱；
 - DNS 服务商：手动 TXT、Cloudflare、阿里云 DNS、DNSPod；
 - 提前续期天数（默认 30）；
-- DNS 凭据加密保存在 `panel.db`，加密密钥为 `data/cert.key`（0600）。也可以用面板环境变量 `CERT_ENC_KEY` 提供 32 字节 hex/base64 密钥；`data/cert.key` 会随备份归档一起保存。
+- DNS 凭据加密保存在 `panel.db`，加密密钥为 `data/cert.key`（0600）。也可以通过 `security.cert_key_file` 指向 32 字节密钥文件；`data/cert.key` 会随备份归档一起保存。
 
 DNS-01 要求面板能访问 DNS 服务商 API 与 ACME 目录，**不需要节点开放 80 或 443**。
 

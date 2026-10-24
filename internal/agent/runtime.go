@@ -77,10 +77,10 @@ func NewRuntime(cfg Config, protocol string, sink func(LogLine)) (Runtime, error
 			return nil, fmt.Errorf("docker runtime selected but docker CLI is not installed")
 		}
 		if !filepath.IsAbs(cfg.HostDataDir) {
-			return nil, fmt.Errorf("HOST_DATA_DIR must be an absolute host path for the docker runtime")
+			return nil, fmt.Errorf("agent.host_data_dir must be an absolute host path for the docker runtime")
 		}
 		if _, err := os.Stat(cfg.HostDataDir); err != nil {
-			return nil, fmt.Errorf("HOST_DATA_DIR %q is not accessible: %w", cfg.HostDataDir, err)
+			return nil, fmt.Errorf("agent.host_data_dir %q is not accessible: %w", cfg.HostDataDir, err)
 		}
 		return &dockerRuntime{
 			cfg: cfg, sink: sink, protocol: protocol, image: image, command: command,

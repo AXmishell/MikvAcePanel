@@ -3,25 +3,18 @@ services:
     image: ghcr.io/axmishell/mikvacepanel-node:latest
     container_name: mikvace-node
     restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    command: ["--config", "/config/node.yaml"]
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-    network_mode: host
-    cap_add:
-      - NET_ADMIN
-    environment:
-      PANEL_URL: "${PANEL_URL:?set PANEL_URL to your panel base URL}"
-      NODE_TOKEN: "${NODE_TOKEN:?set NODE_TOKEN from the panel}"
-      PANEL_INSECURE: "${PANEL_INSECURE:-false}"
-      HY2_RUNTIME: "docker"
-      LOG_LEVEL: "${LOG_LEVEL:-info}"
-      DATA_DIR: "/data"
-      # Host path of the data directory. The agent starts a sibling Hysteria
-      # container, so this must be an absolute host path, not a relative one.
-      HOST_DATA_DIR: "${NODE_DATA_DIR:?set NODE_DATA_DIR to an absolute host path}"
-      HY2_IMAGE: "${HY2_IMAGE:-tobyxdd/hysteria:latest}"
     volumes:
-      - "${NODE_DATA_DIR:?set NODE_DATA_DIR to an absolute host path}:/data"
+      - ./node.yaml:/config/node.yaml:ro
+      - ./node.token:/config/node.token:ro
+      # agent.host_data_dir must match this absolute host path.
+      - /var/lib/mikvace:/data
       - /var/run/docker.sock:/var/run/docker.sock

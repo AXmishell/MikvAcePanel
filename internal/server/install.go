@@ -12,9 +12,10 @@ set -euo pipefail
 PANEL_URL=""
 NODE_TOKEN=""
 RUNTIME="process"
-IMAGE="${NODE_IMAGE:-ghcr.io/axmishell/mikvacepanel-node:latest}"
-DATA_DIR="${DATA_DIR:-/var/lib/mikvace}"
-CONTAINER="${CONTAINER:-mikvace-node}"
+IMAGE="ghcr.io/axmishell/mikvacepanel-node:latest"
+DATA_DIR="/var/lib/mikvace"
+CONFIG_DIR="/etc/mikvace"
+CONTAINER="mikvace-node"
 INSECURE="false"
 
 while [[ $# -gt 0 ]]; do
@@ -24,10 +25,11 @@ while [[ $# -gt 0 ]]; do
     --runtime) RUNTIME="${2:-process}"; shift 2 ;;
     --image) IMAGE="${2:-}"; shift 2 ;;
     --data-dir) DATA_DIR="${2:-}"; shift 2 ;;
+    --config-dir) CONFIG_DIR="${2:-}"; shift 2 ;;
     --container) CONTAINER="${2:-}"; shift 2 ;;
     --insecure) INSECURE="true"; shift ;;
     -h|--help)
-      echo "Options: --panel URL --token TOKEN [--runtime process|docker] [--image IMAGE] [--data-dir DIR] [--insecure]"
+      echo "Options: --panel URL --token TOKEN [--runtime process|docker] [--image IMAGE] [--data-dir DIR] [--config-dir DIR] [--insecure]"
       exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
@@ -45,9 +47,36 @@ if [[ "$RUNTIME" != "process" && "$RUNTIME" != "docker" ]]; then
   echo "--runtime must be process or docker" >&2
   exit 2
 fi
+if [[ "$RUNTIME" == "docker" && "$DATA_DIR" != /* ]]; then
+  echo "--data-dir must be an absolute path for the docker runtime." >&2
+  exit 2
+fi
 
-echo "==> Preparing data directory $DATA_DIR"
-mkdir -p "$DATA_DIR"
+echo "==> Preparing directories"
+mkdir -p "$DATA_DIR" "$CONFIG_DIR"
+chmod 700 "$CONFIG_DIR"
+umask 077
+
+printf '%s' "$NODE_TOKEN" > "$CONFIG_DIR/node.token"
+chmod 600 "$CONFIG_DIR/node.token"
+
+cat > "$CONFIG_DIR/node.yaml" <<EOF
+version: 1
+panel:
+  url: "$PANEL_URL"
+  token_file: "/config/node.token"
+  insecure: $INSECURE
+agent:
+  data_dir: "/data"
+  host_data_dir: "$DATA_DIR"
+  log_level: "info"
+runtime:
+  type: "$RUNTIME"
+offline_auth:
+  enabled: true
+  listen: "127.0.0.1:9998"
+EOF
+chmod 600 "$CONFIG_DIR/node.yaml"
 
 if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
   echo "==> Removing existing container $CONTAINER"
@@ -66,15 +95,10 @@ fi
 echo "==> Starting MikvAce node agent"
 docker run -d --name "$CONTAINER" --restart unless-stopped \
   --network host --cap-add NET_ADMIN \
-  -e PANEL_URL="$PANEL_URL" \
-  -e NODE_TOKEN="$NODE_TOKEN" \
-  -e HY2_RUNTIME="$RUNTIME" \
-  -e DATA_DIR=/data \
-  -e HOST_DATA_DIR="$DATA_DIR" \
-  -e PANEL_INSECURE="$INSECURE" \
   "${EXTRA[@]}" \
+  -v "$CONFIG_DIR":/config:ro \
   -v "$DATA_DIR":/data \
-  "$IMAGE" >/dev/null
+  "$IMAGE" --config /config/node.yaml >/dev/null
 
 echo "==> Done. Agent logs: docker logs -f $CONTAINER"
 `

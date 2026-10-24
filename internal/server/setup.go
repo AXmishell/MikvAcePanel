@@ -7,6 +7,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/axmishell/mikvacepanel/internal/configfile"
 	"github.com/axmishell/mikvacepanel/internal/version"
 )
 
@@ -17,20 +18,24 @@ const minInstallPasswordLength = 12
 // installStatus is public. It only reveals whether first-run setup is pending,
 // which is already obvious from the /install page being reachable.
 type installStatus struct {
-	Installed  bool   `json:"installed"`
-	NeedsSetup bool   `json:"needsSetup"`
-	PanelName  string `json:"panelName"`
-	PublicURL  string `json:"publicUrl"`
-	Driver     string `json:"database"`
-	Version    string `json:"version"`
+	Installed      bool   `json:"installed"`
+	NeedsSetup     bool   `json:"needsSetup"`
+	PanelName      string `json:"panelName"`
+	PublicURL      string `json:"publicUrl"`
+	Driver         string `json:"database"`
+	Version        string `json:"version"`
+	ConfigPath     string `json:"configPath"`
+	ConfigWritable bool   `json:"configWritable"`
 }
 
 func (s *Server) installStatus(r *http.Request) installStatus {
 	status := installStatus{
-		Installed: true,
-		PanelName: "MikvAce Panel",
-		Driver:    s.store.Dialect().Name(),
-		Version:   version.String(),
+		Installed:      true,
+		PanelName:      "MikvAce Panel",
+		Driver:         s.store.Dialect().Name(),
+		Version:        version.String(),
+		ConfigPath:     s.cfg.ConfigPath,
+		ConfigWritable: configfile.Writable(s.cfg.ConfigPath),
 	}
 	if n, err := s.store.CountAdmins(r.Context()); err == nil {
 		status.Installed = n > 0
@@ -92,6 +97,33 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	panelName := strings.TrimSpace(req.PanelName)
+	if panelName != "" && len(panelName) > 64 {
+		panelName = panelName[:64]
+	}
+	publicURL := strings.TrimRight(strings.TrimSpace(req.PublicURL), "/")
+	if publicURL == "" {
+		publicURL = requestOrigin(r)
+	}
+	if publicURL != "" && !strings.HasPrefix(publicURL, "http://") && !strings.HasPrefix(publicURL, "https://") {
+		writeError(w, http.StatusBadRequest, "public URL must start with http:// or https://")
+		return
+	}
+	updates := map[string]any{
+		"admin.username": username,
+	}
+	if panelName != "" {
+		updates["panel.name"] = panelName
+	}
+	if publicURL != "" {
+		updates["panel.public_url"] = publicURL
+	}
+	if err := configfile.Set(s.cfg.ConfigPath, updates); err != nil {
+		writeError(w, http.StatusInternalServerError,
+			"could not write config file "+s.cfg.ConfigPath+": "+err.Error())
+		return
+	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not hash password")
@@ -116,17 +148,10 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		"bootstrap_warning":    "",
 		"install_completed_at": time.Now().UTC().Format(time.RFC3339),
 	}
-	if name := strings.TrimSpace(req.PanelName); name != "" {
-		if len(name) > 64 {
-			name = name[:64]
-		}
-		values["panel_name"] = name
+	if panelName != "" {
+		values["panel_name"] = panelName
 	}
-	publicURL := strings.TrimRight(strings.TrimSpace(req.PublicURL), "/")
-	if publicURL == "" {
-		publicURL = requestOrigin(r)
-	}
-	if publicURL != "" && (strings.HasPrefix(publicURL, "http://") || strings.HasPrefix(publicURL, "https://")) {
+	if publicURL != "" {
 		values["public_url"] = publicURL
 	}
 	if err := s.store.UpdateSettings(r.Context(), values); err != nil {

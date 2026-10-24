@@ -7,8 +7,11 @@ data-*
 *.db-shm
 *.db-wal
 *.log
+panel.yaml
+node.yaml
+*.token
+config
 .env
-.env.*
 docker.env
 web/node_modules
 web/dist

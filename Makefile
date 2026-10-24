@@ -54,7 +54,7 @@ test-cert-e2e:
 	./scripts/cert-e2e.sh
 
 dev:
-	go run ./cmd/server -addr :8080 -data ./data
+	go run ./cmd/server --config ./panel.yaml
 
 docs:
 	mkdocs build --strict

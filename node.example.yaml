@@ -1,0 +1,35 @@
+# MikvAce Node Agent configuration.
+# Copy to node.yaml and create node.token (mode 0600) from the panel install page.
+# All application settings live here; environment variables are not read.
+version: 1
+
+panel:
+  url: "https://panel.example.com"
+  # Node token must be provided by a file, never inline.
+  token_file: "/config/node.token"
+  # true only when the panel uses a self-signed HTTPS certificate.
+  insecure: false
+
+agent:
+  # Docker: /data. Binary/systemd: /var/lib/mikvace
+  data_dir: "/data"
+  # Host path of data_dir for the docker runtime (must be absolute).
+  # Ignored by the process runtime.
+  host_data_dir: "/var/lib/mikvace"
+  log_level: "info"
+  heartbeat: "10s"
+  stats_interval: "15s"
+
+runtime:
+  type: "process"           # process | docker
+  hysteria_bin: "hysteria"
+  xray_bin: "xray"
+  hysteria_image: "tobyxdd/hysteria:latest"
+  xray_image: "ghcr.io/xtls/xray-core:latest"
+  container_name: "mikvace-hysteria"
+
+offline_auth:
+  # Keep authenticating Hysteria users from the last snapshot when the panel is down.
+  enabled: true
+  # Loopback only. Use a different port when several nodes share one host.
+  listen: "127.0.0.1:9998"

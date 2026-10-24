@@ -18,43 +18,55 @@
 
 ### 方式 A：单容器（推荐）
 
-面板内 **Nodes → Install** 会生成带 Token 的完整命令。镜像内已经包含 Hysteria：
+面板内 **Nodes → Install** 会生成包含 Token 和完整 `node.yaml` 的安装命令。镜像内已经包含 Hysteria：
 
 ```bash
+sudo install -d -m 700 /etc/mikvace /var/lib/mikvace
+printf '%s' 'mtn_xxx' | sudo tee /etc/mikvace/node.token >/dev/null
+sudo tee /etc/mikvace/node.yaml >/dev/null <<'EOF'
+version: 1
+panel:
+  url: "https://panel.example.com"
+  token_file: "/config/node.token"
+agent:
+  data_dir: "/data"
+  host_data_dir: "/var/lib/mikvace"
+runtime:
+  type: "process"
+offline_auth:
+  enabled: true
+  listen: "127.0.0.1:9998"
+EOF
 docker run -d --name mikvace-node --restart unless-stopped \
   --network host --cap-add NET_ADMIN \
-  -e PANEL_URL="https://panel.example.com" \
-  -e NODE_TOKEN="mtn_xxx" \
-  -e HY2_RUNTIME=process \
+  -v /etc/mikvace:/config:ro \
   -v /var/lib/mikvace:/data \
-  ghcr.io/axmishell/mikvacepanel-node:latest
+  ghcr.io/axmishell/mikvacepanel-node:latest --config /config/node.yaml
 ```
 
 或使用 `docker-compose.node.yml` 与节点模板：
 
 ```bash
-cp .env.node.example .env
-# 填写 PANEL_URL、NODE_TOKEN 等
+cp node.example.yaml node.yaml
+printf '%s' 'mtn_xxx' > node.token && chmod 600 node.token
+# 编辑 node.yaml：panel.url、agent.host_data_dir 等
 docker compose -f docker-compose.node.yml up -d
 ```
 
 ### 方式 B：Agent 管理 Hysteria 容器
 
-Agent 自己也在容器里，但通过挂载 Docker socket 启动同机的 Hysteria 容器：
+Agent 自己也在容器里，但通过挂载 Docker socket 启动同机的 Hysteria 容器。把 `runtime.type` 改为 `docker`，并保证 `agent.host_data_dir` 是宿主机绝对路径：
 
 ```bash
 docker run -d --name mikvace-node --restart unless-stopped \
   --network host --cap-add NET_ADMIN \
-  -e PANEL_URL="https://panel.example.com" \
-  -e NODE_TOKEN="mtn_xxx" \
-  -e HY2_RUNTIME=docker \
-  -e HOST_DATA_DIR=/var/lib/mikvace \
+  -v /etc/mikvace:/config:ro \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /var/lib/mikvace:/data \
-  ghcr.io/axmishell/mikvacepanel-node:latest
+  ghcr.io/axmishell/mikvacepanel-node:latest --config /config/node.yaml
 ```
 
-此时 Hysteria 容器使用 `tobyxdd/hysteria:latest`，挂载宿主机 `/var/lib/mikvace` 到 `/data`。Agent 在容器内看到的 `/data` 并不是宿主机路径，因此必须用 `HOST_DATA_DIR` 告诉它宿主机实际路径。
+此时 Hysteria 容器使用 `runtime.hysteria_image`，挂载宿主机 `agent.host_data_dir` 到 `/data`。Agent 在容器内看到的 `/data` 并不是宿主机路径，因此 `host_data_dir` 必须是宿主机绝对路径。
 
 ### 在面板中选择运行方式
 
@@ -65,11 +77,11 @@ docker run -d --name mikvace-node --restart unless-stopped \
 | 进程模式（`process`） | Agent 在自身容器/主机内直接启动 Hysteria 与 Xray 二进制，默认方式 |
 | Docker 模式（`docker`） | Agent 通过挂载的 Docker socket 管理独立的代理容器 |
 
-选择 Docker 模式后，面板生成的安装命令、`docker-compose.yml` 和 SSH 自动安装脚本都会自动加入：
+选择 Docker 模式后，面板生成的安装命令、compose 和 SSH 自动安装脚本都会：
 
-- `HY2_RUNTIME=docker`
-- `HOST_DATA_DIR=/var/lib/mikvace`
-- `-v /var/run/docker.sock:/var/run/docker.sock`
+- 写入 `runtime.type: docker`
+- 写入 `agent.host_data_dir`
+- 增加 `-v /var/run/docker.sock:/var/run/docker.sock`
 
 修改运行方式不会远程切换正在运行的 Agent，需要点击 **安装** 重新执行命令或使用 **自动安装** 重建容器。节点卡片会显示所选模式和 Agent 实际回报的运行方式；两者不一致时会标记为需要重新安装。
 
@@ -79,6 +91,9 @@ docker run -d --name mikvace-node --restart unless-stopped \
 
 ```bash
 go build -o /usr/local/bin/mikvace-node ./cmd/node
+sudo install -d -m 700 /etc/mikvace /var/lib/mikvace
+sudo cp node.example.yaml /etc/mikvace/node.yaml
+# 编辑 panel.url、agent.data_dir、agent.host_data_dir、runtime.type 等
 ```
 
 `/etc/systemd/system/mikvace-node.service`：
@@ -90,12 +105,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-Environment=PANEL_URL=https://panel.example.com
-Environment=NODE_TOKEN=mtn_xxx
-Environment=DATA_DIR=/var/lib/mikvace
-Environment=HY2_RUNTIME=process
-Environment=HYSTERIA_BIN=/usr/local/bin/hysteria
-ExecStart=/usr/local/bin/mikvace-node
+ExecStart=/usr/local/bin/mikvace-node --config /etc/mikvace/node.yaml
 Restart=always
 RestartSec=3
 
@@ -107,26 +117,44 @@ WantedBy=multi-user.target
 
 ---
 
-## 环境变量
+## 配置文件
 
-| 变量 | 默认 | 说明 |
+应用配置只从 `node.yaml` 读取，不读取环境变量。查找顺序：`--config` → `node.yaml` → `config/node.yaml` → `/config/node.yaml` → `/data/node.yaml`。
+
+| 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `PANEL_URL` | — | 面板地址，`http(s)://`；Agent 自动转换成 `ws(s)://.../api/node/ws` |
-| `NODE_TOKEN` | — | 节点 Token |
-| `DATA_DIR` | `/data` | 配置、证书、状态目录 |
-| `HOST_DATA_DIR` | `/var/lib/mikvace` | Docker 模式下的宿主机数据路径 |
-| `HY2_RUNTIME` | `process` | `process` 或 `docker` |
-| `HYSTERIA_BIN` | `hysteria` | 进程模式 Hysteria 路径 |
-| `XRAY_BIN` | `xray` | 进程模式 Xray 路径 |
-| `HY2_IMAGE` | `tobyxdd/hysteria:latest` | Hysteria Docker 模式镜像 |
-| `XRAY_IMAGE` | `ghcr.io/xtls/xray-core:latest` | Xray Docker 模式镜像 |
-| `HY2_CONTAINER` | `mikvace-hysteria` | Docker 模式容器名 |
-| `PANEL_INSECURE` | `false` | 跳过面板 TLS 校验（仅自签名面板） |
-| `OFFLINE_AUTH` | `true` | 面板故障时使用本地用户快照继续为 Hysteria 认证 |
-| `AUTH_LISTEN` | `127.0.0.1:9998` | 本地认证网关地址；只允许回环地址 |
-| `LOG_LEVEL` | `info` | `debug/info/warn/error` |
+| `panel.url` | — | 面板地址，`http(s)://`；Agent 自动转换成 `ws(s)://.../api/node/ws` |
+| `panel.token_file` | — | 节点 Token 文件，内容不得出现在 YAML 中 |
+| `panel.insecure` | `false` | 跳过面板 TLS 校验（仅自签名面板） |
+| `agent.data_dir` | `/data` | 配置、证书、状态目录 |
+| `agent.host_data_dir` | `/var/lib/mikvace` | Docker 模式下的宿主机绝对路径 |
+| `agent.log_level` | `info` | `debug/info/warn/error` |
+| `agent.heartbeat` / `stats_interval` | `10s` / `15s` | 心跳与统计上报间隔 |
+| `runtime.type` | `process` | `process` 或 `docker` |
+| `runtime.hysteria_bin` / `xray_bin` | `hysteria` / `xray` | 进程模式二进制路径 |
+| `runtime.hysteria_image` / `xray_image` | 官方镜像 | Docker 模式镜像 |
+| `runtime.container_name` | `mikvace-hysteria` | Docker 模式容器名前缀 |
+| `offline_auth.enabled` | `true` | 面板故障时使用本地用户快照继续为 Hysteria 认证 |
+| `offline_auth.listen` | `127.0.0.1:9998` | 本地认证网关地址；只允许回环地址 |
 
-对应命令行参数：`--panel`、`--token`、`--data-dir`、`--host-data-dir`、`--runtime`、`--hysteria-bin`、`--hysteria-image`、`--container`、`--insecure`、`--log-level`、`--offline-auth`、`--auth-listen`。
+命令行只接受 `--config` 指定配置文件路径。
+
+旧版环境变量与 YAML 的对应关系：
+
+| 旧变量 | 新字段 |
+| --- | --- |
+| `PANEL_URL` | `panel.url` |
+| `NODE_TOKEN` | `panel.token_file`（先写入文件） |
+| `PANEL_INSECURE` | `panel.insecure` |
+| `DATA_DIR` | `agent.data_dir` |
+| `HOST_DATA_DIR` | `agent.host_data_dir` |
+| `LOG_LEVEL` | `agent.log_level` |
+| `HY2_RUNTIME` | `runtime.type` |
+| `HYSTERIA_BIN` / `XRAY_BIN` | `runtime.hysteria_bin` / `xray_bin` |
+| `HY2_IMAGE` / `XRAY_IMAGE` | `runtime.hysteria_image` / `xray_image` |
+| `HY2_CONTAINER` | `runtime.container_name` |
+| `OFFLINE_AUTH` | `offline_auth.enabled` |
+| `AUTH_LISTEN` | `offline_auth.listen` |
 
 ---
 
@@ -146,7 +174,7 @@ WantedBy=multi-user.target
 └── state/auth.key         # 本地认证网关密钥（0600）
 ```
 
-进程模式下，Agent 会把配置中的 `/data/` 前缀改写为实际 `DATA_DIR`；Docker 模式下保持不变，因为 Hysteria 容器也把数据目录挂载到 `/data`。
+进程模式下，Agent 会把配置中的 `/data/` 前缀改写为实际 `agent.data_dir`；Docker 模式下保持不变，因为 Hysteria 容器也把数据目录挂载到 `/data`。
 
 `ech.pem` 与 `client_ca.pem` 随 `config` 消息的 `files` 字段下发：`ech` 对应 `/data/certs/ech.pem`（0600），`clientCA` 对应 `/data/certs/client_ca.pem`（0644）。面板不会把 ECH 私钥返回给浏览器，只保留从 `ECH CONFIGS` 块提取的客户端配置列表。
 
@@ -189,17 +217,17 @@ Xray 不需要这套机制：用户 UUID/密码本来就写在 `config.json` 中
 - 面板上刚修改的密码/禁用操作，如果快照尚未送达，可能仍会短暂生效；
 - 用户离线期间继续消耗的流量无法实时写回面板，可能超过快照中的上限；
 - 设备数由节点本地重新计数，不与面板内存中的设备表共享；
-- 节点重启后仍可离线认证，快照和密钥都在 `DATA_DIR/state/`。
+- 节点重启后仍可离线认证，快照和密钥都在 `agent.data_dir/state/`。
 
-面板恢复后会自动重连并刷新快照；建议定期备份 `DATA_DIR/state/users.json` 与 `auth.key`，或直接备份整个数据目录。
+面板恢复后会自动重连并刷新快照；建议定期备份 `agent.data_dir/state/users.json` 与 `auth.key`，或直接备份整个数据目录。
 
 ### 部署要求
 
 - **必须是 host 网络**：官方 Compose 使用 `network_mode: host`。Docker 模式下 Hysteria 是兄弟容器，只有 host 网络才能访问 Agent 的 `127.0.0.1:9998`。
-- 同一台宿主机运行多个节点时，用 `AUTH_LISTEN=127.0.0.1:9997` 等为每个节点分配不同端口。
-- 网关只绑定回环地址，并校验 `state/auth.key`；不要把 `AUTH_LISTEN` 改成 `0.0.0.0`（Agent 会拒绝启动）。
+- 同一台宿主机运行多个节点时，用 `offline_auth.listen: 127.0.0.1:9997` 等为每个节点分配不同端口。
+- 网关只绑定回环地址，并校验 `state/auth.key`；不要把 `offline_auth.listen` 改成 `0.0.0.0`（Agent 会拒绝启动）。
 - 快照包含 Hysteria 连接密码，`state/` 目录和 `users.json` 必须保持仅 root 可读；面板与 Agent 之间应使用 WSS/HTTPS。
-- 不需要离线认证时可设置 `OFFLINE_AUTH=false`，Agent 会恢复为直接回调面板。
+- 不需要离线认证时可设置 `offline_auth.enabled: false`，Agent 会恢复为直接回调面板。
 
 ---
 
@@ -375,4 +403,4 @@ docker logs -f mikvace-node
 - `invalid node token`：在面板重置 Token 并更新启动命令。
 - `port hopping rules: ...`：容器缺少 NET_ADMIN、iptables 或使用了非 host 网络。
 - `hysteria exited after applying the configuration`：查看同批次 Hysteria 日志（面板 Logs 页面或容器日志），常见原因是端口被占用、证书路径错误、ACME 域名不可达。
-- 面板显示节点离线：检查面板 URL 是否可从节点访问、反代是否支持 WebSocket Upgrade、`PANEL_INSECURE` 是否正确。
+- 面板显示节点离线：检查面板 URL 是否可从节点访问、反代是否支持 WebSocket Upgrade、`panel.insecure` 是否正确。

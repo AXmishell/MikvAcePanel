@@ -161,12 +161,31 @@ PY
   PANEL_URL="http://127.0.0.1:$PORT"
   LOGIN_USER="smoke"
   LOGIN_PASS="smoke-test-password"
+  mkdir -p "$TMP_ROOT/config" "$TMP_ROOT/data"
+  printf '%s' "$LOGIN_PASS" > "$TMP_ROOT/config/admin.password"
+  printf '%s' "smoke-$(date +%s)-$$-0123456789abcdef" > "$TMP_ROOT/config/jwt.secret"
+  chmod 600 "$TMP_ROOT/config/admin.password" "$TMP_ROOT/config/jwt.secret"
+  cat > "$TMP_ROOT/config/panel.yaml" <<EOF
+version: 1
+panel:
+  name: "Smoke Panel"
+  public_url: "$PANEL_URL"
+server:
+  addr: "127.0.0.1:$PORT"
+  data_dir: "$TMP_ROOT/data"
+  serve_web: false
+  log_level: "warn"
+admin:
+  username: "$LOGIN_USER"
+  password_file: "$TMP_ROOT/config/admin.password"
+security:
+  jwt_secret_file: "$TMP_ROOT/config/jwt.secret"
+database:
+  driver: sqlite
+  path: "$TMP_ROOT/data/panel.db"
+EOF
   go build -tags noweb -o "$TMP_ROOT/mikvace-server-api" ./cmd/server
-  DATA_DIR="$TMP_ROOT/data" DB_PATH="$TMP_ROOT/data/panel.db" \
-    ADMIN_USERNAME="$LOGIN_USER" ADMIN_PASSWORD="$LOGIN_PASS" \
-    JWT_SECRET="smoke-$(date +%s)-$$" SERVE_WEB=false LOG_LEVEL=warn \
-    PANEL_PUBLIC_URL="$PANEL_URL" \
-    "$TMP_ROOT/mikvace-server-api" -addr "127.0.0.1:$PORT" -data "$TMP_ROOT/data" \
+  "$TMP_ROOT/mikvace-server-api" --config "$TMP_ROOT/config/panel.yaml" \
     >"$TMP_ROOT/server.log" 2>&1 &
   SERVER_PID=$!
   healthy=0

@@ -52,10 +52,13 @@
         <div class="login-head">
           <div class="eyebrow">Install</div>
           <h2>初始化面板</h2>
-          <p>设置管理员账号与公共访问地址，完成后将自动登录。</p>
+          <p>设置管理员账号与公共访问地址，完成后将自动登录。面板名称、访问地址和管理员用户名会写入 panel.yaml。</p>
         </div>
 
         <div v-if="loadingStatus" class="hint" style="padding: 8px 0">正在检查安装状态…</div>
+        <div v-else-if="!status.configWritable" class="banner banner-danger" style="margin-bottom: 12px">
+          配置文件不可写：<span class="mono">{{ status.configPath }}</span>。请把 panel.yaml 以可写方式挂载后重启面板。
+        </div>
 
         <form v-else @submit.prevent="submit">
           <div class="field">

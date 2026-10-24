@@ -1,0 +1,50 @@
+# MikvAce Panel configuration.
+# Copy to panel.yaml, then run /install or set admin.password_file.
+# All application settings live here; environment variables are not read.
+version: 1
+
+panel:
+  name: "MikvAce Panel"
+  # Public URL used in subscriptions and node callbacks. /install can update it.
+  public_url: "http://localhost:8080"
+
+server:
+  # Container listens on all interfaces; the compose file publishes 8080.
+  addr: ":8080"
+  # Docker: /data. Running the binary directly: ./data
+  data_dir: "/data"
+  serve_web: true
+  frontend_url: ""
+  cors_origins: []
+  # Only these proxies may supply X-Forwarded-For / X-Real-IP.
+  trusted_proxies: []
+  log_level: "info"
+
+admin:
+  username: "admin"
+  # Secret must be provided by a file, never inline.
+  # Leave empty to let /install create the first administrator.
+  password_file: ""
+
+session:
+  ttl: "24h"
+
+security:
+  # Leave empty to auto-generate data_dir/jwt.secret and data_dir/cert.key.
+  jwt_secret_file: ""
+  cert_key_file: ""
+
+database:
+  driver: "sqlite"          # sqlite | postgres | mysql
+  path: "/data/panel.db"    # sqlite only
+  # Remote DSN is read from this file, e.g. /run/secrets/database_url.
+  dsn_file: ""
+  max_open: 8
+  max_idle: 4
+  conn_max_lifetime: "1h"
+
+redis:
+  # Optional. The URL is read from this file, e.g. /config/redis.url.
+  url_file: ""
+  prefix: "mikvace:"
+  required: false

@@ -49,7 +49,7 @@ func Open(ctx context.Context, rawURL, prefix string, logger *slog.Logger) (*Cli
 	}
 	opt, err := goredis.ParseURL(rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse REDIS_URL: %w", err)
+		return nil, fmt.Errorf("parse redis URL: %w", err)
 	}
 	opt.DialTimeout = 5 * time.Second
 	opt.ReadTimeout = 3 * time.Second

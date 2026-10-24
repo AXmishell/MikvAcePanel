@@ -128,7 +128,7 @@ SMOKE_PANEL_PASSWORD=<password> \
 | N04 | 多协议 Xray | 4 个 inbound | 4 个端口监听，日志正常 |
 | N05 | 禁用入站 | 下发带 `enabled=false` 的配置 | 对应端口不监听 |
 | N06 | 双核心 | 同时下发 YAML+JSON | 两个进程同时运行 |
-| N07 | Docker 隔离 | `HY2_RUNTIME=docker` | `mikvace-hysteria` 与 `mikvace-hysteria-xray` 两个容器 |
+| N07 | Docker 隔离 | `runtime.type: docker` | `mikvace-hysteria` 与 `mikvace-hysteria-xray` 两个容器 |
 | N08 | 配置回滚 | 下发非法 Xray 配置 | 旧配置继续运行，ack 报错 |
 | N09 | 重启/停止 | 面板命令 | 两个核心按命令执行 |
 | N10 | 断线重连 | 重启 Agent | 自动重连，补发未确认批次 |

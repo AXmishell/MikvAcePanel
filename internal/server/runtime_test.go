@@ -24,11 +24,13 @@ func TestNodeRuntimeModeAndInstallCommands(t *testing.T) {
 		t.Fatalf("response runtimeMode = %+v", created["runtimeMode"])
 	}
 	dockerCmd, _ := created["installCommand"].(string)
-	if !strings.Contains(dockerCmd, "HY2_RUNTIME=docker") || !strings.Contains(dockerCmd, "/var/run/docker.sock") {
+	if !strings.Contains(dockerCmd, "type: docker") || !strings.Contains(dockerCmd, "/var/run/docker.sock") ||
+		!strings.Contains(dockerCmd, "--config /config/node.yaml") || !strings.Contains(dockerCmd, "/etc/mikvace/node.yaml") {
 		t.Fatalf("docker install command:\n%s", dockerCmd)
 	}
 	compose, _ := created["compose"].(string)
-	if !strings.Contains(compose, "HY2_RUNTIME: docker") || !strings.Contains(compose, "/var/run/docker.sock") {
+	if !strings.Contains(compose, "--config") || !strings.Contains(compose, "/var/run/docker.sock") ||
+		strings.Contains(compose, "environment:") {
 		t.Fatalf("docker compose:\n%s", compose)
 	}
 
@@ -40,7 +42,10 @@ func TestNodeRuntimeModeAndInstallCommands(t *testing.T) {
 	if script, _ := install["installScript"].(string); !strings.Contains(script, "--runtime docker") {
 		t.Fatalf("install script:\n%s", script)
 	}
-	if cmd, _ := install["processCommand"].(string); !strings.Contains(cmd, "HY2_RUNTIME=process") || strings.Contains(cmd, "docker.sock") {
+	if yamlText, _ := install["nodeYaml"].(string); !strings.Contains(yamlText, "type: docker") || !strings.Contains(yamlText, "token_file: /config/node.token") {
+		t.Fatalf("node yaml:\n%s", yamlText)
+	}
+	if cmd, _ := install["processCommand"].(string); !strings.Contains(cmd, "type: process") || strings.Contains(cmd, "docker.sock") {
 		t.Fatalf("process command:\n%s", cmd)
 	}
 
@@ -52,7 +57,7 @@ func TestNodeRuntimeModeAndInstallCommands(t *testing.T) {
 		t.Fatalf("updated runtimeMode = %+v", updatedNode["runtimeMode"])
 	}
 	processCmd, _ := updated["installCommand"].(string)
-	if !strings.Contains(processCmd, "HY2_RUNTIME=process") || strings.Contains(processCmd, "docker.sock") {
+	if !strings.Contains(processCmd, "type: process") || strings.Contains(processCmd, "docker.sock") {
 		t.Fatalf("updated install command:\n%s", processCmd)
 	}
 
@@ -72,9 +77,11 @@ func TestSSHInstallScriptRuntimeModes(t *testing.T) {
 		Token: "mtn_test_token", SSHInstallDocker: true, RuntimeMode: "docker",
 	})
 	for _, want := range []string{
-		"HY2_RUNTIME=docker",
-		"HOST_DATA_DIR=/var/lib/mikvace",
+		"type: docker",
+		"host_data_dir: /var/lib/mikvace",
 		"/var/run/docker.sock",
+		"--config /config/node.yaml",
+		"/etc/mikvace/node.token",
 	} {
 		if !strings.Contains(dockerScript, want) {
 			t.Fatalf("docker script missing %q:\n%s", want, dockerScript)
@@ -82,7 +89,7 @@ func TestSSHInstallScriptRuntimeModes(t *testing.T) {
 	}
 
 	processScript := env.app.sshInstallScript(&model.Node{Token: "mtn_test_token", RuntimeMode: "process"})
-	if !strings.Contains(processScript, "HY2_RUNTIME=process") || strings.Contains(processScript, "/var/run/docker.sock") {
+	if !strings.Contains(processScript, "type: process") || strings.Contains(processScript, "/var/run/docker.sock") {
 		t.Fatalf("process script:\n%s", processScript)
 	}
 }

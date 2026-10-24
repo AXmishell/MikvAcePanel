@@ -3,6 +3,7 @@
 package certcrypto
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -16,21 +17,19 @@ import (
 
 const keyFile = "cert.key"
 
-// LoadKey returns the panel certificate encryption key. CERT_ENC_KEY may be a
-// hex or base64 encoded 32 byte key; otherwise a key file is created under the
-// data directory with mode 0600.
-func LoadKey(dataDir string) ([]byte, error) {
-	if raw := strings.TrimSpace(os.Getenv("CERT_ENC_KEY")); raw != "" {
-		if b, err := hex.DecodeString(raw); err == nil && len(b) == 32 {
-			return b, nil
+// LoadKey returns the panel certificate encryption key. keyPath may point to a
+// 32-byte raw key, or a hex/base64 encoded key. When empty, DATA_DIR/cert.key
+// is created with mode 0600.
+func LoadKey(dataDir string, keyPath ...string) ([]byte, error) {
+	if len(keyPath) > 0 && strings.TrimSpace(keyPath[0]) != "" {
+		b, err := os.ReadFile(strings.TrimSpace(keyPath[0]))
+		if err != nil {
+			return nil, fmt.Errorf("security.cert_key_file: %w", err)
 		}
-		if b, err := base64.StdEncoding.DecodeString(raw); err == nil && len(b) == 32 {
-			return b, nil
+		if key, ok := decodeKey(b); ok {
+			return key, nil
 		}
-		if b, err := base64.RawURLEncoding.DecodeString(raw); err == nil && len(b) == 32 {
-			return b, nil
-		}
-		return nil, fmt.Errorf("CERT_ENC_KEY must be 32 bytes encoded as hex or base64")
+		return nil, fmt.Errorf("security.cert_key_file %q must contain 32 raw bytes or a hex/base64 encoded key", keyPath[0])
 	}
 	path := filepath.Join(dataDir, keyFile)
 	// A database restore may stage a matching encryption key. Swap it in
@@ -39,8 +38,10 @@ func LoadKey(dataDir string) ([]byte, error) {
 	if _, err := os.Stat(path + ".restore"); err == nil {
 		_ = os.Rename(path+".restore", path)
 	}
-	if b, err := os.ReadFile(path); err == nil && len(b) == 32 {
-		return b, nil
+	if b, err := os.ReadFile(path); err == nil {
+		if key, ok := decodeKey(b); ok {
+			return key, nil
+		}
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, err
@@ -53,6 +54,27 @@ func LoadKey(dataDir string) ([]byte, error) {
 		return nil, err
 	}
 	return key, nil
+}
+
+// decodeKey accepts a raw 32-byte key or a hex/base64 encoded representation.
+func decodeKey(raw []byte) ([]byte, bool) {
+	if len(raw) == 32 {
+		return raw, true
+	}
+	b := bytes.TrimSpace(raw)
+	if len(b) == 32 {
+		return b, true
+	}
+	if decoded, err := hex.DecodeString(string(b)); err == nil && len(decoded) == 32 {
+		return decoded, true
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(string(b)); err == nil && len(decoded) == 32 {
+		return decoded, true
+	}
+	if decoded, err := base64.RawURLEncoding.DecodeString(string(b)); err == nil && len(decoded) == 32 {
+		return decoded, true
+	}
+	return nil, false
 }
 
 // Encrypt seals plaintext with AES-256-GCM. Both returned values are base64.

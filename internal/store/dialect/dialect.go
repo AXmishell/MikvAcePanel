@@ -41,8 +41,7 @@ type Dialect interface {
 	IsRetryable(err error) bool
 }
 
-// For resolves a backend name. An empty name selects SQLite so existing
-// deployments that only set DB_PATH keep working.
+// For resolves a backend name. An empty name selects SQLite.
 func For(name string) (Dialect, error) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "", SQLite, "sqlite3":

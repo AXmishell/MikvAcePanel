@@ -3,21 +3,17 @@ services:
     image: ghcr.io/axmishell/mikvacepanel-node:latest
     container_name: mikvace-node
     restart: unless-stopped
+    # Hysteria is UDP based and port hopping manipulates host firewall rules.
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    command: ["--config", "/config/node.yaml"]
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-    # Hysteria is UDP based and port hopping manipulates host firewall rules.
-    network_mode: host
-    cap_add:
-      - NET_ADMIN
-    environment:
-      PANEL_URL: "${PANEL_URL:?set PANEL_URL to your panel base URL}"
-      NODE_TOKEN: "${NODE_TOKEN:?set NODE_TOKEN from the panel}"
-      PANEL_INSECURE: "${PANEL_INSECURE:-false}"
-      HY2_RUNTIME: "process"
-      LOG_LEVEL: "${LOG_LEVEL:-info}"
-      DATA_DIR: "/data"
     volumes:
-      - "${NODE_DATA_DIR:-./data-node}:/data"
+      - ./node.yaml:/config/node.yaml:ro
+      - ./node.token:/config/node.token:ro
+      - ./data-node:/data

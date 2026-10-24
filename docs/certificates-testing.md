@@ -58,7 +58,7 @@ PEBBLE_BIN=/usr/local/bin/pebble make test-cert-e2e
 - [ ] 面板与节点时间已同步（建议启用 NTP）；
 - [ ] 测试域名已解析到测试节点，且没有 CAA 限制；
 - [ ] 节点 Agent 版本支持 `cert.csr.v1`（`hello.capabilities` 可见）；
-- [ ] 已备份 `data/cert.key` 或确认 `CERT_ENC_KEY` 可用；
+- [ ] 已备份 `data/cert.key` 或确认 `security.cert_key_file` 可用；
 - [ ] 使用独立的测试 DNS Zone 与最小权限 API Token；
 - [ ] 记录当前证书序列号与指纹，便于回滚。
 
