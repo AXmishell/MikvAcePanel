@@ -302,40 +302,43 @@ API 域名的 Nginx 示例见 [`deploy/nginx-api.conf`](deploy/nginx-api.conf)�
 2. 创建后会弹出安装命令，复制到节点服务器执行。
 3. Agent 连接成功后节点状态变为 **Online**，面板会立即下发第一份配置。
 
-推荐的单容器命令（由面板自动生成，包含 Token 和完整的 `node.yaml`）：
+推荐的单容器命令（由面板自动生成，令牌通过环境变量传入，不需要 `node.yaml`）：
 
 ```bash
-sudo install -d -m 700 /etc/mikvace /var/lib/mikvace
-printf '%s' 'mtn_xxx' | sudo tee /etc/mikvace/node.token >/dev/null
-sudo tee /etc/mikvace/node.yaml >/dev/null <<'EOF'
-version: 1
-panel:
-  url: "https://panel.example.com"
-  token_file: "/config/node.token"
-agent:
-  data_dir: "/data"
-  host_data_dir: "/var/lib/mikvace"
-runtime:
-  type: "process"
-offline_auth:
-  enabled: true
-  listen: "127.0.0.1:9998"
-EOF
+sudo install -d -m 700 /var/lib/mikvace
 docker run -d --name mikvace-node --restart unless-stopped \
   --network host --cap-add NET_ADMIN \
-  -v /etc/mikvace:/config:ro \
+  -e PANEL_URL='https://panel.example.com' \
+  -e NODE_TOKEN='mtn_xxx' \
+  -e HY2_RUNTIME=process \
   -v /var/lib/mikvace:/data \
-  ghcr.io/axmishell/mikvacepanel-node:latest --config /config/node.yaml
+  ghcr.io/axmishell/mikvacepanel-node:latest
 ```
 
-也可以使用节点模板与 Compose 部署（进程模式；Docker 模式改用 `docker-compose.node-docker.yml`）：
+Compose 部署也是一个文件，令牌直接写在 `environment` 里：
+
+```yaml
+services:
+  node:
+    image: ghcr.io/axmishell/mikvacepanel-node:latest
+    container_name: mikvace-node
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    environment:
+      PANEL_URL: "https://panel.example.com"
+      NODE_TOKEN: "mtn_xxx"
+      HY2_RUNTIME: "process"
+    volumes:
+      - /var/lib/mikvace:/data
+```
 
 ```bash
-cp node.example.yaml node.yaml
-printf '%s' 'mtn_xxx' > node.token && chmod 600 node.token
-# 编辑 node.yaml：panel.url、agent.host_data_dir 等
 docker compose -f docker-compose.node.yml up -d
 ```
+
+`HY2_RUNTIME=process` 时 Agent 在自身容器内启动核心；`HY2_RUNTIME=docker` 时通过 Docker socket 启动独立容器，需要额外挂载 `/var/run/docker.sock`，并保持 `HOST_DATA_DIR` 与 `/data` 的宿主机路径一致。
 
 上面的命令直接使用 GHCR 上的预构建镜像。需要本地构建时，可以构建同名镜像覆盖它：
 
@@ -345,22 +348,21 @@ make docker-node
 docker build -f Dockerfile.node -t ghcr.io/axmishell/mikvacepanel-node:latest .
 ```
 
-节点配置只从 `node.yaml` 读取，不读取环境变量：
+节点优先读取环境变量，其次才是可选的 `node.yaml`（二进制 / systemd 部署仍可使用）：
 
-| 字段 | 默认值 | 说明 |
-| --- | --- | --- |
-| `panel.url` | 必填 | 面板公开地址，例如 `https://panel.example.com` |
-| `panel.token_file` | 必填 | 节点 Token 文件路径，容器内通常为 `/config/node.token` |
-| `panel.insecure` | `false` | 面板使用自签名 HTTPS 时设为 `true` |
-| `agent.data_dir` | `/data` | 容器内持久化目录 |
-| `agent.host_data_dir` | `/var/lib/mikvace` | Docker 模式下的宿主机绝对路径 |
-| `agent.heartbeat` / `stats_interval` | `10s` / `15s` | 上报间隔 |
-| `runtime.type` | `process` | `process`：Agent 直接启动核心；`docker`：启动同机容器 |
-| `runtime.hysteria_bin` / `xray_bin` | `hysteria` / `xray` | 进程模式下的二进制路径 |
-| `runtime.hysteria_image` / `xray_image` | 官方镜像 | Docker 模式镜像 |
-| `offline_auth.enabled` | `true` | 面板故障时用本地快照继续为 Hysteria 认证 |
-| `offline_auth.listen` | `127.0.0.1:9998` | 本地认证网关地址，只允许回环地址 |
-| `agent.log_level` | `info` | Agent 日志级别 |
+| 环境变量 | 对应字段 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `PANEL_URL` | `panel.url` | 必填 | 面板公开地址，例如 `https://panel.example.com` |
+| `NODE_TOKEN` | 令牌 | 必填 | 节点 Token；也可用 `NODE_TOKEN_FILE` 指向文件 |
+| `HY2_RUNTIME` | `runtime.type` | `process` | `process`：Agent 直接启动核心；`docker`：启动同机容器 |
+| `PANEL_INSECURE` | `panel.insecure` | `false` | 面板使用自签名 HTTPS 时设为 `true` |
+| `DATA_DIR` | `agent.data_dir` | `/data` | 容器内持久化目录 |
+| `HOST_DATA_DIR` | `agent.host_data_dir` | `/var/lib/mikvace` | Docker 模式下的宿主机绝对路径 |
+| `LOG_LEVEL` | `agent.log_level` | `info` | Agent 日志级别 |
+| `HEARTBEAT` / `STATS_INTERVAL` | 上报间隔 | `10s` / `15s` | 心跳与统计上报间隔 |
+| `OFFLINE_AUTH` | `offline_auth.enabled` | `true` | 面板故障时用本地快照继续为 Hysteria 认证 |
+| `OFFLINE_AUTH_LISTEN` | `offline_auth.listen` | `127.0.0.1:9998` | 本地认证网关地址，只允许回环地址 |
+| `HYSTERIA_IMAGE` / `XRAY_IMAGE` | Docker 模式镜像 | 官方镜像 | 运行 `HY2_RUNTIME=docker` 时使用 |
 
 更多说明见 [docs/node-agent.md](docs/node-agent.md)。
 

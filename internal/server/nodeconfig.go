@@ -2,52 +2,53 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/axmishell/mikvacepanel/internal/model"
 )
 
-type generatedNodeConfig struct {
-	Version int `yaml:"version"`
-	Panel   struct {
-		URL       string `yaml:"url"`
-		TokenFile string `yaml:"token_file"`
-		Insecure  bool   `yaml:"insecure"`
-	} `yaml:"panel"`
-	Agent struct {
-		DataDir     string `yaml:"data_dir"`
-		HostDataDir string `yaml:"host_data_dir"`
-		LogLevel    string `yaml:"log_level"`
-	} `yaml:"agent"`
-	Runtime struct {
-		Type string `yaml:"type"`
-	} `yaml:"runtime"`
-	OfflineAuth struct {
-		Enabled bool   `yaml:"enabled"`
-		Listen  string `yaml:"listen"`
-	} `yaml:"offline_auth"`
-}
+// nodeDataDir is the single host/container data path used by every install
+// method. Keeping docker run, Compose and the generated documentation in sync
+// avoids losing the offline-auth snapshot when switching methods.
+const nodeDataDir = "/var/lib/mikvace"
 
-// generatedNodeYAML renders a complete node.yaml for the install dialog.
-// The node token is deliberately kept in a separate file.
-func (s *Server) generatedNodeYAML(n *model.Node, runtime string) string {
-	var cfg generatedNodeConfig
-	cfg.Version = 1
-	cfg.Panel.URL = s.panelBaseURL(context.Background())
-	cfg.Panel.TokenFile = "/config/node.token"
-	cfg.Agent.DataDir = "/data"
-	cfg.Agent.HostDataDir = "/var/lib/mikvace"
-	cfg.Agent.LogLevel = "info"
-	cfg.Runtime.Type = runtime
-	cfg.OfflineAuth.Enabled = true
-	cfg.OfflineAuth.Listen = "127.0.0.1:9998"
-	b, err := yaml.Marshal(cfg)
-	if err != nil {
-		return ""
+// generatedNodeCompose renders a self-contained docker-compose.yml. The token
+// is passed through the container environment, so no node.yaml/node.token
+// files are required.
+func (s *Server) generatedNodeCompose(n *model.Node, runtime string) string {
+	panelURL := s.panelBaseURL(context.Background())
+	extraEnv := ""
+	extraVolume := ""
+	note := ""
+	if runtime == "docker" {
+		extraEnv = fmt.Sprintf("\n      HOST_DATA_DIR: %q", nodeDataDir)
+		extraVolume = "\n      - /var/run/docker.sock:/var/run/docker.sock"
+		note = "    # Docker runtime: HOST_DATA_DIR must equal the host path mounted below.\n"
 	}
-	return string(b)
+	return fmt.Sprintf(`# Save as docker-compose.yml, then run: docker compose up -d
+# This file contains the node token; do not commit it to a repository.
+services:
+  node:
+    image: ghcr.io/axmishell/mikvacepanel-node:latest
+    container_name: mikvace-node
+    restart: unless-stopped
+    # Hysteria uses UDP and port hopping edits host firewall rules.
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+%s    environment:
+      PANEL_URL: %q
+      NODE_TOKEN: %q
+      HY2_RUNTIME: %q%s
+    volumes:
+      - %s:/data%s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+`, note, panelURL, n.Token, runtime, extraEnv, nodeDataDir, extraVolume)
 }
 
 func (s *Server) panelBaseURL(ctx context.Context) string {

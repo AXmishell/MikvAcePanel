@@ -24,14 +24,37 @@ func TestNodeRuntimeModeAndInstallCommands(t *testing.T) {
 		t.Fatalf("response runtimeMode = %+v", created["runtimeMode"])
 	}
 	dockerCmd, _ := created["installCommand"].(string)
-	if !strings.Contains(dockerCmd, "type: docker") || !strings.Contains(dockerCmd, "/var/run/docker.sock") ||
-		!strings.Contains(dockerCmd, "--config /config/node.yaml") || !strings.Contains(dockerCmd, "/etc/mikvace/node.yaml") {
-		t.Fatalf("docker install command:\n%s", dockerCmd)
+	for _, want := range []string{
+		"-e PANEL_URL='http://panel.test'",
+		"-e HY2_RUNTIME='docker'",
+		"-e HOST_DATA_DIR='/var/lib/mikvace'",
+		"/var/lib/mikvace:/data",
+		"/var/run/docker.sock",
+	} {
+		if !strings.Contains(dockerCmd, want) {
+			t.Fatalf("docker install command missing %q:\n%s", want, dockerCmd)
+		}
+	}
+	if strings.Contains(dockerCmd, "node.yaml") || strings.Contains(dockerCmd, "node.token") {
+		t.Fatalf("docker install command still references config files:\n%s", dockerCmd)
 	}
 	compose, _ := created["compose"].(string)
-	if !strings.Contains(compose, "--config") || !strings.Contains(compose, "/var/run/docker.sock") ||
-		strings.Contains(compose, "environment:") {
-		t.Fatalf("docker compose:\n%s", compose)
+	for _, want := range []string{
+		"environment:",
+		`PANEL_URL: "http://panel.test"`,
+		"NODE_TOKEN:",
+		`HY2_RUNTIME: "docker"`,
+		`HOST_DATA_DIR: "/var/lib/mikvace"`,
+		"/var/lib/mikvace:/data",
+		"/var/run/docker.sock",
+		"max-size:",
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("docker compose missing %q:\n%s", want, compose)
+		}
+	}
+	if strings.Contains(compose, "node.yaml") || strings.Contains(compose, "node.token") {
+		t.Fatalf("docker compose still references config files:\n%s", compose)
 	}
 
 	nodeID := int64(nodeObj["id"].(float64))
@@ -39,13 +62,13 @@ func TestNodeRuntimeModeAndInstallCommands(t *testing.T) {
 	if install["runtimeMode"] != "docker" {
 		t.Fatalf("install runtimeMode = %+v", install["runtimeMode"])
 	}
+	if _, ok := install["nodeYaml"]; ok {
+		t.Fatal("install response must not contain nodeYaml")
+	}
 	if script, _ := install["installScript"].(string); !strings.Contains(script, "--runtime docker") {
 		t.Fatalf("install script:\n%s", script)
 	}
-	if yamlText, _ := install["nodeYaml"].(string); !strings.Contains(yamlText, "type: docker") || !strings.Contains(yamlText, "token_file: /config/node.token") {
-		t.Fatalf("node yaml:\n%s", yamlText)
-	}
-	if cmd, _ := install["processCommand"].(string); !strings.Contains(cmd, "type: process") || strings.Contains(cmd, "docker.sock") {
+	if cmd, _ := install["processCommand"].(string); !strings.Contains(cmd, "-e HY2_RUNTIME='process'") || strings.Contains(cmd, "docker.sock") {
 		t.Fatalf("process command:\n%s", cmd)
 	}
 
@@ -57,7 +80,7 @@ func TestNodeRuntimeModeAndInstallCommands(t *testing.T) {
 		t.Fatalf("updated runtimeMode = %+v", updatedNode["runtimeMode"])
 	}
 	processCmd, _ := updated["installCommand"].(string)
-	if !strings.Contains(processCmd, "type: process") || strings.Contains(processCmd, "docker.sock") {
+	if !strings.Contains(processCmd, "-e HY2_RUNTIME='process'") || strings.Contains(processCmd, "docker.sock") {
 		t.Fatalf("updated install command:\n%s", processCmd)
 	}
 
@@ -77,19 +100,23 @@ func TestSSHInstallScriptRuntimeModes(t *testing.T) {
 		Token: "mtn_test_token", SSHInstallDocker: true, RuntimeMode: "docker",
 	})
 	for _, want := range []string{
-		"type: docker",
-		"host_data_dir: /var/lib/mikvace",
+		"-e PANEL_URL='http://panel.test'",
+		"-e NODE_TOKEN='mtn_test_token'",
+		"-e HY2_RUNTIME='docker'",
+		"-e HOST_DATA_DIR='/var/lib/mikvace'",
+		"/var/lib/mikvace:/data",
 		"/var/run/docker.sock",
-		"--config /config/node.yaml",
-		"/etc/mikvace/node.token",
 	} {
 		if !strings.Contains(dockerScript, want) {
 			t.Fatalf("docker script missing %q:\n%s", want, dockerScript)
 		}
 	}
+	if strings.Contains(dockerScript, "node.yaml") || strings.Contains(dockerScript, "node.token") {
+		t.Fatalf("docker script still writes config files:\n%s", dockerScript)
+	}
 
 	processScript := env.app.sshInstallScript(&model.Node{Token: "mtn_test_token", RuntimeMode: "process"})
-	if !strings.Contains(processScript, "type: process") || strings.Contains(processScript, "/var/run/docker.sock") {
+	if !strings.Contains(processScript, "-e HY2_RUNTIME='process'") || strings.Contains(processScript, "/var/run/docker.sock") {
 		t.Fatalf("process script:\n%s", processScript)
 	}
 }

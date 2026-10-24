@@ -105,38 +105,39 @@ docker run -d --name mikvace-panel --restart unless-stopped \
   - `节点自签 ACME`：Hysteria 自己申请，使用 TLS-ALPN，不占用 80；
 - 端口跳跃、obfs、ACL、出站等可选。
 
-保存后点击 **安装**，复制生成的命令到节点执行。命令会创建 `/etc/mikvace/node.yaml` 和 `/etc/mikvace/node.token`，并通过 `--config` 启动 Agent：
+保存后点击 **安装**，复制生成的命令到节点执行。令牌通过环境变量传入，不需要创建 `node.yaml` 或 `node.token`：
 
 ```bash
-sudo install -d -m 700 /etc/mikvace /var/lib/mikvace
-printf '%s' 'mtn_xxx' | sudo tee /etc/mikvace/node.token >/dev/null
-sudo tee /etc/mikvace/node.yaml >/dev/null <<'EOF'
-version: 1
-panel:
-  url: "https://panel.example.com"
-  token_file: "/config/node.token"
-agent:
-  data_dir: "/data"
-  host_data_dir: "/var/lib/mikvace"
-runtime:
-  type: "process"
-offline_auth:
-  enabled: true
-  listen: "127.0.0.1:9998"
-EOF
+sudo install -d -m 700 /var/lib/mikvace
 docker run -d --name mikvace-node --restart unless-stopped \
   --network host --cap-add NET_ADMIN \
-  -v /etc/mikvace:/config:ro \
+  -e PANEL_URL='https://panel.example.com' \
+  -e NODE_TOKEN='mtn_xxx' \
+  -e HY2_RUNTIME=process \
   -v /var/lib/mikvace:/data \
-  ghcr.io/axmishell/mikvacepanel-node:latest --config /config/node.yaml
+  ghcr.io/axmishell/mikvacepanel-node:latest
 ```
 
-如果使用 Compose 部署节点：
+如果使用 Compose 部署节点，同样只需要一个文件，令牌写在 `environment` 中：
+
+```yaml
+services:
+  node:
+    image: ghcr.io/axmishell/mikvacepanel-node:latest
+    container_name: mikvace-node
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    environment:
+      PANEL_URL: "https://panel.example.com"
+      NODE_TOKEN: "mtn_xxx"
+      HY2_RUNTIME: "process"
+    volumes:
+      - /var/lib/mikvace:/data
+```
 
 ```bash
-cp node.example.yaml node.yaml
-printf '%s' 'mtn_xxx' > node.token && chmod 600 node.token
-# 编辑 node.yaml：panel.url、agent.host_data_dir 等
 docker compose -f docker-compose.node.yml up -d
 ```
 
@@ -145,7 +146,7 @@ docker compose -f docker-compose.node.yml up -d
 !!! warning "网络模式"
 
     Hysteria 使用 UDP，端口跳跃需要修改宿主机 iptables，因此节点容器使用 `--network host` 和 `--cap-add NET_ADMIN`。
-    `runtime.type: docker` 还会挂载 `/var/run/docker.sock`，这等同于宿主机 root 权限，请只在受控节点使用。
+    `HY2_RUNTIME=docker` 还会挂载 `/var/run/docker.sock`，这等同于宿主机 root 权限，请只在受控节点使用。
 
 ## 4. 创建用户与订阅
 

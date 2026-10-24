@@ -1,11 +1,14 @@
-# MikvAce Node Agent configuration.
+# Optional MikvAce Node Agent configuration for binary/systemd deployments.
+# Docker and Compose deployments configure the node with PANEL_URL,
+# NODE_TOKEN and HY2_RUNTIME instead, so this file is not required there.
 # Copy to node.yaml and create node.token (mode 0600) from the panel install page.
-# All application settings live here; environment variables are not read.
+# Environment variables take precedence over the values in this file.
 version: 1
 
 panel:
   url: "https://panel.example.com"
-  # Node token must be provided by a file, never inline.
+  # Node token must be provided by a file, never inline. With environment
+  # variables, use NODE_TOKEN or NODE_TOKEN_FILE instead.
   token_file: "/config/node.token"
   # true only when the panel uses a self-signed HTTPS certificate.
   insecure: false

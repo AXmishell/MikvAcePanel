@@ -121,7 +121,7 @@ SQLite 使用 WAL 模式；`VACUUM INTO` 生成一致性备份快照。
 ### 传输
 
 - 生产环境必须使用 HTTPS/WSS；
-- 自签名面板可在 `node.yaml` 设置 `panel.insecure: true`，但不建议长期使用；
+- 自签名面板可设置 `PANEL_INSECURE=true`（或 `node.yaml` 的 `panel.insecure`），但不建议长期使用；
 - 反向代理必须支持 WebSocket Upgrade；
 - ACME DNS-01 只产生面板到 DNS/CA 的出站连接。
 

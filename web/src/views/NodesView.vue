@@ -551,7 +551,7 @@
           当前运行方式：<strong>{{ runtimeLabel(install.runtimeMode) }}</strong>。修改运行方式后需要重新安装 Agent。
         </div>
         <div>
-          <div class="flex" style="margin-bottom: 7px"><strong class="small">Docker（{{ runtimeLabel(install.runtimeMode) }}，当前配置）</strong><div class="spacer"></div><button class="btn btn-sm" @click="copy(install.installCommand)"><Copy :size="13" /> 复制</button></div>
+          <div class="flex" style="margin-bottom: 7px"><strong class="small">Docker run（{{ runtimeLabel(install.runtimeMode) }}，当前配置）</strong><div class="spacer"></div><button class="btn btn-sm" @click="copy(install.installCommand)"><Copy :size="13" /> 复制</button></div>
           <pre class="code">{{ install.installCommand }}</pre>
         </div>
         <details>
@@ -570,19 +570,7 @@
             <button class="btn btn-sm" @click="downloadCompose"><Download :size="13" /> 下载</button>
           </div>
           <pre class="code">{{ install.compose }}</pre>
-          <div class="small dim" style="margin-top: 6px">保存为 docker-compose.yml 后执行 <span class="mono">docker compose up -d</span>。修改运行方式后请重新打开安装信息。</div>
-        </div>
-        <div>
-          <div class="flex" style="margin-bottom: 7px">
-            <strong class="small">node.yaml</strong>
-            <div class="spacer"></div>
-            <button class="btn btn-sm" @click="copy(install.nodeYaml)"><Copy :size="13" /> 复制</button>
-          </div>
-          <pre class="code">{{ install.nodeYaml }}</pre>
-          <div class="small dim" style="margin-top: 6px">
-            Compose 方式需保存为 <span class="mono">node.yaml</span>，并把令牌写入 <span class="mono">node.token</span>（权限 600）；
-            一键安装命令会自动完成这两步。
-          </div>
+          <div class="small dim" style="margin-top: 6px">保存为 docker-compose.yml 后执行 <span class="mono">docker compose up -d</span>。令牌已写入 <span class="mono">environment</span>，无需再创建 node.yaml 或 node.token。修改运行方式后请重新打开安装信息。</div>
         </div>
         <div class="flex">
           <span class="dim small">令牌: <span class="mono">{{ install.token }}</span></span>

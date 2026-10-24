@@ -261,8 +261,7 @@ func (s *Server) handleResetNodeToken(w http.ResponseWriter, r *http.Request) {
 		"installCommand": s.installCommand(n, mode),
 		"processCommand": s.installCommand(n, "process"),
 		"dockerCommand":  s.installCommand(n, "docker"),
-		"compose":        s.installCompose(n, mode),
-		"nodeYaml":       s.generatedNodeYAML(n, mode),
+		"compose":        s.generatedNodeCompose(n, mode),
 	})
 }
 
@@ -396,55 +395,24 @@ func (s *Server) handleNodeInstall(w http.ResponseWriter, r *http.Request) {
 		"installCommand": s.installCommand(n, mode),
 		"processCommand": s.installCommand(n, "process"),
 		"dockerCommand":  s.installCommand(n, "docker"),
-		"compose":        s.installCompose(n, mode),
-		"nodeYaml":       s.generatedNodeYAML(n, mode),
+		"compose":        s.generatedNodeCompose(n, mode),
 	})
 }
 
 func (s *Server) installCommand(n *model.Node, runtime string) string {
+	env := fmt.Sprintf("  -e PANEL_URL=%s \\\n  -e NODE_TOKEN=%s \\\n  -e HY2_RUNTIME=%s \\\n",
+		shellQuote(s.panelBaseURL(context.Background())), shellQuote(n.Token), shellQuote(runtime))
 	extra := ""
 	if runtime == "docker" {
-		extra = " \\\n  -v /var/run/docker.sock:/var/run/docker.sock"
+		env += fmt.Sprintf("  -e HOST_DATA_DIR=%s \\\n", shellQuote(nodeDataDir))
+		extra = "  -v /var/run/docker.sock:/var/run/docker.sock \\\n"
 	}
-	yamlText := s.generatedNodeYAML(n, runtime)
-	return fmt.Sprintf(`sudo install -d -m 700 /etc/mikvace /var/lib/mikvace
-printf '%%s' %s | sudo tee /etc/mikvace/node.token >/dev/null
-sudo chmod 600 /etc/mikvace/node.token
-sudo tee /etc/mikvace/node.yaml >/dev/null <<'EOF'
-%sEOF
-sudo chmod 600 /etc/mikvace/node.yaml
+	return fmt.Sprintf(`sudo install -d -m 700 %s
+docker rm -f mikvace-node >/dev/null 2>&1 || true
 docker run -d --name mikvace-node --restart unless-stopped \
   --network host --cap-add NET_ADMIN \
-  -v /etc/mikvace:/config:ro \
-  -v /var/lib/mikvace:/data%s \
-  ghcr.io/axmishell/mikvacepanel-node:latest --config /config/node.yaml`,
-		shellQuote(n.Token), yamlText, extra)
-}
-
-func (s *Server) installCompose(n *model.Node, runtime string) string {
-	extra := ""
-	dataMount := "./data-node"
-	note := ""
-	if runtime == "docker" {
-		extra = "\n      - /var/run/docker.sock:/var/run/docker.sock"
-		dataMount = "/var/lib/mikvace"
-		note = "\n# Docker runtime: agent.host_data_dir must equal the host path of /var/lib/mikvace."
-	}
-	return fmt.Sprintf(`# 1. Save this file as docker-compose.yml
-# 2. Create node.yaml and node.token from the panel install dialog%s
-services:
-  node:
-    image: ghcr.io/axmishell/mikvacepanel-node:latest
-    container_name: mikvace-node
-    restart: unless-stopped
-    network_mode: host
-    cap_add:
-      - NET_ADMIN
-    command: ["--config", "/config/node.yaml"]
-    volumes:
-      - ./node.yaml:/config/node.yaml:ro
-      - ./node.token:/config/node.token:ro
-      - %s:/data%s`, note, dataMount, extra)
+%s%s  -v %s:/data \
+  ghcr.io/axmishell/mikvacepanel-node:latest`, nodeDataDir, env, extra, nodeDataDir)
 }
 
 func (s *Server) nodeFromPayload(p *nodePayload, existing *model.Node) (*model.Node, error) {
@@ -656,8 +624,7 @@ func (s *Server) nodeResponse(n *model.Node) map[string]any {
 		"installCommand": s.installCommand(n, mode),
 		"processCommand": s.installCommand(n, "process"),
 		"dockerCommand":  s.installCommand(n, "docker"),
-		"compose":        s.installCompose(n, mode),
-		"nodeYaml":       s.generatedNodeYAML(n, mode),
+		"compose":        s.generatedNodeCompose(n, mode),
 		"connected":      s.hub.Connected(n.ID),
 	}
 }

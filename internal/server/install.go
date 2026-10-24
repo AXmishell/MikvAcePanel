@@ -14,7 +14,6 @@ NODE_TOKEN=""
 RUNTIME="process"
 IMAGE="ghcr.io/axmishell/mikvacepanel-node:latest"
 DATA_DIR="/var/lib/mikvace"
-CONFIG_DIR="/etc/mikvace"
 CONTAINER="mikvace-node"
 INSECURE="false"
 
@@ -25,11 +24,11 @@ while [[ $# -gt 0 ]]; do
     --runtime) RUNTIME="${2:-process}"; shift 2 ;;
     --image) IMAGE="${2:-}"; shift 2 ;;
     --data-dir) DATA_DIR="${2:-}"; shift 2 ;;
-    --config-dir) CONFIG_DIR="${2:-}"; shift 2 ;;
     --container) CONTAINER="${2:-}"; shift 2 ;;
+    --config-dir) shift 2 ;; # accepted for compatibility; the agent no longer reads a file
     --insecure) INSECURE="true"; shift ;;
     -h|--help)
-      echo "Options: --panel URL --token TOKEN [--runtime process|docker] [--image IMAGE] [--data-dir DIR] [--config-dir DIR] [--insecure]"
+      echo "Options: --panel URL --token TOKEN [--runtime process|docker] [--image IMAGE] [--data-dir DIR] [--container NAME] [--insecure]"
       exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
@@ -52,53 +51,28 @@ if [[ "$RUNTIME" == "docker" && "$DATA_DIR" != /* ]]; then
   exit 2
 fi
 
-echo "==> Preparing directories"
-mkdir -p "$DATA_DIR" "$CONFIG_DIR"
-chmod 700 "$CONFIG_DIR"
-umask 077
+echo "==> Preparing data directory"
+mkdir -p "$DATA_DIR"
 
-printf '%s' "$NODE_TOKEN" > "$CONFIG_DIR/node.token"
-chmod 600 "$CONFIG_DIR/node.token"
-
-cat > "$CONFIG_DIR/node.yaml" <<EOF
-version: 1
-panel:
-  url: "$PANEL_URL"
-  token_file: "/config/node.token"
-  insecure: $INSECURE
-agent:
-  data_dir: "/data"
-  host_data_dir: "$DATA_DIR"
-  log_level: "info"
-runtime:
-  type: "$RUNTIME"
-offline_auth:
-  enabled: true
-  listen: "127.0.0.1:9998"
-EOF
-chmod 600 "$CONFIG_DIR/node.yaml"
+ENV_ARGS=(-e PANEL_URL="$PANEL_URL" -e NODE_TOKEN="$NODE_TOKEN" -e HY2_RUNTIME="$RUNTIME" -e PANEL_INSECURE="$INSECURE" -v "$DATA_DIR":/data)
+if [[ "$RUNTIME" == "docker" ]]; then
+  if [[ ! -S /var/run/docker.sock ]]; then
+    echo "Docker runtime selected but /var/run/docker.sock is missing." >&2
+    exit 1
+  fi
+  ENV_ARGS+=(-e HOST_DATA_DIR="$DATA_DIR" -v /var/run/docker.sock:/var/run/docker.sock)
+fi
 
 if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
   echo "==> Removing existing container $CONTAINER"
   docker rm -f "$CONTAINER" >/dev/null
 fi
 
-EXTRA=()
-if [[ "$RUNTIME" == "docker" ]]; then
-  if [[ ! -S /var/run/docker.sock ]]; then
-    echo "Docker runtime selected but /var/run/docker.sock is missing." >&2
-    exit 1
-  fi
-  EXTRA+=(-v /var/run/docker.sock:/var/run/docker.sock)
-fi
-
 echo "==> Starting MikvAce node agent"
 docker run -d --name "$CONTAINER" --restart unless-stopped \
   --network host --cap-add NET_ADMIN \
-  "${EXTRA[@]}" \
-  -v "$CONFIG_DIR":/config:ro \
-  -v "$DATA_DIR":/data \
-  "$IMAGE" --config /config/node.yaml >/dev/null
+  "${ENV_ARGS[@]}" \
+  "$IMAGE" >/dev/null
 
 echo "==> Done. Agent logs: docker logs -f $CONTAINER"
 `

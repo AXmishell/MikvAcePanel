@@ -14,7 +14,7 @@
 
 ## 配置文件
 
-应用配置**只从 YAML 读取**，不读取任何环境变量，也不使用 `.env`。面板模板为 `panel.example.yaml`，节点模板为 `node.example.yaml`；复制为 `panel.yaml` / `node.yaml` 后按需修改。Docker Compose 使用目录映射，宿主机路径为 `config/panel.yaml`，容器内为 `/config/panel.yaml`。
+面板配置**只从 YAML 读取**，不读取任何环境变量，也不使用 `.env`。面板模板为 `panel.example.yaml`，复制为 `panel.yaml` 后按需修改。Docker Compose 使用目录映射，宿主机路径为 `config/panel.yaml`，容器内为 `/config/panel.yaml`。节点 Agent 不同：它优先读取环境变量（`PANEL_URL`、`NODE_TOKEN`、`HY2_RUNTIME` 等），容器部署不再需要 `node.yaml`；二进制 / systemd 仍可使用 `node.example.yaml`。
 
 查找顺序：`--config` 参数 → `panel.yaml` → `config/panel.yaml` → `/config/panel.yaml` → `/data/panel.yaml`。
 
@@ -110,7 +110,7 @@ admin:
 | `SERVE_WEB` | `server.serve_web` |
 | `FRONTEND_URL` | `server.frontend_url` |
 
-节点侧对应关系见 [节点 Agent](node-agent.md#配置文件)。
+节点侧环境变量见 [节点 Agent](node-agent.md#配置)。
 
 ## Docker Compose
 

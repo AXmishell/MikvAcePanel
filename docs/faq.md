@@ -16,10 +16,10 @@
    docker logs -f mikvace-node
    ```
 
-2. 确认 `node.yaml` 的 `panel.url` 能从节点访问，且协议为 `https://`（或内网 `http://`）；
+2. 确认容器环境变量 `PANEL_URL` 能从节点访问，且协议为 `https://`（或内网 `http://`）；
 3. 确认反向代理支持 WebSocket Upgrade（`/api/node/ws`）；
 4. 确认节点 Token 未被重置：重置后需要重新执行安装命令；
-5. 面板使用自签名 HTTPS 时，设置 `panel.insecure: true`。
+5. 面板使用自签名 HTTPS 时，设置环境变量 `PANEL_INSECURE=true`。
 
 ## Agent 返回 401 / invalid node token
 
@@ -34,7 +34,7 @@
 - 端口被占用；
 - 证书路径不存在或私钥不匹配；
 - ACME 域名不可达 / 443 被占用；
-- `runtime.type: docker` 时 `agent.host_data_dir` 与 Agent 数据目录不一致；
+- `HY2_RUNTIME=docker` 时 `HOST_DATA_DIR` 与 Agent 数据目录不一致；
 - Xray 配置字段非法；
 - REALITY 只支持 TCP / XHTTP / gRPC 传输；
 - Shadowsocks 多用户只支持 `2022-blake3-aes-128-gcm` / `2022-blake3-aes-256-gcm`；
@@ -48,12 +48,12 @@ Agent 容器内的 `/data` 和兄弟代理容器的 `/data` 必须指向宿主�
 
 ```text
 agent:   -v /var/lib/mikvace:/data
-node.yaml: agent.host_data_dir: /var/lib/mikvace
+env:     HOST_DATA_DIR=/var/lib/mikvace
 sibling: -v /var/lib/mikvace:/data
 ```
 
-- `agent.host_data_dir` 必须是绝对路径且存在；
-- 使用 Docker 命名卷时，不能把命名卷名当作 `agent.host_data_dir`；
+- `HOST_DATA_DIR` 必须是绝对路径且存在；
+- 使用 Docker 命名卷时，不能把命名卷名当作 `HOST_DATA_DIR`；
 - 如果 Agent 的 `/data` 是命名卷，兄弟容器看不到 Agent 生成的证书。
 
 ## 端口跳跃不生效

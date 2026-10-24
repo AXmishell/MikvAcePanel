@@ -1,19 +1,28 @@
+# Single-file node deployment. The token is passed through the environment, so
+# no node.yaml or node.token is required.
+#
+# This file contains the node token; do not commit a real token to a
+# repository. Start it with:
+#   docker compose -f docker-compose.node.yml up -d
 services:
   node:
     image: ghcr.io/axmishell/mikvacepanel-node:latest
     container_name: mikvace-node
     restart: unless-stopped
-    # Hysteria is UDP based and port hopping manipulates host firewall rules.
+    # Hysteria uses UDP and port hopping edits host firewall rules.
     network_mode: host
     cap_add:
       - NET_ADMIN
-    command: ["--config", "/config/node.yaml"]
+    environment:
+      PANEL_URL: "https://panel.example.com"
+      NODE_TOKEN: "mtn_xxx"
+      HY2_RUNTIME: "process"          # process | docker
+      # HOST_DATA_DIR: "/var/lib/mikvace"   # docker runtime only; must match the host path below
+    volumes:
+      - /var/lib/mikvace:/data
+      # - /var/run/docker.sock:/var/run/docker.sock   # docker runtime only
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-    volumes:
-      - ./node.yaml:/config/node.yaml:ro
-      - ./node.token:/config/node.token:ro
-      - ./data-node:/data

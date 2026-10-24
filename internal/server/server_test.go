@@ -446,10 +446,10 @@ func TestSSHInstallScript(t *testing.T) {
 	script := env.app.sshInstallScript(n)
 	for _, want := range []string{
 		"mtn_test_token",
-		`url: http://panel.test`,
-		"/etc/mikvace/node.yaml",
-		"/etc/mikvace/node.token",
-		"--config /config/node.yaml",
+		"-e PANEL_URL='http://panel.test'",
+		"-e NODE_TOKEN='mtn_test_token'",
+		"-e HY2_RUNTIME='process'",
+		"/var/lib/mikvace:/data",
 		"--network host",
 		"curl -fsSL https://get.docker.com",
 		"ghcr.io/axmishell/mikvacepanel-node:latest",
@@ -457,6 +457,9 @@ func TestSSHInstallScript(t *testing.T) {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)
 		}
+	}
+	if strings.Contains(script, "node.yaml") || strings.Contains(script, "node.token") {
+		t.Fatalf("script still writes config files:\n%s", script)
 	}
 	if got := shellQuote("a'b"); got != `'a'\''b'` {
 		t.Fatalf("shellQuote = %q", got)

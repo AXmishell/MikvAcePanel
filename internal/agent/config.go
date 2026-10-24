@@ -16,7 +16,8 @@ import (
 	"github.com/axmishell/mikvacepanel/internal/configfile"
 )
 
-// Config is node agent configuration, loaded from node.yaml.
+// Config is node agent configuration, loaded from node.yaml when present and
+// overlaid with environment variables.
 type Config struct {
 	ConfigPath    string
 	PanelURL      string
@@ -112,27 +113,130 @@ func isDir(path string) bool {
 	return err == nil && st.IsDir()
 }
 
-// ParseConfig loads node.yaml. Only the config path comes from a flag.
+// Environment variables understood by the node agent. They take precedence
+// over node.yaml so a container can be configured without any mounted file.
+const (
+	envPanelURL          = "PANEL_URL"
+	envNodeToken         = "NODE_TOKEN"
+	envNodeTokenFile     = "NODE_TOKEN_FILE"
+	envRuntime           = "HY2_RUNTIME"
+	envPanelInsecure     = "PANEL_INSECURE"
+	envDataDir           = "DATA_DIR"
+	envHostDataDir       = "HOST_DATA_DIR"
+	envLogLevel          = "LOG_LEVEL"
+	envHeartbeat         = "HEARTBEAT"
+	envStatsInterval     = "STATS_INTERVAL"
+	envOfflineAuth       = "OFFLINE_AUTH"
+	envOfflineAuthListen = "OFFLINE_AUTH_LISTEN"
+	envHysteriaBin       = "HYSTERIA_BIN"
+	envHysteriaImage     = "HYSTERIA_IMAGE"
+	envXrayBin           = "XRAY_BIN"
+	envXrayImage         = "XRAY_IMAGE"
+	envContainerName     = "CONTAINER_NAME"
+)
+
+func envString(name string, dst *string) {
+	if v, ok := os.LookupEnv(name); ok {
+		*dst = strings.TrimSpace(v)
+	}
+}
+
+// envStringAny accepts a primary name plus legacy aliases.
+func envStringAny(dst *string, names ...string) {
+	for _, name := range names {
+		if v, ok := os.LookupEnv(name); ok {
+			*dst = strings.TrimSpace(v)
+			return
+		}
+	}
+}
+
+func envBool(name string, dst *bool) error {
+	raw, ok := os.LookupEnv(name)
+	if !ok {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		*dst = true
+	case "0", "false", "no", "off":
+		*dst = false
+	default:
+		return fmt.Errorf("%s: invalid boolean %q", name, raw)
+	}
+	return nil
+}
+
+// applyEnv overlays environment variables on top of the file configuration.
+func applyEnv(fc *fileConfig) error {
+	envString(envPanelURL, &fc.Panel.URL)
+	envString(envNodeTokenFile, &fc.Panel.TokenFile)
+	envString(envRuntime, &fc.Runtime.Type)
+	envString(envDataDir, &fc.Agent.DataDir)
+	envString(envHostDataDir, &fc.Agent.HostDataDir)
+	envString(envLogLevel, &fc.Agent.LogLevel)
+	envString(envHeartbeat, &fc.Agent.Heartbeat)
+	envString(envStatsInterval, &fc.Agent.StatsInterval)
+	envString(envHysteriaBin, &fc.Runtime.HysteriaBin)
+	envStringAny(&fc.Runtime.HysteriaImage, envHysteriaImage, "HY2_IMAGE")
+	envString(envXrayBin, &fc.Runtime.XrayBin)
+	envString(envXrayImage, &fc.Runtime.XrayImage)
+	envStringAny(&fc.Runtime.ContainerName, envContainerName, "HY2_CONTAINER")
+	envStringAny(&fc.OfflineAuth.Listen, envOfflineAuthListen, "AUTH_LISTEN")
+	if err := envBool(envPanelInsecure, &fc.Panel.Insecure); err != nil {
+		return err
+	}
+	return envBool(envOfflineAuth, &fc.OfflineAuth.Enabled)
+}
+
+// ParseConfig loads node.yaml when present and then applies environment
+// variables. A container configured purely through PANEL_URL/NODE_TOKEN works
+// without any configuration file; an explicit --config that is missing is
+// still an error.
 func ParseConfig(args []string, version string) (Config, error) {
 	path := DefaultNodeConfigPath()
 	fs := flag.NewFlagSet("mikvace-node", flag.ContinueOnError)
-	fs.StringVar(&path, "config", path, "path to node.yaml")
+	fs.StringVar(&path, "config", path, "path to node.yaml (optional when using environment variables)")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
+	explicitConfig := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "config" {
+			explicitConfig = true
+		}
+	})
 	if isDir(path) {
-		return Config{}, fmt.Errorf("config path %q is a directory, not a file (create node.yaml before bind-mounting it)", path)
-	}
-	if !configfile.Exists(path) {
-		return Config{}, fmt.Errorf("config file %q not found", path)
+		if explicitConfig {
+			return Config{}, fmt.Errorf("config path %q is a directory, not a file", path)
+		}
+		// A stale directory at the default location must not prevent
+		// environment-only configuration.
+		path = ""
 	}
 	fc := defaultFileConfig()
-	if err := configfile.Load(path, &fc); err != nil {
+	loaded := path != "" && configfile.Exists(path)
+	if explicitConfig && !loaded {
+		return Config{}, fmt.Errorf("config file %q not found", path)
+	}
+	if loaded {
+		if err := configfile.Load(path, &fc); err != nil {
+			return Config{}, err
+		}
+	} else {
+		path = ""
+	}
+	if err := applyEnv(&fc); err != nil {
 		return Config{}, err
 	}
-	token, err := configfile.Secret(fc.Panel.TokenFile)
-	if err != nil {
-		return Config{}, fmt.Errorf("panel.token_file: %w", err)
+	token := strings.TrimSpace(os.Getenv(envNodeToken))
+	tokenFromEnv := token != ""
+	if !tokenFromEnv {
+		var err error
+		token, err = configfile.Secret(fc.Panel.TokenFile)
+		if err != nil {
+			return Config{}, fmt.Errorf("panel.token_file: %w", err)
+		}
 	}
 	heartbeat, err := parseDuration(fc.Agent.Heartbeat, 10*time.Second, "agent.heartbeat")
 	if err != nil {
@@ -164,16 +268,19 @@ func ParseConfig(args []string, version string) (Config, error) {
 		OfflineAuth:   fc.OfflineAuth.Enabled,
 	}
 	if c.PanelURL == "" {
-		return c, fmt.Errorf("panel.url is required")
+		return c, fmt.Errorf("panel.url or %s is required", envPanelURL)
 	}
 	u, err := url.Parse(c.PanelURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return c, fmt.Errorf("panel.url must start with http:// or https://")
 	}
-	if c.TokenFile == "" {
-		return c, fmt.Errorf("panel.token_file is required")
+	if !tokenFromEnv && c.TokenFile == "" {
+		return c, fmt.Errorf("panel.token_file or %s is required", envNodeToken)
 	}
 	if c.Token == "" {
+		if tokenFromEnv {
+			return c, fmt.Errorf("%s is empty", envNodeToken)
+		}
 		return c, fmt.Errorf("panel.token_file %q is empty", c.TokenFile)
 	}
 	if c.DataDir == "" || c.DataDir == "." {
@@ -183,7 +290,7 @@ func ParseConfig(args []string, version string) (Config, error) {
 		c.HostDataDir = "/var/lib/mikvace"
 	}
 	if c.Runtime != "process" && c.Runtime != "docker" {
-		return c, fmt.Errorf("runtime.type must be process or docker")
+		return c, fmt.Errorf("runtime.type or %s must be process or docker", envRuntime)
 	}
 	if c.HysteriaBin == "" {
 		c.HysteriaBin = "hysteria"

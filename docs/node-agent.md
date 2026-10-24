@@ -18,55 +18,61 @@
 
 ### 方式 A：单容器（推荐）
 
-面板内 **Nodes → Install** 会生成包含 Token 和完整 `node.yaml` 的安装命令。镜像内已经包含 Hysteria：
+面板内 **Nodes → Install** 会生成包含令牌的环境变量命令。镜像内已经包含 Hysteria：
 
 ```bash
-sudo install -d -m 700 /etc/mikvace /var/lib/mikvace
-printf '%s' 'mtn_xxx' | sudo tee /etc/mikvace/node.token >/dev/null
-sudo tee /etc/mikvace/node.yaml >/dev/null <<'EOF'
-version: 1
-panel:
-  url: "https://panel.example.com"
-  token_file: "/config/node.token"
-agent:
-  data_dir: "/data"
-  host_data_dir: "/var/lib/mikvace"
-runtime:
-  type: "process"
-offline_auth:
-  enabled: true
-  listen: "127.0.0.1:9998"
-EOF
+sudo install -d -m 700 /var/lib/mikvace
 docker run -d --name mikvace-node --restart unless-stopped \
   --network host --cap-add NET_ADMIN \
-  -v /etc/mikvace:/config:ro \
+  -e PANEL_URL='https://panel.example.com' \
+  -e NODE_TOKEN='mtn_xxx' \
+  -e HY2_RUNTIME=process \
   -v /var/lib/mikvace:/data \
-  ghcr.io/axmishell/mikvacepanel-node:latest --config /config/node.yaml
+  ghcr.io/axmishell/mikvacepanel-node:latest
 ```
 
-或使用 `docker-compose.node.yml` 与节点模板：
+或使用单文件 Compose。令牌直接写在 `environment` 中，不再需要 `node.yaml` 和 `node.token`：
 
 ```bash
-cp node.example.yaml node.yaml
-printf '%s' 'mtn_xxx' > node.token && chmod 600 node.token
-# 编辑 node.yaml：panel.url、agent.host_data_dir 等
 docker compose -f docker-compose.node.yml up -d
+```
+
+`docker-compose.node.yml` 的核心内容：
+
+```yaml
+services:
+  node:
+    image: ghcr.io/axmishell/mikvacepanel-node:latest
+    container_name: mikvace-node
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    environment:
+      PANEL_URL: "https://panel.example.com"
+      NODE_TOKEN: "mtn_xxx"
+      HY2_RUNTIME: "process"
+    volumes:
+      - /var/lib/mikvace:/data
 ```
 
 ### 方式 B：Agent 管理 Hysteria 容器
 
-Agent 自己也在容器里，但通过挂载 Docker socket 启动同机的 Hysteria 容器。把 `runtime.type` 改为 `docker`，并保证 `agent.host_data_dir` 是宿主机绝对路径：
+Agent 自己也在容器里，但通过挂载 Docker socket 启动同机的 Hysteria 容器。把 `HY2_RUNTIME` 改为 `docker`，并保证 `HOST_DATA_DIR` 是宿主机绝对路径：
 
 ```bash
 docker run -d --name mikvace-node --restart unless-stopped \
   --network host --cap-add NET_ADMIN \
-  -v /etc/mikvace:/config:ro \
-  -v /var/run/docker.sock:/var/run/docker.sock \
+  -e PANEL_URL='https://panel.example.com' \
+  -e NODE_TOKEN='mtn_xxx' \
+  -e HY2_RUNTIME=docker \
+  -e HOST_DATA_DIR='/var/lib/mikvace' \
   -v /var/lib/mikvace:/data \
-  ghcr.io/axmishell/mikvacepanel-node:latest --config /config/node.yaml
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  ghcr.io/axmishell/mikvacepanel-node:latest
 ```
 
-此时 Hysteria 容器使用 `runtime.hysteria_image`，挂载宿主机 `agent.host_data_dir` 到 `/data`。Agent 在容器内看到的 `/data` 并不是宿主机路径，因此 `host_data_dir` 必须是宿主机绝对路径。
+此时 Hysteria 容器使用 `HYSTERIA_IMAGE`，挂载宿主机 `HOST_DATA_DIR` 到 `/data`。Agent 在容器内看到的 `/data` 并不是宿主机路径，因此 `HOST_DATA_DIR` 必须是宿主机绝对路径。
 
 ### 在面板中选择运行方式
 
@@ -79,8 +85,8 @@ docker run -d --name mikvace-node --restart unless-stopped \
 
 选择 Docker 模式后，面板生成的安装命令、compose 和 SSH 自动安装脚本都会：
 
-- 写入 `runtime.type: docker`
-- 写入 `agent.host_data_dir`
+- 设置 `HY2_RUNTIME=docker`
+- 设置 `HOST_DATA_DIR=/var/lib/mikvace`
 - 增加 `-v /var/run/docker.sock:/var/run/docker.sock`
 
 修改运行方式不会远程切换正在运行的 Agent，需要点击 **安装** 重新执行命令或使用 **自动安装** 重建容器。节点卡片会显示所选模式和 Agent 实际回报的运行方式；两者不一致时会标记为需要重新安装。
@@ -89,11 +95,25 @@ docker run -d --name mikvace-node --restart unless-stopped \
 
 ### 方式 C：二进制 + systemd
 
+容器部署不需要配置文件；二进制 / systemd 部署仍可使用可选的 `node.yaml`。
+
 ```bash
 go build -o /usr/local/bin/mikvace-node ./cmd/node
 sudo install -d -m 700 /etc/mikvace /var/lib/mikvace
 sudo cp node.example.yaml /etc/mikvace/node.yaml
 # 编辑 panel.url、agent.data_dir、agent.host_data_dir、runtime.type 等
+```
+
+也可以在 systemd 中直接用环境变量，不再创建 `node.yaml`：
+
+```ini
+[Service]
+Environment=PANEL_URL=https://panel.example.com
+Environment=NODE_TOKEN=mtn_xxx
+Environment=HY2_RUNTIME=process
+Environment=DATA_DIR=/var/lib/mikvace
+Environment=HOST_DATA_DIR=/var/lib/mikvace
+ExecStart=/usr/local/bin/mikvace-node
 ```
 
 `/etc/systemd/system/mikvace-node.service`：
@@ -117,44 +137,28 @@ WantedBy=multi-user.target
 
 ---
 
-## 配置文件
+## 配置
 
-应用配置只从 `node.yaml` 读取，不读取环境变量。查找顺序：`--config` → `node.yaml` → `config/node.yaml` → `/config/node.yaml` → `/data/node.yaml`。
+配置优先级：环境变量 > `node.yaml` > 默认值。`--config` 只用于指定 YAML 路径；文件不存在时会自动使用环境变量，因此纯容器部署不需要任何配置文件。默认查找顺序：`--config` → `node.yaml` → `config/node.yaml` → `/config/node.yaml` → `/data/node.yaml`。
 
-| 字段 | 默认 | 说明 |
-| --- | --- | --- |
-| `panel.url` | — | 面板地址，`http(s)://`；Agent 自动转换成 `ws(s)://.../api/node/ws` |
-| `panel.token_file` | — | 节点 Token 文件，内容不得出现在 YAML 中 |
-| `panel.insecure` | `false` | 跳过面板 TLS 校验（仅自签名面板） |
-| `agent.data_dir` | `/data` | 配置、证书、状态目录 |
-| `agent.host_data_dir` | `/var/lib/mikvace` | Docker 模式下的宿主机绝对路径 |
-| `agent.log_level` | `info` | `debug/info/warn/error` |
-| `agent.heartbeat` / `stats_interval` | `10s` / `15s` | 心跳与统计上报间隔 |
-| `runtime.type` | `process` | `process` 或 `docker` |
-| `runtime.hysteria_bin` / `xray_bin` | `hysteria` / `xray` | 进程模式二进制路径 |
-| `runtime.hysteria_image` / `xray_image` | 官方镜像 | Docker 模式镜像 |
-| `runtime.container_name` | `mikvace-hysteria` | Docker 模式容器名前缀 |
-| `offline_auth.enabled` | `true` | 面板故障时使用本地用户快照继续为 Hysteria 认证 |
-| `offline_auth.listen` | `127.0.0.1:9998` | 本地认证网关地址；只允许回环地址 |
+| 环境变量 | YAML 字段 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `PANEL_URL` | `panel.url` | — | 面板地址，`http(s)://`；Agent 自动转换成 `ws(s)://.../api/node/ws` |
+| `NODE_TOKEN` | — | — | 节点 Token；也可用 `NODE_TOKEN_FILE` 指向文件 |
+| `NODE_TOKEN_FILE` | `panel.token_file` | — | 节点 Token 文件路径 |
+| `PANEL_INSECURE` | `panel.insecure` | `false` | 跳过面板 TLS 校验（仅自签名面板） |
+| `DATA_DIR` | `agent.data_dir` | `/data` | 配置、证书、状态目录 |
+| `HOST_DATA_DIR` | `agent.host_data_dir` | `/var/lib/mikvace` | Docker 模式下的宿主机绝对路径 |
+| `LOG_LEVEL` | `agent.log_level` | `info` | `debug/info/warn/error` |
+| `HEARTBEAT` / `STATS_INTERVAL` | `agent.heartbeat` / `stats_interval` | `10s` / `15s` | 心跳与统计上报间隔 |
+| `HY2_RUNTIME` | `runtime.type` | `process` | `process` 或 `docker` |
+| `HYSTERIA_BIN` / `XRAY_BIN` | `runtime.hysteria_bin` / `xray_bin` | `hysteria` / `xray` | 进程模式二进制路径 |
+| `HYSTERIA_IMAGE`（或 `HY2_IMAGE`）/ `XRAY_IMAGE` | `runtime.hysteria_image` / `xray_image` | 官方镜像 | Docker 模式镜像 |
+| `CONTAINER_NAME`（或 `HY2_CONTAINER`） | `runtime.container_name` | `mikvace-hysteria` | Docker 模式容器名前缀 |
+| `OFFLINE_AUTH` | `offline_auth.enabled` | `true` | 面板故障时使用本地用户快照继续为 Hysteria 认证 |
+| `OFFLINE_AUTH_LISTEN`（或 `AUTH_LISTEN`） | `offline_auth.listen` | `127.0.0.1:9998` | 本地认证网关地址；只允许回环地址 |
 
-命令行只接受 `--config` 指定配置文件路径。
-
-旧版环境变量与 YAML 的对应关系：
-
-| 旧变量 | 新字段 |
-| --- | --- |
-| `PANEL_URL` | `panel.url` |
-| `NODE_TOKEN` | `panel.token_file`（先写入文件） |
-| `PANEL_INSECURE` | `panel.insecure` |
-| `DATA_DIR` | `agent.data_dir` |
-| `HOST_DATA_DIR` | `agent.host_data_dir` |
-| `LOG_LEVEL` | `agent.log_level` |
-| `HY2_RUNTIME` | `runtime.type` |
-| `HYSTERIA_BIN` / `XRAY_BIN` | `runtime.hysteria_bin` / `xray_bin` |
-| `HY2_IMAGE` / `XRAY_IMAGE` | `runtime.hysteria_image` / `xray_image` |
-| `HY2_CONTAINER` | `runtime.container_name` |
-| `OFFLINE_AUTH` | `offline_auth.enabled` |
-| `AUTH_LISTEN` | `offline_auth.listen` |
+布尔变量接受 `1/true/yes/on` 与 `0/false/no/off`。
 
 ---
 
