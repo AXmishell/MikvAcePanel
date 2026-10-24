@@ -125,6 +125,40 @@ https://panel.example.com
 - 云负载均衡需要开启 WebSocket；
 - 检查面板日志与 `docker logs`。
 
+## 启动日志反复出现 `read /config/panel.yaml: is a directory`
+
+宿主机上的 `panel.yaml` 不存在时，Docker（包括 1Panel 新建容器/编排）会把单文件挂载点创建成目录，面板因此无法读取配置。
+
+处理方式：
+
+1. 在宿主机创建文件后再启动：
+
+   ```bash
+   cd /opt/mikvacepanel      # compose 所在目录
+   cp panel.example.yaml panel.yaml
+   docker compose restart
+   ```
+
+2. 或者改为挂载整个目录，让容器自己创建配置：
+
+   ```yaml
+   volumes:
+     - ./data:/data
+     - ./config:/config
+   ```
+
+   执行 `cp panel.example.yaml ./config/panel.yaml` 后重启。
+
+新版面板检测到 `--config` 指向目录时会记录 warning 并回退到 `/data/panel.yaml`，仍可打开 `/install`；日志中会出现 `config path is a directory, using fallback`。修复挂载后请把该文件复制回 `/config/panel.yaml` 再重启，避免配置留在数据卷里。
+
+排查时可进入容器确认挂载类型：
+
+```bash
+docker exec mikvace-panel ls -ld /config/panel.yaml
+```
+
+`drwx...` 表示它是目录，需要按上面的方式修复；`-rw...` 才是正常文件。
+
 ## 时间不同步导致 2FA / 证书异常
 
 TOTP 和 ACME 都依赖系统时间。请启用 NTP：

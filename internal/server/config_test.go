@@ -103,6 +103,25 @@ func TestLoadConfigMissingFileUsesSetupMode(t *testing.T) {
 	}
 }
 
+func TestLoadConfigDirectoryPathFallsBack(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "panel.yaml")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ConfigPath == path || cfg.ConfigPath == "" {
+		t.Fatalf("config path = %q, want a fallback file path", cfg.ConfigPath)
+	}
+	if cfg.DBDriver != SetupDriver {
+		t.Fatalf("driver = %q, want %q", cfg.DBDriver, SetupDriver)
+	}
+}
+
 func TestLoadConfigExistingFileWithoutDatabaseDefaultsToSQLite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "panel.yaml")
 	if err := os.WriteFile(path, []byte("version: 1\n"), 0o600); err != nil {

@@ -58,6 +58,8 @@ docker run -d --name mikvace-panel --restart unless-stopped \
 
 使用目录映射而非命名卷：数据会写入当前目录的 `./data`，直接打包该目录即可完成备份。`panel.yaml` 需要可写，`/install` 会把面板名称、公共地址、管理员用户名和数据库配置写回该文件；远程数据库的 DSN 单独写入 `./data/database.dsn`，不会进入 YAML。
 
+> **注意（1Panel / Docker 单文件挂载）**：宿主机上不存在 `panel.yaml` 时，Docker 会把 `/config/panel.yaml` 创建成目录，日志出现 `read /config/panel.yaml: is a directory`。请先创建宿主文件（`cp panel.example.yaml panel.yaml` 或 `touch panel.yaml`）再启动；也可以改为挂载 `./config:/config` 并把配置放到 `./config/panel.yaml`。新版面板检测到目录时会自动回退到 `/data/panel.yaml` 并继续启动安装器。
+
 镜像标签：`main`、`latest`（main 分支）与 `sha-<commit>`；发布 `v*.*.*` 标签时同时提供语义化版本，并更新 `latest`。`latest` 指向最后一次成功构建的镜像，需要固定版本请使用语义化版本标签。
 
 ## 2. 首次登录

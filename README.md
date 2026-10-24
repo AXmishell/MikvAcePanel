@@ -101,6 +101,8 @@ cp panel.example.yaml panel.yaml  # 修改 panel.public_url、server.data_dir �
 docker compose up -d --build
 ```
 
+> **注意**：如果宿主目录里没有 `panel.yaml`，Docker / 1Panel 会把 `/config/panel.yaml` 创建成目录，日志出现 `read /config/panel.yaml: is a directory`。请先执行上面的 `cp`（或改为挂载 `./config:/config`，把配置放到 `./config/panel.yaml`）。新版面板会自动回退到 `/data/panel.yaml` 继续启动，详见[常见问题](docs/faq.md#启动日志反复出现-read-configpanelyaml-is-a-directory)。
+
 打开 `http://服务器IP:8080/` 查看公开首页。首次启动且 `admin.password_file` 为空时，访问 `/install`：向导第一步选择数据后端（SQLite / PostgreSQL / MySQL），第二步创建管理员账号。配置了密码文件的无人值守部署会在启动时自动创建。管理员控制台是 `/admin`（旧地址 `/panel` 会自动跳转到 `/admin/dashboard`），终端用户入口是 `/user`。
 
 应用配置**只从 `panel.yaml` 读取**，不读取环境变量，也不使用 `.env`。Compose 只负责端口和数据目录映射。

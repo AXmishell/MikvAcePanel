@@ -131,6 +131,30 @@ services:
 - 通过 `/install` 选择 PostgreSQL / MySQL 时，DSN 会写到 `/data/database.dsn`，请确保 `./data` 持久化。
 - 使用反向代理时在 `server.trusted_proxies` 中填写代理地址，否则面板会忽略 `X-Forwarded-For`，把所有客户端当成代理 IP，登录限流和审计日志将不准确。
 
+!!! warning "1Panel / Docker 单文件挂载：先创建 panel.yaml"
+
+    Docker 在宿主机文件不存在时，会把单文件挂载点创建成**目录**。1Panel 新建容器或编排时如果挂载目录里还没有 `panel.yaml`，启动日志会反复出现：
+
+    ```text
+    ERROR load config error="read /config/panel.yaml: is a directory" path=/config/panel.yaml
+    ```
+
+    部署前先创建文件：
+
+    ```bash
+    cp panel.example.yaml panel.yaml   # 或 touch panel.yaml
+    ```
+
+    或者改为挂载整个配置目录（1Panel 中更稳妥）：
+
+    ```yaml
+    volumes:
+      - ./data:/data
+      - ./config:/config
+    ```
+
+    然后把 `panel.example.yaml` 复制为 `./config/panel.yaml`。面板检测到 `--config` 指向目录时不会再退出，而是记录一条 warning 并回退到 `/data/panel.yaml`（位于持久化的 `./data` 卷内），可以直接打开 `/install`。修复挂载后，把生成的 `/data/panel.yaml` 复制回 `/config/panel.yaml` 再重启，即可恢复原布局。
+
 !!! warning "从命名卷迁移"
 
     旧版本使用 `panel-data` 命名卷。升级到目录映射前先停止面板，再把卷内容复制到 `./data`：

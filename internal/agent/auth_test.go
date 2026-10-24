@@ -188,6 +188,16 @@ func TestRewriteGeneratedHysteriaConfig(t *testing.T) {
 	}
 }
 
+func TestParseConfigRejectsDirectoryPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "node.yaml")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseConfig([]string{"--config", path}, "test"); err == nil {
+		t.Fatal("a directory config path must be rejected")
+	}
+}
+
 func TestParseConfigYAML(t *testing.T) {
 	dir := t.TempDir()
 	tokenPath := filepath.Join(dir, "node.token")

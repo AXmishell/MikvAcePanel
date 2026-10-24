@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,10 +117,21 @@ func DefaultPanelConfigPath() string {
 			return p
 		}
 	}
-	if st, err := os.Stat("/config"); err == nil && st.IsDir() {
+	// Prefer /config only when the mount point is not itself a directory.
+	if st, err := os.Stat("/config"); err == nil && st.IsDir() && !isDir("/config/panel.yaml") {
 		return "/config/panel.yaml"
 	}
+	// /data is the persistent volume in the container image, so a config
+	// created there survives restarts even when /config is unusable.
+	if st, err := os.Stat("/data"); err == nil && st.IsDir() && !isDir("/data/panel.yaml") {
+		return "/data/panel.yaml"
+	}
 	return "panel.yaml"
+}
+
+func isDir(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
 }
 
 // LoadConfig reads panel.yaml. A missing file is allowed so /install can
@@ -128,6 +140,20 @@ func LoadConfig(path string) (Config, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		path = DefaultPanelConfigPath()
+	}
+	// 1Panel and Docker Compose create a directory at a single-file bind mount
+	// when the host file does not exist yet. Fall back to a usable path so the
+	// panel starts the installer instead of crash-looping with
+	// "read /config/panel.yaml: is a directory".
+	if isDir(path) {
+		fallback := DefaultPanelConfigPath()
+		if isDir(fallback) {
+			// Last resort: the default data directory is writable in the
+			// container image and in a local run.
+			fallback = filepath.Join("data", "panel.yaml")
+		}
+		slog.Warn("config path is a directory, using fallback", "path", path, "fallback", fallback)
+		path = fallback
 	}
 	existed := configfile.Exists(path)
 	fc := defaultFileConfig()

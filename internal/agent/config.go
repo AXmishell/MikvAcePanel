@@ -98,10 +98,18 @@ func DefaultNodeConfigPath() string {
 			return p
 		}
 	}
-	if st, err := os.Stat("/config"); err == nil && st.IsDir() {
+	if st, err := os.Stat("/config"); err == nil && st.IsDir() && !isDir("/config/node.yaml") {
 		return "/config/node.yaml"
 	}
+	if st, err := os.Stat("/data"); err == nil && st.IsDir() && !isDir("/data/node.yaml") {
+		return "/data/node.yaml"
+	}
 	return "node.yaml"
+}
+
+func isDir(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
 }
 
 // ParseConfig loads node.yaml. Only the config path comes from a flag.
@@ -111,6 +119,9 @@ func ParseConfig(args []string, version string) (Config, error) {
 	fs.StringVar(&path, "config", path, "path to node.yaml")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
+	}
+	if isDir(path) {
+		return Config{}, fmt.Errorf("config path %q is a directory, not a file (create node.yaml before bind-mounting it)", path)
 	}
 	if !configfile.Exists(path) {
 		return Config{}, fmt.Errorf("config file %q not found", path)

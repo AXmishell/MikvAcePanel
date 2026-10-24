@@ -29,10 +29,13 @@ func Load(path string, out any) error {
 	return nil
 }
 
-// Exists reports whether path exists.
+// Exists reports whether path is an existing regular file. A directory is
+// treated as missing: when a host file that does not exist yet is bind-mounted
+// into a container (common on 1Panel), Docker creates a directory at the
+// mount point, and that directory can never be read as YAML.
 func Exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
 }
 
 // Writable reports whether the process can write path, or create it in its

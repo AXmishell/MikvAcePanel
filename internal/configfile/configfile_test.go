@@ -89,6 +89,20 @@ func TestSetCreatesMissingFile(t *testing.T) {
 	}
 }
 
+func TestExistsIgnoresDirectories(t *testing.T) {
+	dir := t.TempDir()
+	if Exists(dir) {
+		t.Fatal("a directory must not count as an existing config file")
+	}
+	path := filepath.Join(dir, "panel.yaml")
+	if err := os.WriteFile(path, []byte("version: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !Exists(path) {
+		t.Fatal("regular file should exist")
+	}
+}
+
 func TestSecretAndWritable(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "token")
