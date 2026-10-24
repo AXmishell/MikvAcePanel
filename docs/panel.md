@@ -96,6 +96,10 @@ Agent 将代理核心 stdout/stderr 和 Xray access log 批量上报，面板解
 
 面板名称、公开地址、主题外观。`public_url` 会写入订阅链接和 Hysteria 认证 URL，修改后节点会在下一次配置同步时更新。
 
+### 首页
+
+在“内置落地页”和“自定义 HTML”之间切换。上传 `.html` 或 `.zip` 后可以预览、启用、回滚和删除版本；自定义页面在沙箱 iframe 中运行，可执行 JavaScript，但不能读取管理员登录态，也不参与搜索引擎收录。详见 [自定义首页](homepage.md)。
+
 ### 订阅页面
 
 订阅落地页标题、说明、Logo、更新间隔、按钮、HAPP provider / 路由 / 公告。
@@ -116,8 +120,9 @@ Agent 将代理核心 stdout/stderr 和 Xray access log 批量上报，面板解
 
 ### 证书签发
 
-- ACME 目录（Let's Encrypt / Staging）；
+- ACME 目录（Let's Encrypt / LiteSSL）；
 - ACME 邮箱；
+- LiteSSL 需要 EAB Key ID 与 HMAC Key；
 - DNS 服务商：手动 TXT、Cloudflare、阿里云 DNS、DNSPod；
 - 提前续期天数。
 
@@ -125,7 +130,7 @@ Agent 将代理核心 stdout/stderr 和 Xray access log 批量上报，面板解
 
 ### 备份
 
-立即备份、自动备份间隔、保留数量、下载、删除、上传恢复。恢复操作需要重启面板后生效。
+立即备份、自动备份间隔、保留数量、下载、删除、上传恢复。SQLite 备份会包含当前启用的自定义首页；恢复操作需要重启面板后生效。
 
 ## API Key
 

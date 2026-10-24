@@ -179,6 +179,8 @@ var DefaultSettings = map[string]string{
 	"panel_name":                   "MikvAce Panel",
 	"public_url":                   "",
 	"logo_url":                     "",
+	"homepage_mode":                "builtin",
+	"homepage_version":             "",
 	"page_title":                   "连接信息",
 	"page_note":                    "你的个人订阅",
 	"support_url":                  "",

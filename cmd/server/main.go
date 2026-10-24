@@ -62,6 +62,9 @@ func main() {
 	}
 	defer st.Close()
 	logger.Info("database ready", "driver", st.Dialect().Name(), "config", cfg.ConfigPath)
+	if err := server.ApplyPendingHomepageRestore(cfg.DataDir); err != nil {
+		logger.Warn("apply homepage restore", "error", err)
+	}
 
 	app, err := server.New(cfg, st, logger)
 	if err != nil {

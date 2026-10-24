@@ -73,6 +73,11 @@ type Server struct {
 	backupMu     sync.Mutex
 	installMu    sync.Mutex
 
+	homepageMu       sync.Mutex
+	homepagePreviews map[string]homepagePreviewEntry
+	homepageCacheMu  sync.Mutex
+	homepageCache    homepageCacheEntry
+
 	adminVerMu sync.Mutex
 	adminVer   map[int64]adminVersionEntry
 }
@@ -308,6 +313,14 @@ func (s *Server) routes() http.Handler {
 		pr.Delete("/api/backups/{name}", s.handleDeleteBackup)
 		pr.Post("/api/backups/restore", s.handleRestoreBackup)
 
+		pr.Get("/api/homepage", s.handleHomepageInfo)
+		pr.Post("/api/homepage/upload", s.handleHomepageUpload)
+		pr.Post("/api/homepage/activate", s.handleHomepageActivate)
+		pr.Post("/api/homepage/preview", s.handleHomepagePreview)
+		pr.Put("/api/homepage/mode", s.handleHomepageMode)
+		pr.Delete("/api/homepage/versions/{version}", s.handleHomepageDeleteVersion)
+		pr.Delete("/api/homepage", s.handleHomepageReset)
+
 		pr.Get("/api/api-keys", s.handleListAPIKeys)
 		pr.Post("/api/api-keys", s.handleCreateAPIKey)
 		pr.Delete("/api/api-keys/{id}", s.handleDeleteAPIKey)
@@ -333,8 +346,14 @@ func (s *Server) routes() http.Handler {
 			http.Redirect(w, r, target, http.StatusFound)
 		}
 		// `/` is a public landing page; `/panel` keeps redirecting into the
-		// administrator console for existing bookmarks.
+		// administrator console for existing bookmarks. Uploaded homepage
+		// assets live under /homepage so they cannot shadow /admin or /api.
 		r.Get("/", s.serveRoot)
+		r.Get("/homepage", s.handleHomepagePage)
+		r.Get("/homepage/*", s.handleHomepagePage)
+		r.Head("/homepage/*", s.handleHomepagePage)
+		r.Get("/preview/homepage/{token}", s.handleHomepagePreviewPage)
+		r.Get("/preview/homepage/{token}/*", s.handleHomepagePreviewPage)
 		r.Get("/install", s.serveInstall)
 		r.Get("/panel", redirectPanel)
 		r.Get("/panel/*", redirectPanel)
@@ -482,6 +501,9 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 		if strings.HasPrefix(logPath, "/api/files/") {
 			logPath = "/api/files/<redacted>"
 		}
+		if strings.HasPrefix(logPath, "/preview/homepage/") {
+			logPath = "/preview/homepage/<redacted>"
+		}
 		s.log.Info("http", "method", r.Method, "path", logPath, "status", status,
 			"bytes", sw.bytes, "duration", time.Since(start).Round(time.Millisecond).String(), "ip", s.clientIP(r))
 	})
@@ -536,6 +558,9 @@ func (s *Server) originAllowed(origin string) bool {
 func (s *Server) serveRoot(w http.ResponseWriter, r *http.Request) {
 	if n, err := s.store.CountAdmins(r.Context()); err == nil && n == 0 {
 		http.Redirect(w, r, "/install", http.StatusFound)
+		return
+	}
+	if s.serveCustomHomepage(w, r) {
 		return
 	}
 	s.serveSPA(w, r)

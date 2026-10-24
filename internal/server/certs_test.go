@@ -6,11 +6,15 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/pem"
+	"io"
 	"math/big"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/axmishell/mikvacepanel/internal/certmanager"
 )
 
 func makeTestCert(t *testing.T, domain string) (string, string) {
@@ -39,6 +43,70 @@ func makeTestCert(t *testing.T, domain string) (string, string) {
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
 	return string(certPEM), string(keyPEM)
+}
+
+func TestCertSettingsLiteSSLRequiresEAB(t *testing.T) {
+	env := newTestEnv(t)
+	liteSSL := certmanager.LiteSSLCADir
+
+	// LiteSSL rejects accounts without EAB, so the settings endpoint must not
+	// let the operator save an incomplete configuration.
+	resp := env.do(t, "PUT", "/api/cert/settings", env.token, map[string]any{
+		"ca": liteSSL, "email": "admin@example.com", "provider": "manual", "renewDays": 30,
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("LiteSSL without EAB = %d: %s", resp.StatusCode, b)
+	}
+	resp.Body.Close()
+
+	hmac := base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef"))
+	resp = env.do(t, "PUT", "/api/cert/settings", env.token, map[string]any{
+		"ca": liteSSL, "email": "admin@example.com", "provider": "manual", "renewDays": 30,
+		"eabKid": "eab-kid-1", "eabHmac": hmac,
+	})
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("LiteSSL with EAB = %d: %s", resp.StatusCode, b)
+	}
+	resp.Body.Close()
+
+	settings := decode[map[string]any](t, env.do(t, "GET", "/api/cert/settings", env.token, nil))
+	if settings["ca"] != liteSSL || settings["eabKid"] != "eab-kid-1" || settings["eabConfigured"] != true {
+		t.Fatalf("settings = %+v", settings)
+	}
+	if _, ok := settings["eabHmac"]; ok {
+		t.Fatalf("settings must not return the EAB HMAC: %+v", settings)
+	}
+	stored, err := env.store.GetSetting(t.Context(), certmanager.SettingEABHMAC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored == "" || stored == hmac {
+		t.Fatalf("EAB HMAC was not encrypted: %q", stored)
+	}
+	loaded, err := env.app.certs.LoadSettings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.EABKID != "eab-kid-1" || loaded.EABHMAC != hmac || !loaded.EABConfigured {
+		t.Fatalf("loaded EAB = %+v", loaded)
+	}
+
+	// Moving back to Let's Encrypt allows clearing the binding.
+	resp = env.do(t, "PUT", "/api/cert/settings", env.token, map[string]any{
+		"ca": certmanager.DefaultCADir, "email": "admin@example.com", "provider": "manual",
+		"renewDays": 30, "clearEab": true,
+	})
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("clear EAB = %d: %s", resp.StatusCode, b)
+	}
+	resp.Body.Close()
+	settings = decode[map[string]any](t, env.do(t, "GET", "/api/cert/settings", env.token, nil))
+	if settings["eabConfigured"] == true {
+		t.Fatalf("EAB still configured: %+v", settings)
+	}
 }
 
 func TestNodeCertificateUpload(t *testing.T) {

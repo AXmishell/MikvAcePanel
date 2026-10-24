@@ -107,7 +107,8 @@ SQLite 使用 WAL 模式；`VACUUM INTO` 生成一致性备份快照。
 - JWT HS256，密钥来自 `security.jwt_secret_file`，未配置时自动生成 `data_dir/jwt.secret`；
 - 登录失败按 IP 限流；2FA challenge 一次性、5 分钟有效；
 - API Key 只存 SHA-256 哈希，带作用域与独立限流；
-- 敏感数据加密：证书私钥、DNS 凭据、TOTP 密钥使用 AES-256-GCM（`cert.key`）。
+- 敏感数据加密：证书私钥、DNS 凭据、TOTP 密钥使用 AES-256-GCM（`cert.key`）；
+- 自定义首页在无 `allow-same-origin` 的沙箱 iframe 中运行，响应同时带 `CSP: sandbox`，不能读取面板 `localStorage`、Cookie 或管理 API Token。
 
 ### 节点
 

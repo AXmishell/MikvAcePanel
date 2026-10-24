@@ -6,7 +6,7 @@
 | --- | --- | --- | --- |
 | L1 单元 | `go test` | CSR、域名校验、指纹、设置加密、缓存推送 | 每次提交 |
 | L2 集成 | Pebble（本地） | ACME 注册、下单、CSR、存储、推送 | 每次发版 |
-| L3 预发 | Let's Encrypt Staging + 真实 DNS | DNS 传播、服务商 API、失败重试 | 每次发版 |
+| L3 预发 | LiteSSL + 真实 DNS | EAB、DNS 传播、服务商 API、失败重试 | 每次发版 |
 | L4 生产 | Let's Encrypt 生产 | 单域名冒烟 | 发布后 |
 
 ## L2：Pebble 自动化
@@ -50,11 +50,12 @@ PEBBLE_BIN=/usr/local/bin/pebble make test-cert-e2e
 
 > Pebble 版本说明：v2.10+ 的 finalize 响应不再返回 `Location` 头，而 `golang.org/x/crypto/acme` 依赖该头继续轮询订单。脚本因此固定在 v2.5.2；升级 Pebble 前需要先验证该兼容性。
 
-## L3：Staging 手工用例
+## L3：LiteSSL 手工用例
 
 ### 前置条件
 
-- [ ] 面板可出站访问 `acme-staging-v02.api.letsencrypt.org:443` 与公共 DNS（53/UDP、53/TCP）；
+- [ ] 面板可出站访问 `acme.litessl.com:443` 与公共 DNS（53/UDP、53/TCP）；
+- [ ] 已在 FreeSSL / LiteSSL 控制台创建 EAB 凭据，并准备好 Key ID 与 HMAC Key；
 - [ ] 面板与节点时间已同步（建议启用 NTP）；
 - [ ] 测试域名已解析到测试节点，且没有 CAA 限制；
 - [ ] 节点 Agent 版本支持 `cert.csr.v1`（`hello.capabilities` 可见）；
@@ -64,7 +65,8 @@ PEBBLE_BIN=/usr/local/bin/pebble make test-cert-e2e
 
 **设置 → 证书签发** 选择：
 
-- ACME 目录：`Let's Encrypt Staging（测试）`；
+- ACME 目录：`LiteSSL`；
+- EAB Key ID / EAB HMAC Key：填入 LiteSSL 控制台的 EAB 凭据；
 - 邮箱：可接收通知的地址；
 - DNS 服务商：先用 `手动 TXT` 验证基础链路，再用实际服务商验证 API；
 - 提前续期天数：30。
@@ -73,7 +75,7 @@ PEBBLE_BIN=/usr/local/bin/pebble make test-cert-e2e
 
 | ID | 步骤 | 预期 |
 | --- | --- | --- |
-| C01 | 保存 Staging 设置 | 返回成功，刷新后配置保持 |
+| C01 | 保存 LiteSSL + EAB 设置 | 返回成功，刷新后 EAB Key ID 保留、HMAC 不回显 |
 | C02 | 将节点 TLS 模式改为 `managed` 并保存 | 节点出现证书申请状态 |
 | C03 | 打开节点证书详情 | 显示 `_acme-challenge.<domain>` 与 TXT 值 |
 | C04 | 不添加 TXT，直接点击“验证并继续” | 面板等待传播，超时后给出可读错误 |
@@ -113,12 +115,12 @@ PEBBLE_BIN=/usr/local/bin/pebble make test-cert-e2e
 | C23 | 旧 Agent（无 `cert.csr.v1`） | 提示升级 Agent，不进入签发 |
 | C24 | 纯 IP 节点 | 明确不支持 |
 | C25 | 泛域名节点 | 当前按单域名处理，不签发泛域名 |
-| C26 | 短时间批量签发 | 观察 Staging 频率限制，必要时分批 |
+| C26 | 短时间批量签发 | 观察 LiteSSL 频率限制，必要时分批 |
 
 ## 验收标准
 
 - [ ] L1、L2 全部通过；
-- [ ] Staging 至少完成一次手动 TXT 与一次服务商 API 签发；
+- [ ] LiteSSL 至少完成一次手动 TXT 与一次服务商 API 签发；
 - [ ] 续期、节点离线重连、面板重启三种恢复路径均有记录；
 - [ ] 失败场景均有可读 `lastError` 与事件日志；
 - [ ] `GET /api/certs`、节点详情、订阅均不泄露私钥；
@@ -127,7 +129,7 @@ PEBBLE_BIN=/usr/local/bin/pebble make test-cert-e2e
 ## 清理
 
 1. 删除 `_acme-challenge` 测试 TXT 记录；
-2. 将 ACME 目录切回生产（或保持 Staging 直到正式上线）；
+2. 将 ACME 目录切回 Let's Encrypt 或继续使用 LiteSSL；
 3. 删除测试节点上不再使用的 `previous-*.pem`；
 4. 轮换或删除测试 DNS API Token；
 5. 恢复节点 TLS 模式与测试前一致。
@@ -138,7 +140,7 @@ PEBBLE_BIN=/usr/local/bin/pebble make test-cert-e2e
 | --- | --- |
 | `awaiting_txt` 长时间不变 | TXT 是否写入正确的 Zone、公共 DNS 是否可见 |
 | `validating` 超时 | 防火墙/出站代理、DNS 解析、CAA 记录 |
-| `ACME order/account` 失败 | 目录 URL、邮箱、面板时间、Staging 限额 |
+| `ACME order/account` 失败 | 目录 URL、邮箱、面板时间、EAB 凭据、CA 限额 |
 | `cert.push` 后无回执 | Agent 是否在线、能力是否包含 `cert.csr.v1` |
 | Agent 拒绝证书 | 私钥不匹配、SAN 不含节点域名、系统时间偏差 |
 | 面板重启后无进展 | Agent 周期检查会在 5 分钟内重新发起 |

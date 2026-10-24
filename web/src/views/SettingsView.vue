@@ -3,7 +3,7 @@
     <div class="toolbar">
       <div>
         <div class="page-title">设置</div>
-        <div class="dim small">面板信息、订阅页面、日志分析与安全设置。</div>
+        <div class="dim small">面板信息、公开首页、订阅页面、日志分析与安全设置。</div>
       </div>
     </div>
 
@@ -12,6 +12,7 @@
 
     <div class="tabs">
       <button class="tab" :class="{ active: tab === 'general' }" @click="tab = 'general'">常规</button>
+      <button class="tab" :class="{ active: tab === 'homepage' }" @click="tab = 'homepage'; loadHomepage()">首页</button>
       <button class="tab" :class="{ active: tab === 'subscription' }" @click="tab = 'subscription'">订阅页面</button>
       <button class="tab" :class="{ active: tab === 'portal' }" @click="tab = 'portal'">用户中心</button>
       <button class="tab" :class="{ active: tab === 'analysis' }" @click="tab = 'analysis'">日志分析</button>
@@ -74,6 +75,91 @@
               </span>
             </button>
           </div>
+        </div>
+      </section>
+
+      <section v-show="tab === 'homepage'" class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">公开首页</div>
+            <div class="card-sub">/ 可以显示内置落地页，或上传自定义 HTML。自定义页面在沙箱 iframe 中运行，可以执行 JavaScript，但无法读取面板登录状态。</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div v-if="homepageError" class="banner banner-danger" style="margin-bottom: 12px">{{ homepageError }}</div>
+          <div class="form-grid">
+            <div class="field full">
+              <label>首页模式</label>
+              <div class="chip-list">
+                <button type="button" class="chip" :class="{ on: homepage.mode === 'builtin' }" @click="setHomepageMode('builtin')">内置落地页</button>
+                <button type="button" class="chip" :class="{ on: homepage.mode === 'upload' }" :disabled="!homepage.activeVersion" @click="setHomepageMode('upload')">自定义 HTML</button>
+              </div>
+              <span class="hint">自定义页面不支持搜索引擎收录，访问地址仍然是 /；面板后台 /admin 与 API 不受影响。</span>
+            </div>
+            <div class="field full">
+              <label>上传 HTML 或 ZIP</label>
+              <input
+                ref="homepageFileInput"
+                class="homepage-file-input"
+                type="file"
+                accept=".html,.htm,.zip,text/html,application/zip"
+                :disabled="homepageUploading"
+                @change="uploadHomepage"
+              />
+              <button
+                type="button"
+                class="homepage-dropzone"
+                :class="{ dragging: homepageDragging, busy: homepageUploading }"
+                :disabled="homepageUploading"
+                @click="pickHomepageFile"
+                @dragenter.prevent="homepageDragging = true"
+                @dragover.prevent="homepageDragging = true"
+                @dragleave.prevent="onHomepageDragLeave"
+                @drop.prevent="dropHomepageFile"
+              >
+                <span class="homepage-drop-icon">
+                  <Loader2 v-if="homepageUploading" :size="20" class="spin" />
+                  <UploadCloud v-else :size="20" />
+                </span>
+                <span class="homepage-drop-copy">
+                  <strong>{{ homepageUploading ? '正在上传并校验…' : '点击选择，或把文件拖到这里' }}</strong>
+                  <small>HTML ≤ 2 MB · ZIP ≤ 25 MB · 支持 CSS / JS / 图片 / 字体</small>
+                </span>
+                <span class="homepage-drop-action">{{ homepageUploading ? '请稍候' : '选择文件' }}</span>
+              </button>
+              <span class="hint">
+                ZIP 解压后上限 50 MB，需包含 index.html（或单一顶层目录内的 index.html）。上传只会暂存版本，确认预览后再启用。
+              </span>
+            </div>
+          </div>
+          <div class="divider"></div>
+          <div v-if="homepage.versions.length" class="table-wrap">
+            <table>
+              <thead><tr><th>版本</th><th>来源</th><th>文件</th><th>大小</th><th>上传时间</th><th></th></tr></thead>
+              <tbody>
+                <tr v-for="v in homepage.versions" :key="v.version">
+                  <td class="mono small">
+                    {{ v.version }}
+                    <span v-if="v.active" class="badge badge-ok">当前</span>
+                  </td>
+                  <td class="small">{{ v.source || '—' }}</td>
+                  <td class="small">{{ v.files || '—' }}</td>
+                  <td class="small">{{ v.size ? fmtBytes(v.size) : '—' }}</td>
+                  <td class="small">{{ v.uploadedAt ? fmtDate(v.uploadedAt) : '—' }}</td>
+                  <td style="text-align: right; white-space: nowrap">
+                    <button type="button" class="btn btn-sm" @click="previewHomepage(v.version)">预览</button>
+                    <button v-if="!v.active" type="button" class="btn btn-sm" :disabled="homepageBusy" @click="activateHomepage(v.version)">启用</button>
+                    <button v-if="!v.active" type="button" class="btn btn-sm btn-danger" :disabled="homepageBusy" @click="deleteHomepageVersion(v.version)">删除</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-else class="empty">尚未上传自定义首页。</div>
+        </div>
+        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
+          <button class="btn" :disabled="homepageBusy || homepageUploading" @click="loadHomepage">刷新</button>
+          <button class="btn btn-danger" :disabled="homepageBusy || homepage.mode !== 'upload'" @click="resetHomepage">恢复内置首页</button>
         </div>
       </section>
 
@@ -375,6 +461,21 @@
               <Select v-model="certForm.ca" :options="ACME_CA_OPTIONS" />
             </div>
             <div class="field"><label>ACME 邮箱</label><input v-model="certForm.email" type="email" placeholder="admin@example.com" /></div>
+            <template v-if="isLiteSSL">
+              <div class="field">
+                <label>EAB Key ID</label>
+                <input v-model="certForm.eabKid" type="text" placeholder="LiteSSL / FreeSSL 提供的 Key ID" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label>EAB HMAC Key</label>
+                <input v-model="certForm.eabHmac" type="password" :placeholder="certForm.eabConfigured ? '已配置 — 留空保持不变' : 'Base64 或 Hex 编码的 HMAC Key'" autocomplete="new-password" />
+              </div>
+              <div class="field full">
+                <span class="hint">
+                  LiteSSL 强制要求 EAB。请在 FreeSSL / LiteSSL 控制台创建 EAB 凭据后填写；HMAC Key 会加密保存，不会回显。
+                </span>
+              </div>
+            </template>
             <div class="field">
               <label>DNS 服务商</label>
               <Select v-model="certForm.provider" :options="DNS_PROVIDER_OPTIONS" />
@@ -397,6 +498,7 @@
         </div>
         <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
           <button class="btn" :disabled="certSaving" @click="clearCertCredentials">清除 DNS 凭据</button>
+          <button v-if="certForm.eabConfigured && !isLiteSSL" class="btn" :disabled="certSaving" @click="clearEabCredentials">清除 EAB 凭据</button>
           <div class="spacer"></div>
           <button class="btn btn-primary" :disabled="certSaving" @click="saveCertSettings">保存证书设置</button>
         </div>
@@ -449,6 +551,19 @@
       </section>
     </template>
 
+    <Modal v-model="homepagePreviewOpen" title="首页预览" size="lg">
+      <div class="banner banner-warn" style="margin-bottom: 12px">
+        预览页面在沙箱 iframe 中运行，与真实首页一致；预览链接约 10 分钟后失效。
+      </div>
+      <iframe
+        v-if="homepagePreviewUrl"
+        :src="homepagePreviewUrl"
+        class="homepage-preview"
+        referrerpolicy="no-referrer"
+        sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads allow-top-navigation-by-user-activation"
+      ></iframe>
+    </Modal>
+
     <Modal v-model="keyModal" title="创建 API 密钥" size="sm">
       <div v-if="keyError" class="banner banner-danger">{{ keyError }}</div>
       <div class="field" style="margin-bottom: 13px">
@@ -479,7 +594,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Download, Plus, Power, Trash2 } from 'lucide-vue-next'
+import { Download, Loader2, Plus, Power, Trash2, UploadCloud } from 'lucide-vue-next'
 import { api, resetAdminConfig, setAdminEntry } from '../api'
 import { auth, notify, setSession } from '../store'
 import CopyField from '../components/CopyField.vue'
@@ -520,9 +635,22 @@ const newToken = ref('')
 const backups = ref([])
 const backupBusy = ref(false)
 const restoreMessage = ref('')
+const homepage = reactive({ mode: 'builtin', activeVersion: '', versions: [] })
+const homepageError = ref('')
+const homepageBusy = ref(false)
+const homepageUploading = ref(false)
+const homepageDragging = ref(false)
+const homepageFileInput = ref(null)
+const homepagePreviewOpen = ref(false)
+const homepagePreviewUrl = ref('')
 const twoFA = reactive({ enabled: false, recoveryRemaining: 0, password: '', code: '', busy: false, setup: null, newCodes: null, error: '' })
-const certForm = reactive({ ca: 'https://acme-v02.api.letsencrypt.org/directory', email: '', provider: 'manual', renewDays: 30, apiToken: '', accessKeyId: '', accessKeySecret: '', loginToken: '', dnsConfigured: false })
+const certForm = reactive({
+  ca: 'https://acme-v02.api.letsencrypt.org/directory', email: '', provider: 'manual',
+  renewDays: 30, apiToken: '', accessKeyId: '', accessKeySecret: '', loginToken: '',
+  dnsConfigured: false, eabKid: '', eabHmac: '', eabConfigured: false,
+})
 const certSaving = ref(false)
+const isLiteSSL = computed(() => String(certForm.ca || '').includes('litessl.com'))
 
 const HAPP_ROUTING_OPTIONS = [
   { value: 'off', label: '关闭（清除 HAPP 路由）' },
@@ -530,7 +658,7 @@ const HAPP_ROUTING_OPTIONS = [
 ]
 const ACME_CA_OPTIONS = [
   { value: 'https://acme-v02.api.letsencrypt.org/directory', label: "Let's Encrypt" },
-  { value: 'https://acme-staging-v02.api.letsencrypt.org/directory', label: "Let's Encrypt Staging（测试）" },
+  { value: 'https://acme.litessl.com/acme/v2/directory', label: 'LiteSSL' },
 ]
 const DNS_PROVIDER_OPTIONS = [
   { value: 'manual', label: '手动 TXT（无 API）' },
@@ -562,6 +690,117 @@ async function loadBackups() {
     backups.value = res.items || []
   } catch (e) {
     error.value = e.message
+  }
+}
+async function loadHomepage() {
+  homepageError.value = ''
+  try {
+    const res = await api.homepage()
+    homepage.mode = res.mode || 'builtin'
+    homepage.activeVersion = res.activeVersion || ''
+    homepage.versions = res.versions || []
+  } catch (e) {
+    homepageError.value = e.message
+  }
+}
+function pickHomepageFile() {
+  if (!homepageUploading.value) homepageFileInput.value?.click()
+}
+function onHomepageDragLeave(ev) {
+  if (!ev.currentTarget.contains(ev.relatedTarget)) homepageDragging.value = false
+}
+function dropHomepageFile(ev) {
+  homepageDragging.value = false
+  if (homepageUploading.value) return
+  const file = ev.dataTransfer?.files?.[0]
+  if (file) uploadHomepageFile(file)
+}
+async function uploadHomepage(ev) {
+  const file = ev.target.files?.[0]
+  ev.target.value = ''
+  if (file) await uploadHomepageFile(file)
+}
+async function uploadHomepageFile(file) {
+  homepageError.value = ''
+  homepageUploading.value = true
+  try {
+    const res = await api.uploadHomepage(file)
+    notify(`已上传 ${res.version}，可在列表中预览或启用`)
+    await loadHomepage()
+  } catch (e) {
+    homepageError.value = e.message
+    notify(e.message, 'error')
+  } finally {
+    homepageUploading.value = false
+  }
+}
+async function activateHomepage(version) {
+  homepageError.value = ''
+  homepageBusy.value = true
+  try {
+    await api.activateHomepage(version)
+    notify('自定义首页已启用')
+    await loadHomepage()
+  } catch (e) {
+    homepageError.value = e.message
+    notify(e.message, 'error')
+  } finally {
+    homepageBusy.value = false
+  }
+}
+async function setHomepageMode(mode) {
+  homepageError.value = ''
+  homepageBusy.value = true
+  try {
+    await api.setHomepageMode(mode)
+    notify(mode === 'builtin' ? '已切换到内置首页' : '已启用自定义首页')
+    await loadHomepage()
+  } catch (e) {
+    homepageError.value = e.message
+    notify(e.message, 'error')
+  } finally {
+    homepageBusy.value = false
+  }
+}
+async function deleteHomepageVersion(version) {
+  if (!confirm(`删除首页版本 ${version}?`)) return
+  homepageError.value = ''
+  homepageBusy.value = true
+  try {
+    await api.deleteHomepageVersion(version)
+    notify('版本已删除')
+    await loadHomepage()
+  } catch (e) {
+    homepageError.value = e.message
+    notify(e.message, 'error')
+  } finally {
+    homepageBusy.value = false
+  }
+}
+async function previewHomepage(version) {
+  homepageError.value = ''
+  try {
+    const res = await api.previewHomepage(version)
+    homepagePreviewUrl.value = res.url
+    homepagePreviewOpen.value = true
+  } catch (e) {
+    homepageError.value = e.message
+    notify(e.message, 'error')
+  }
+}
+async function resetHomepage() {
+  if (!confirm('恢复内置首页？已上传的文件会保留，可随时重新启用。')) return
+  homepageError.value = ''
+  homepageBusy.value = true
+  try {
+    await api.resetHomepage()
+    notify('已恢复内置首页')
+    await loadHomepage()
+  } catch (e) {
+    homepageError.value = e.message
+    notify(e.message, 'error')
+  } finally {
+    homepageBusy.value = false
   }
 }
 async function createBackup() {
@@ -763,14 +1002,25 @@ async function loadCertSettings() {
     certForm.provider = r.provider || 'manual'
     certForm.renewDays = r.renewDays || 30
     certForm.dnsConfigured = !!r.dnsConfigured
+    certForm.eabKid = r.eabKid || ''
+    certForm.eabConfigured = !!r.eabConfigured
+    certForm.eabHmac = ''
   } catch (e) {
     notify(e.message, 'error')
   }
 }
 async function saveCertSettings() {
+  const eabKid = String(certForm.eabKid || '').trim()
+  const eabHmac = String(certForm.eabHmac || '').trim()
+  if (isLiteSSL.value && (!eabKid || (!eabHmac && !certForm.eabConfigured))) {
+    notify('LiteSSL 需要 EAB Key ID 和 HMAC Key', 'error')
+    return
+  }
   certSaving.value = true
   try {
     const payload = { ca: certForm.ca, email: certForm.email, provider: certForm.provider, renewDays: Number(certForm.renewDays) || 30 }
+    if (eabKid) payload.eabKid = eabKid
+    if (eabHmac) payload.eabHmac = eabHmac
     const dns = {}
     if (certForm.provider === 'cloudflare' && certForm.apiToken) dns.apiToken = certForm.apiToken
     if (certForm.provider === 'alidns') {
@@ -785,8 +1035,27 @@ async function saveCertSettings() {
     certForm.accessKeyId = ''
     certForm.accessKeySecret = ''
     certForm.loginToken = ''
+    certForm.eabHmac = ''
     notify('证书设置已保存')
     await loadCertSettings()
+  } catch (e) {
+    notify(e.message, 'error')
+  } finally {
+    certSaving.value = false
+  }
+}
+async function clearEabCredentials() {
+  if (!confirm('清除已保存的 EAB 凭据？LiteSSL 需要重新填写才能签发。')) return
+  certSaving.value = true
+  try {
+    await api.updateCertSettings({
+      ca: certForm.ca, email: certForm.email, provider: certForm.provider,
+      renewDays: Number(certForm.renewDays) || 30, clearEab: true,
+    })
+    certForm.eabKid = ''
+    certForm.eabHmac = ''
+    certForm.eabConfigured = false
+    notify('EAB 凭据已清除')
   } catch (e) {
     notify(e.message, 'error')
   } finally {
@@ -928,6 +1197,75 @@ onMounted(() => { load(); loadKeys(); loadBackups() })
 </script>
 
 <style scoped>
+.homepage-file-input { display: none; }
+.homepage-dropzone {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 16px 18px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+.homepage-dropzone:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--panel-3);
+}
+.homepage-dropzone.dragging {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.homepage-dropzone.busy { cursor: default; opacity: 0.85; }
+.homepage-drop-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex: none;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  color: var(--accent);
+}
+.homepage-drop-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.homepage-drop-copy strong { font-size: 12.5px; font-weight: 600; }
+.homepage-drop-copy small { font-size: 10.5px; color: var(--muted-2); }
+.homepage-drop-action {
+  flex: none;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  transition: 0.16s ease;
+}
+.homepage-dropzone:hover:not(:disabled) .homepage-drop-action {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+@media (max-width: 640px) {
+  .homepage-drop-action { display: none; }
+}
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.homepage-preview {
+  display: block;
+  width: 100%;
+  height: 65vh;
+  min-height: 360px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
 .theme-options { display: flex; gap: 12px; flex-wrap: wrap; }
 .theme-option {
   display: flex; align-items: center; gap: 12px; width: 236px; padding: 12px;

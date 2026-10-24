@@ -103,6 +103,14 @@ go test ./internal/server -run 'TestInstall' -count=1
 
 另覆盖 `database.driver: setup` 安装器模式：启动后不创建 SQLite 文件、`setupMode` 状态正确、创建管理员被拒绝、保存首个数据库后触发重启。
 
+## 自定义首页测试
+
+```bash
+go test ./internal/server -run 'TestHomepage' -count=1
+```
+
+覆盖 HTML 上传、ZIP 资源与顶层目录归一化、启用前不替换 `/`、沙箱 CSP / `X-Frame-Options`、预览 token、ZIP 路径穿越拒绝、未认证上传拒绝、恢复内置首页，以及自定义首页随 SQLite 备份创建和恢复。
+
 ## 远程数据库测试
 
 SQLite 测试默认运行。PostgreSQL 18 / MySQL 8.0 使用同一套 store 契约测试，按环境变量启用：

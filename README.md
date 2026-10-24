@@ -112,6 +112,8 @@ docker compose up -d --build
 
 首次登录后请到 **Settings → Security** 修改密码。初始化完成后 `/install` 会按 404 处理，不再暴露安装入口。同一页面还可以开启 **管理员安全入口**（默认关闭）：开启后 `/admin` 不再可用，必须使用 `/admin/<入口路径>/login` 访问，管理 API 也会校验该入口。
 
+公开首页可以在 **Settings → 首页** 上传自定义 HTML 或 ZIP（含 CSS/JS/图片），页面在沙箱 iframe 中运行，可执行 JavaScript，但无法读取管理员登录态；该模式不参与搜索引擎收录。详见 [自定义首页](docs/homepage.md)。
+
 生产环境建议：
 
 1. 用 Nginx / Caddy 提供 HTTPS 反向代理到 `127.0.0.1:8080`。

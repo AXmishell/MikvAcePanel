@@ -98,6 +98,11 @@ func (s *Server) CreateBackup(ctx context.Context) (*BackupInfo, error) {
 			}
 		}
 	}
+	if writeErr == nil {
+		if version, ok := s.homepageSelected(ctx); ok {
+			writeErr = addHomepageToTar(tw, s.homepageVersionDir(version), "homepage/versions/"+version, nowT)
+		}
+	}
 	if err := tw.Close(); writeErr == nil {
 		writeErr = err
 	}
@@ -315,6 +320,10 @@ func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
 		// staged encryption key for the restored database
 	} else {
 		_ = os.Remove(filepath.Join(s.cfg.DataDir, "cert.key.restore"))
+	}
+	if err := extractHomepageFromArchive(tmpTar, s.cfg.DataDir); err != nil {
+		_ = os.RemoveAll(filepath.Join(s.cfg.DataDir, "homepage", ".restore"))
+		s.log.Warn("backup: stage homepage", "error", err)
 	}
 	s.store.AddEvent(r.Context(), "backup.restore_staged", 0, "warning", "已上传恢复文件，等待面板重启")
 	writeJSON(w, http.StatusOK, map[string]any{

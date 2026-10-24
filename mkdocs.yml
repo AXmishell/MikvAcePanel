@@ -90,6 +90,7 @@ nav:
   - 部署指南: deployment.md
   - 使用手册:
       - 面板功能: panel.md
+      - 自定义首页: homepage.md
       - 订阅与客户端: subscriptions.md
       - 用户中心: user-portal.md
       - 节点 Agent: node-agent.md

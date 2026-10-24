@@ -44,8 +44,9 @@ Agent 在以下时机自动申请/续期：
 
 **设置 → 证书签发**：
 
-- ACME 目录：Let's Encrypt 生产 / Staging；
+- ACME 目录：Let's Encrypt / LiteSSL；
 - ACME 邮箱；
+- LiteSSL 需要额外填写 EAB Key ID 与 EAB HMAC Key，HMAC 会加密保存且不回显；
 - DNS 服务商：手动 TXT、Cloudflare、阿里云 DNS、DNSPod；
 - 提前续期天数（默认 30）；
 - DNS 凭据加密保存在 `panel.db`，加密密钥为 `data/cert.key`（0600）。也可以通过 `security.cert_key_file` 指向 32 字节密钥文件；`data/cert.key` 会随备份归档一起保存。
@@ -81,4 +82,4 @@ DNS-01 要求面板能访问 DNS 服务商 API 与 ACME 目录，**不需要节�
 - 不支持 IP 证书（ACME 不签发 IP SAN），纯 IP 节点继续使用自签名；
 - 当前 CSR 模式按节点单域名签发，泛域名共享证书尚未开放。
 
-测试流程（Pebble 自动化与 Staging 手工用例）见 [证书签发测试](certificates-testing.md)。
+测试流程（Pebble 自动化与 LiteSSL 手工用例）见 [证书签发测试](certificates-testing.md)。

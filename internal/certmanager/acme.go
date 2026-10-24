@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -26,12 +27,16 @@ import (
 
 // Settings is the ACME configuration exposed by the panel.
 type Settings struct {
-	CA         string            `json:"ca"`
-	Email      string            `json:"email"`
-	Provider   string            `json:"provider"`
-	RenewDays  int               `json:"renewDays"`
-	Configured bool              `json:"configured"`
-	DNSConfig  map[string]string `json:"-"`
+	CA            string            `json:"ca"`
+	Email         string            `json:"email"`
+	Provider      string            `json:"provider"`
+	RenewDays     int               `json:"renewDays"`
+	Configured    bool              `json:"configured"`
+	DNSConfig     map[string]string `json:"-"`
+	EABKID        string            `json:"eabKid"`
+	EABHMAC       string            `json:"-"`
+	EABConfigured bool              `json:"eabConfigured"`
+	ClearEAB      bool              `json:"-"`
 }
 
 // LoadSettings returns the current ACME settings, decrypting DNS credentials.
@@ -45,6 +50,7 @@ func (m *Manager) LoadSettings(ctx context.Context) (Settings, error) {
 		Email:     strings.TrimSpace(raw[SettingEmail]),
 		Provider:  strings.TrimSpace(raw[SettingProvider]),
 		RenewDays: DefaultRenewDays,
+		EABKID:    strings.TrimSpace(raw[SettingEABKID]),
 	}
 	if s.CA == "" {
 		s.CA = DefaultCADir
@@ -67,6 +73,14 @@ func (m *Manager) LoadSettings(ctx context.Context) (Settings, error) {
 		s.DNSConfig = cfg
 		s.Configured = len(cfg) > 0
 	}
+	if encrypted := strings.TrimSpace(raw[SettingEABHMAC]); encrypted != "" {
+		plain, err := certcrypto.DecryptString(m.key, encrypted)
+		if err != nil {
+			return s, fmt.Errorf("decrypt EAB HMAC key: %w", err)
+		}
+		s.EABHMAC = plain
+		s.EABConfigured = s.EABKID != "" && plain != ""
+	}
 	return s, nil
 }
 
@@ -87,6 +101,21 @@ func (m *Manager) SaveSettings(ctx context.Context, s Settings, dnsConfig map[st
 	}
 	if values[SettingRenewDays] == "" || values[SettingRenewDays] == "0" {
 		values[SettingRenewDays] = strconv.Itoa(DefaultRenewDays)
+	}
+	if s.ClearEAB {
+		values[SettingEABKID] = ""
+		values[SettingEABHMAC] = ""
+	} else {
+		if s.EABKID != "" {
+			values[SettingEABKID] = s.EABKID
+		}
+		if s.EABHMAC != "" {
+			encrypted, err := certcrypto.EncryptString(m.key, s.EABHMAC)
+			if err != nil {
+				return err
+			}
+			values[SettingEABHMAC] = encrypted
+		}
 	}
 	if dnsConfig != nil {
 		if len(dnsConfig) == 0 {
@@ -130,6 +159,19 @@ func (m *Manager) obtain(ctx context.Context, j *job, domains []string, csr *x50
 	acct := &acme.Account{}
 	if settings.Email != "" {
 		acct.Contact = []string{"mailto:" + settings.Email}
+	}
+	switch {
+	case settings.EABKID != "" && settings.EABHMAC != "":
+		eabKey, err := decodeEABKey(settings.EABHMAC)
+		if err != nil {
+			return "", err
+		}
+		acct.ExternalAccountBinding = &acme.ExternalAccountBinding{
+			KID: settings.EABKID,
+			Key: eabKey,
+		}
+	case RequiresEAB(settings.CA):
+		return "", errors.New("LiteSSL requires External Account Binding: set EAB Key ID and HMAC key")
 	}
 	if _, err := client.Register(ctx, acct, acme.AcceptTOS); err != nil {
 		return "", fmt.Errorf("ACME account: %w", err)
@@ -250,6 +292,33 @@ func (m *Manager) obtain(ctx context.Context, j *job, domains []string, csr *x50
 		_ = pem.Encode(&b, &pem.Block{Type: "CERTIFICATE", Bytes: part})
 	}
 	return b.String(), nil
+}
+
+// RequiresEAB reports whether the configured ACME directory mandates External
+// Account Binding. LiteSSL is the only current built-in provider that does.
+func RequiresEAB(ca string) bool {
+	ca = strings.TrimRight(strings.TrimSpace(ca), "/")
+	return strings.EqualFold(ca, strings.TrimRight(LiteSSLCADir, "/"))
+}
+
+// decodeEABKey accepts the base64url/base64/hex encodings used by CA portals
+// for the EAB HMAC key and returns the raw bytes expected by the ACME client.
+func decodeEABKey(value string) ([]byte, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, errors.New("EAB HMAC key is empty")
+	}
+	for _, encoding := range []*base64.Encoding{
+		base64.RawURLEncoding, base64.URLEncoding, base64.StdEncoding, base64.RawStdEncoding,
+	} {
+		if b, err := encoding.DecodeString(value); err == nil && len(b) > 0 {
+			return b, nil
+		}
+	}
+	if b, err := hex.DecodeString(value); err == nil && len(b) > 0 {
+		return b, nil
+	}
+	return nil, errors.New("EAB HMAC key must be base64 or hex encoded")
 }
 
 // accountKey loads or creates the persisted ACME account key.

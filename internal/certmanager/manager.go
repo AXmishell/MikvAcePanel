@@ -37,7 +37,11 @@ const (
 	SettingProvider  = "cert_dns_provider"
 	SettingDNSConfig = "cert_dns_config"
 	SettingRenewDays = "cert_renew_days"
+	SettingEABKID    = "cert_acme_eab_kid"
+	SettingEABHMAC   = "cert_acme_eab_hmac"
 	DefaultCADir     = "https://acme-v02.api.letsencrypt.org/directory"
+	// LiteSSLCADir requires External Account Binding for new ACME accounts.
+	LiteSSLCADir     = "https://acme.litessl.com/acme/v2/directory"
 	DefaultRenewDays = 30
 	jobTimeout       = 30 * time.Minute
 	propagationWait  = 5 * time.Minute

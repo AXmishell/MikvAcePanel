@@ -225,6 +225,18 @@ secrets:
 
 MySQL 对应使用 `mysql:8.0` 和 `./data/mysql:/var/lib/mysql`，并在启动参数中指定 `--character-set-server=utf8mb4 --collation-server=utf8mb4_bin`。
 
+## 自定义首页
+
+管理员可以在 **设置 → 首页** 上传 `.html` 或 `.zip`（可含 CSS/JS/图片）。页面通过沙箱 iframe 在 `/` 展示，可以执行 JavaScript，但不能读取管理员登录态，也不参与搜索引擎收录。
+
+- 单 HTML 最大 2 MB；ZIP 最大 25 MB，解压后 50 MB
+- 文件保存在 `server.data_dir/homepage/`，仅保留最近 5 个版本
+- SQLite 备份会包含当前启用的首页；恢复后下次启动生效
+- 反向代理不需要额外配置 `/homepage/*`
+- 多实例部署必须共享 `server.data_dir/homepage/`，否则各实例可能显示不同页面
+
+细节见 [自定义首页](homepage.md)。
+
 ## HTTPS 反向代理
 
 ### Nginx

@@ -250,6 +250,24 @@ export const api = {
     if (!res.ok) throw new Error(data.error || 'Restore failed')
     return data
   },
+  async uploadHomepage(file) {
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await fetch(`${BASE}/homepage/upload`, {
+      method: 'POST',
+      headers: adminHeaders({ Authorization: 'Bearer ' + token() }),
+      body: fd,
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || 'Upload failed')
+    return data
+  },
+  homepage: () => request('/homepage'),
+  activateHomepage: (version) => request('/homepage/activate', { method: 'POST', body: { version } }),
+  setHomepageMode: (mode) => request('/homepage/mode', { method: 'PUT', body: { mode } }),
+  deleteHomepageVersion: (version) => request(`/homepage/versions/${encodeURIComponent(version)}`, { method: 'DELETE' }),
+  previewHomepage: (version) => request('/homepage/preview', { method: 'POST', body: { version } }),
+  resetHomepage: () => request('/homepage', { method: 'DELETE' }),
 
   apiKeys: () => request('/api-keys'),
   createAPIKey: (data) => request('/api-keys', { method: 'POST', body: data }),

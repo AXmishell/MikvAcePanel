@@ -184,6 +184,7 @@ func (s *Server) handleGetCertSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ca": settings.CA, "email": settings.Email, "provider": settings.Provider,
 		"renewDays": settings.RenewDays, "dnsConfigured": settings.Configured,
+		"eabKid": settings.EABKID, "eabConfigured": settings.EABConfigured,
 	})
 }
 
@@ -194,6 +195,9 @@ func (s *Server) handleUpdateCertSettings(w http.ResponseWriter, r *http.Request
 		Provider  string          `json:"provider"`
 		RenewDays int             `json:"renewDays"`
 		DNSConfig json.RawMessage `json:"dnsConfig"`
+		EABKID    string          `json:"eabKid"`
+		EABHMAC   string          `json:"eabHmac"`
+		ClearEAB  bool            `json:"clearEab"`
 	}
 	if err := decodeJSON(r, &raw); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -220,9 +224,19 @@ func (s *Server) handleUpdateCertSettings(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
+	eabKID := strings.TrimSpace(raw.EABKID)
+	eabHMAC := strings.TrimSpace(raw.EABHMAC)
+	if certmanager.RequiresEAB(raw.CA) {
+		current, _ := s.certs.LoadSettings(r.Context())
+		if raw.ClearEAB || (eabKID == "" && current.EABKID == "") || (eabHMAC == "" && current.EABHMAC == "") {
+			writeError(w, http.StatusBadRequest, "LiteSSL requires EAB Key ID and HMAC key")
+			return
+		}
+	}
 	settings := certmanager.Settings{
 		CA: strings.TrimSpace(raw.CA), Email: strings.TrimSpace(raw.Email),
 		Provider: provider, RenewDays: raw.RenewDays,
+		EABKID: eabKID, EABHMAC: eabHMAC, ClearEAB: raw.ClearEAB,
 	}
 	if err := s.certs.SaveSettings(r.Context(), settings, dnsConfig); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

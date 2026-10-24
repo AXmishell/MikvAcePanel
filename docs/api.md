@@ -69,6 +69,8 @@ API Key（`Authorization: Bearer ck_...`）不受安全入口限制。
 | POST | `/api/install/database/test` | 测试 SQLite / PostgreSQL / MySQL 连接；仅在管理员表为空时可用 |
 | POST | `/api/install/database` | 保存数据库配置；切换后端后需要重启面板 |
 | POST | `/api/install` | 创建第一个管理员；仅在管理员表为空时可用 |
+| GET | `/homepage/*` | 自定义首页静态资源（沙箱 CSP） |
+| GET | `/preview/homepage/:token/*` | 自定义首页短时预览 |
 | GET | `/api/agent/version` | Agent 可用版本信息 |
 | GET | `/api/agent/install.sh` | 节点安装脚本（通过参数传 panel/token） |
 | POST | `/api/auth` | Hysteria 2 外部认证 |
@@ -335,7 +337,7 @@ Portal JWT 带有 `purpose=portal`，不能访问管理接口；管理员 JWT �
 | POST | `/api/nodes/:id/cert/confirm` | 手动 TXT 已添加，继续签发 |
 | POST | `/api/nodes/:id/cert/cancel` | 取消进行中的签发 |
 | GET | `/api/certs` | 所有节点的证书状态汇总 |
-| GET/PUT | `/api/cert/settings` | ACME CA、邮箱、DNS 服务商与凭据 |
+| GET/PUT | `/api/cert/settings` | ACME CA、邮箱、EAB 凭据、DNS 服务商与凭据 |
 | POST | `/api/sync` | 同步所有节点 |
 
 节点请求字段见 [node-agent.md](node-agent.md)。其中 `runtimeMode` 可选 `process`（默认）或 `docker`，会影响 `/install` 返回的 `installCommand`、`installScript` 与 `compose`；Agent 实际回报的运行方式在只读字段 `runtime` 中。
@@ -380,15 +382,48 @@ Xray 扩展选项放在请求体的 `xray` 对象中：
 
 | Method | Path | 说明 |
 | --- | --- | --- |
+| GET | `/api/homepage` | 自定义首页模式、启用版本与版本列表 |
+| POST | `/api/homepage/upload` | 上传 `.html` / `.zip` 首页（仅暂存） |
+| POST | `/api/homepage/activate` | 启用指定首页版本 |
+| POST | `/api/homepage/preview` | 生成 10 分钟有效的预览链接 |
+| PUT | `/api/homepage/mode` | 切换 `builtin` / `upload` |
+| DELETE | `/api/homepage/versions/:version` | 删除非当前首页版本 |
+| DELETE | `/api/homepage` | 恢复内置首页 |
 | GET | `/api/backups` | 备份列表和自动备份设置 |
 | POST | `/api/backups` | 立即创建备份 |
 | GET | `/api/backups/:name` | 下载备份 |
 | DELETE | `/api/backups/:name` | 删除备份 |
 | POST | `/api/backups/restore` | multipart 字段 `file`，上传后需重启面板生效 |
 
-备份为 `tar.gz`，包含一致性快照 `panel.db` 和 `meta.json`。恢复文件会先校验 SQLite 表结构，再暂存为 `panel.db.restore`，下次启动时替换当前数据库。
+备份为 `tar.gz`，包含一致性快照 `panel.db`、`meta.json`，以及当前选择的自定义首页版本（若存在）。恢复文件会先校验 SQLite 表结构，再暂存为 `panel.db.restore`，下次启动时替换当前数据库；自定义首页文件同时在下次启动时换入。
 
 恢复接口也兼容 CELERITY-panel 的 mongodump 备份（`celerity-backup-*.tar.gz`）。识别到 `hyusers.bson.gz`、`hynodes.bson.gz`、`servergroups.bson.gz` 等集合后，会转换为新的 SQLite 数据库并返回 `source: "celerity"` 以及 `summary`（用户/节点/分组/管理员数量）和 `warnings`。导入同样需要重启面板生效。
+
+### 自定义首页
+
+`POST /api/homepage/upload` 使用 multipart 字段 `file`，支持 `.html`、`.htm` 或 `.zip`。上传只会暂存版本，不会立即替换 `/`。
+
+```json
+// POST /api/homepage/activate
+{ "version": "20261024-173000-a1b2c3" }
+
+// PUT /api/homepage/mode
+{ "mode": "upload" }
+
+// POST /api/homepage/preview
+{ "version": "20261024-173000-a1b2c3" }
+```
+
+预览返回：
+
+```json
+{
+  "url": "/preview/homepage/<token>/index.html",
+  "expiresAt": "2026-10-24T09:30:00Z"
+}
+```
+
+自定义页面通过 `/` 的沙箱 iframe 加载，资源位于 `/homepage/*`，响应包含 `Content-Security-Policy: sandbox ...`。上传限制、ZIP 校验和备份行为见 [自定义首页](homepage.md)。
 
 ### 日志
 

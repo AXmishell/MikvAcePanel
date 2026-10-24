@@ -22,6 +22,29 @@ import (
 	"github.com/axmishell/mikvacepanel/internal/store"
 )
 
+func TestEABHelpers(t *testing.T) {
+	if !RequiresEAB(LiteSSLCADir) || RequiresEAB(DefaultCADir) {
+		t.Fatal("RequiresEAB did not identify LiteSSL")
+	}
+	raw := []byte("0123456789abcdef")
+	for _, value := range []string{
+		base64.RawURLEncoding.EncodeToString(raw),
+		base64.URLEncoding.EncodeToString(raw),
+		base64.StdEncoding.EncodeToString(raw),
+	} {
+		got, err := decodeEABKey(value)
+		if err != nil {
+			t.Fatalf("decode %q: %v", value, err)
+		}
+		if string(got) != string(raw) {
+			t.Fatalf("decode %q = %q", value, got)
+		}
+	}
+	if _, err := decodeEABKey("not valid!"); err == nil {
+		t.Fatal("invalid EAB key accepted")
+	}
+}
+
 func TestKeyAuthorizationMatchesACME(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
