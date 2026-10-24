@@ -177,6 +177,38 @@
       </section>
 
       <section v-show="tab === 'security'" class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">管理员账号</div>
+            <div class="card-sub">修改登录用户名；其他已登录会话会在数秒内失效，当前会话自动续签。</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div v-if="accountError" class="banner banner-danger">{{ accountError }}</div>
+          <div class="form-grid" style="max-width: 640px">
+            <div class="field">
+              <label>用户名</label>
+              <input v-model="account.username" type="text" autocomplete="username" maxlength="32" />
+              <span class="hint">3–32 位，仅允许字母、数字、点、下划线和短横线。</span>
+            </div>
+            <div class="field"><label>当前密码</label><input v-model="account.password" type="password" autocomplete="current-password" /></div>
+            <div v-if="twoFA.enabled" class="field full">
+              <label>动态验证码 / 恢复码</label>
+              <input v-model="account.code" type="text" class="otp-input" autocomplete="one-time-code" spellcheck="false" placeholder="6 位验证码" />
+            </div>
+          </div>
+          <div class="small dim" style="margin-top: 12px">
+            最近登录：{{ auth.admin?.lastLoginAt ? fmtRelative(auth.admin.lastLoginAt) : '—' }}
+            <span style="margin: 0 6px">·</span>
+            创建时间：{{ auth.admin?.createdAt ? fmtDate(auth.admin.createdAt) : '—' }}
+          </div>
+        </div>
+        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
+          <button class="btn btn-primary" :disabled="account.saving" @click="saveAccount">{{ account.saving ? '保存中…' : '保存账号信息' }}</button>
+        </div>
+      </section>
+
+      <section v-show="tab === 'security'" class="card section-gap">
         <div class="card-header"><div class="card-title">管理员密码</div></div>
         <div class="card-body">
           <div v-if="auth.warning" class="banner banner-warn">{{ auth.warning }}</div>
@@ -184,9 +216,13 @@
             <div class="field full"><label>当前密码</label><input v-model="pw.old" type="password" autocomplete="current-password" /></div>
             <div class="field"><label>新密码</label><input v-model="pw.next" type="password" autocomplete="new-password" /></div>
             <div class="field"><label>确认新密码</label><input v-model="pw.confirm" type="password" autocomplete="new-password" /></div>
+            <div v-if="twoFA.enabled" class="field full">
+              <label>动态验证码 / 恢复码</label>
+              <input v-model="pw.code" type="text" class="otp-input" autocomplete="one-time-code" spellcheck="false" placeholder="6 位验证码" />
+            </div>
           </div>
           <div class="divider"></div>
-          <div class="small dim">会话使用服务端密钥签名，密钥位于 <span class="mono">{{ meta.dataDir }}/jwt.secret</span>. 修改密码不会使现有会话失效；如需强制下线请轮换该密钥。</div>
+          <div class="small dim">新密码至少 12 个字符。修改密码后其他会话会在数秒内失效，当前会话会自动续签。</div>
         </div>
         <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
           <button class="btn btn-primary" :disabled="pwSaving" @click="changePassword">{{ pwSaving ? '更新中…' : '更新密码' }}</button>
@@ -445,7 +481,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Download, Plus, Power, Trash2 } from 'lucide-vue-next'
 import { api, resetAdminConfig, setAdminEntry } from '../api'
-import { auth, notify } from '../store'
+import { auth, notify, setSession } from '../store'
 import CopyField from '../components/CopyField.vue'
 import Modal from '../components/Modal.vue'
 import Select from '../components/Select.vue'
@@ -462,7 +498,9 @@ const error = ref('')
 const saved = ref('')
 const saving = ref(false)
 const pwSaving = ref(false)
-const pw = reactive({ old: '', next: '', confirm: '' })
+const pw = reactive({ old: '', next: '', confirm: '', code: '' })
+const account = reactive({ username: auth.admin?.username || '', password: '', code: '', saving: false })
+const accountError = ref('')
 
 const subscriptionPreview = ref('')
 const portalPreview = ref('')
@@ -775,6 +813,7 @@ async function load() {
     meta.value = { version: res.version, platform: res.platform, dataDir: res.dataDir }
     applySettings(res.settings)
     syncPreview()
+    if (auth.admin?.username) account.username = auth.admin.username
     loadCertSettings()
     load2FA()
   } catch (e) {
@@ -837,16 +876,47 @@ async function save(keys) {
     saving.value = false
   }
 }
+async function saveAccount() {
+  accountError.value = ''
+  const username = account.username.trim()
+  if (!/^[A-Za-z0-9._-]{3,32}$/.test(username)) {
+    return notify('用户名需要 3–32 位，仅允许字母、数字、点、下划线和短横线', 'error')
+  }
+  if (!account.password) return notify('请输入当前密码', 'error')
+  if (twoFA.enabled && !account.code.trim()) return notify('请输入动态验证码或恢复码', 'error')
+  account.saving = true
+  try {
+    const res = await api.updateAccount(username, account.password, account.code)
+    const merged = { ...auth.admin, ...res.admin }
+    if (res.token) setSession(res.token, merged, auth.warning)
+    else setSession(auth.token, merged, auth.warning)
+    account.username = username
+    account.password = ''
+    account.code = ''
+    notify('账号信息已更新')
+  } catch (e) {
+    accountError.value = e.message
+    notify(e.message, 'error')
+  } finally {
+    account.saving = false
+  }
+}
+
 async function changePassword() {
-  if (pw.next.length < 8) return notify('新密码至少需要 8 个字符', 'error')
+  if (pw.next.length < 12) return notify('新密码至少需要 12 个字符', 'error')
   if (pw.next !== pw.confirm) return notify('两次输入的密码不一致', 'error')
+  if (pw.next === pw.old) return notify('新密码不能与当前密码相同', 'error')
+  if (twoFA.enabled && !pw.code.trim()) return notify('请输入动态验证码或恢复码', 'error')
   pwSaving.value = true
   try {
-    await api.changePassword(pw.old, pw.next)
+    const res = await api.changePassword(pw.old, pw.next, pw.code)
+    const merged = { ...auth.admin, ...res.admin }
+    if (res.token) setSession(res.token, merged, '')
+    else setSession(auth.token, merged, '')
     pw.old = ''
     pw.next = ''
     pw.confirm = ''
-    auth.warning = ''
+    pw.code = ''
     notify('密码已更新')
   } catch (e) {
     notify(e.message, 'error')

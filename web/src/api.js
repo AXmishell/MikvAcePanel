@@ -130,8 +130,10 @@ export const api = {
   regenerateRecovery: (password, code) => request('/2fa/recovery', { method: 'POST', body: { password, code } }),
   logout: () => request('/logout', { method: 'POST' }),
   me: () => request('/me'),
-  changePassword: (oldPassword, newPassword) =>
-    request('/change-password', { method: 'POST', body: { oldPassword, newPassword } }),
+  updateAccount: (username, currentPassword, code) =>
+    request('/admin/account', { method: 'PUT', body: { username, currentPassword, code } }),
+  changePassword: (oldPassword, newPassword, code) =>
+    request('/change-password', { method: 'POST', body: { oldPassword, newPassword, code } }),
 
   dashboard: () => request('/dashboard'),
   events: (query) => request('/events', { query }),

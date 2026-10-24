@@ -362,6 +362,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		{"admins", "totp_enabled", "INTEGER NOT NULL DEFAULT 0"},
 		{"admins", "totp_recovery", "TEXT NOT NULL DEFAULT '[]'"},
 		{"admins", "totp_pending_recovery", "TEXT NOT NULL DEFAULT '[]'"},
+		{"admins", "token_version", "INTEGER NOT NULL DEFAULT 0"},
 	}
 	for _, c := range columns {
 		if err := s.ensureColumn(ctx, c.table, c.column, c.ddl); err != nil {

@@ -187,8 +187,9 @@ Portal JWT 带有 `purpose=portal`，不能访问管理接口；管理员 JWT �
 
 | Method | Path | 说明 |
 | --- | --- | --- |
-| GET | `/api/me` | 当前管理员、版本、默认密码警告 |
-| POST | `/api/change-password` | `{oldPassword,newPassword}` |
+| GET | `/api/me` | 当前管理员、创建/最近登录时间、版本、默认密码警告 |
+| PUT | `/api/admin/account` | `{username,currentPassword,code}`，修改登录用户名；启用 2FA 时 `code` 必填；返回新 token |
+| POST | `/api/change-password` | `{oldPassword,newPassword,code}`，新密码至少 12 位；启用 2FA 时 `code` 必填；返回新 token |
 | GET | `/api/2fa` | 2FA 状态与剩余恢复码数量 |
 | POST | `/api/2fa/setup` | 生成 TOTP 密钥、二维码与恢复码（尚未启用） |
 | POST | `/api/2fa/enable` | `{code}` 确认启用 |

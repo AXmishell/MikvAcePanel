@@ -29,7 +29,8 @@ func (s *Store) EnsureAdmin(ctx context.Context, username, passwordHash string) 
 func (s *Store) GetAdminByUsername(ctx context.Context, username string) (*model.Admin, error) {
 	row := s.DB.QueryRowContext(ctx,
 		`SELECT id, username, password_hash, created_at, last_login_at,
-			totp_secret, totp_pending, totp_enabled, totp_recovery, totp_pending_recovery
+			totp_secret, totp_pending, totp_enabled, totp_recovery, totp_pending_recovery,
+			token_version
 		 FROM admins WHERE username = ?`, username)
 	return scanAdmin(row)
 }
@@ -38,7 +39,8 @@ func (s *Store) GetAdminByUsername(ctx context.Context, username string) (*model
 func (s *Store) GetAdminByID(ctx context.Context, id int64) (*model.Admin, error) {
 	row := s.DB.QueryRowContext(ctx,
 		`SELECT id, username, password_hash, created_at, last_login_at,
-			totp_secret, totp_pending, totp_enabled, totp_recovery, totp_pending_recovery
+			totp_secret, totp_pending, totp_enabled, totp_recovery, totp_pending_recovery,
+			token_version
 		 FROM admins WHERE id = ?`, id)
 	return scanAdmin(row)
 }
@@ -50,7 +52,8 @@ func scanAdmin(row *sql.Row) (*model.Admin, error) {
 	var recovery, pendingRecovery string
 	var totpEnabled int
 	err := row.Scan(&a.ID, &a.Username, &a.PasswordHash, &created, &last,
-		&a.TOTPSecret, &a.TOTPPending, &totpEnabled, &recovery, &pendingRecovery)
+		&a.TOTPSecret, &a.TOTPPending, &totpEnabled, &recovery, &pendingRecovery,
+		&a.TokenVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -117,6 +120,50 @@ func (s *Store) UpdateAdminPassword(ctx context.Context, id int64, hash string) 
 		return ErrNotFound
 	}
 	return nil
+}
+
+// UpdateAdminUsername changes an administrator's login name.
+func (s *Store) UpdateAdminUsername(ctx context.Context, id int64, username string) error {
+	res, err := s.DB.ExecContext(ctx, `UPDATE admins SET username = ? WHERE id = ?`, username, id)
+	if err != nil {
+		return attr(err, "update admin username")
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// BumpAdminTokenVersion invalidates all sessions issued for an administrator
+// and returns the new version.
+func (s *Store) BumpAdminTokenVersion(ctx context.Context, id int64) (int, error) {
+	if _, err := s.DB.ExecContext(ctx,
+		`UPDATE admins SET token_version = token_version + 1 WHERE id = ?`, id); err != nil {
+		return 0, err
+	}
+	var version int
+	if err := s.DB.QueryRowContext(ctx,
+		`SELECT token_version FROM admins WHERE id = ?`, id).Scan(&version); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, err
+	}
+	return version, nil
+}
+
+// GetAdminTokenVersion returns the current session version of an administrator.
+func (s *Store) GetAdminTokenVersion(ctx context.Context, id int64) (int, error) {
+	var version int
+	if err := s.DB.QueryRowContext(ctx,
+		`SELECT token_version FROM admins WHERE id = ?`, id).Scan(&version); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, err
+	}
+	return version, nil
 }
 
 // CountAdmins returns the number of administrator accounts.

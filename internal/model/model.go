@@ -14,6 +14,9 @@ type Admin struct {
 	PasswordHash string     `json:"-"`
 	CreatedAt    time.Time  `json:"createdAt"`
 	LastLoginAt  *time.Time `json:"lastLoginAt,omitempty"`
+	// TokenVersion is embedded in administrator sessions. Bumping it revokes
+	// every session issued before the change.
+	TokenVersion int `json:"-"`
 
 	TOTPEnabled         bool     `json:"twoFactorEnabled"`
 	TOTPSecret          string   `json:"-"`
