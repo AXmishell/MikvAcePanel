@@ -243,8 +243,13 @@ func (s *Server) serveAdminSPA(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 	enabled, _ := s.adminSecurityEntry(r.Context())
 	settings, _ := s.store.GetSettings(r.Context())
+	installed := true
+	if n, err := s.store.CountAdmins(r.Context()); err == nil {
+		installed = n > 0
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"securityEntryEnabled": enabled,
 		"panelName":            firstNonEmpty(settings["panel_name"], "MikvAce Panel"),
+		"installed":            installed,
 	})
 }

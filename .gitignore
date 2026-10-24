@@ -8,11 +8,12 @@ site/
 
 # runtime data
 data/
-data-node/
-data-node.*/
+data-*/
 *.db
 *.db-shm
 *.db-wal
+*.db.restore
+*.pre-restore-*
 *.log
 
 # certificates and private keys
@@ -26,8 +27,12 @@ data-node.*/
 web/node_modules/
 web/.vite/
 
-# environment
+# environment (keep the checked-in templates)
 .env
+.env.*
+!.env.example
+!.env.panel.example
+!.env.node.example
 docker.env
 
 # editor / OS

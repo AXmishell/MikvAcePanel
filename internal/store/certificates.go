@@ -56,7 +56,7 @@ func (s *Store) SaveCertificate(ctx context.Context, c *model.Certificate) (*mod
 	if c.Status == "" {
 		c.Status = "valid"
 	}
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO certificates
+	id, err := s.InsertID(ctx, `INSERT INTO certificates
 		(domains_json, common_name, cert_pem, key_cipher, key_nonce, fingerprint, key_fingerprint,
 		 issuer, not_before, not_after, source, status, auto_renew, last_error, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -66,7 +66,6 @@ func (s *Store) SaveCertificate(ctx context.Context, c *model.Certificate) (*mod
 	if err != nil {
 		return nil, false, err
 	}
-	id, _ := res.LastInsertId()
 	c.ID = id
 	return c, true, nil
 }
@@ -141,13 +140,13 @@ func (s *Store) SaveAcmeAccount(ctx context.Context, a *model.ACMEAccount) error
 	if a.CreatedAt.IsZero() {
 		a.CreatedAt = now()
 	}
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO acme_accounts
+	id, err := s.InsertID(ctx, `INSERT INTO acme_accounts
 		(ca_url, email, key_cipher, key_nonce, account_url, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		a.CAURL, a.Email, a.KeyCipher, a.KeyNonce, a.AccountURL, ts(a.CreatedAt))
 	if err != nil {
 		return err
 	}
-	a.ID, _ = res.LastInsertId()
+	a.ID = id
 	return nil
 }
 

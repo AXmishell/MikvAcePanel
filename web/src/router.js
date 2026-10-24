@@ -1,10 +1,16 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { auth, portalAuth } from './store'
-import { fetchAdminConfig, setAdminEntry } from './api'
+import { fetchAdminConfig, fetchInstallStatus, setAdminEntry } from './api'
 
 // The administrator console lives under /admin and the self-service portal
 // under /user. `/` is a public landing page and must not link to /admin.
 const routes = [
+  {
+    path: '/install',
+    name: 'install',
+    component: () => import('./views/InstallView.vue'),
+    meta: { public: true, title: '初始化面板' },
+  },
   {
     path: '/',
     name: 'home',
@@ -84,6 +90,18 @@ function notFound(to) {
 router.beforeEach(async (to) => {
   if (to.name === 'not-found') return true
 
+  if (to.name === 'install') {
+    try {
+      const status = await fetchInstallStatus()
+      // The installer is a first-run-only entry point. Once an administrator
+      // exists it is intentionally hidden behind the normal 404 page.
+      if (status.installed) return notFound(to)
+    } catch {
+      // The form will surface a real error when the server is unreachable.
+    }
+    return true
+  }
+
   if (to.meta.admin) {
     const entry = typeof to.params.entry === 'string' ? to.params.entry : ''
     setAdminEntry(entry)
@@ -93,6 +111,10 @@ router.beforeEach(async (to) => {
       cfg = await fetchAdminConfig()
     } catch {
       // If the probe fails the login request will surface the real error.
+    }
+
+    if (cfg.installed === false) {
+      return { name: 'install' }
     }
 
     if (cfg.securityEntryEnabled) {

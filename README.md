@@ -99,19 +99,21 @@ cp .env.panel.example .env  # 面板模板：可选修改端口/初始密码/公
 docker compose up -d --build
 ```
 
-打开 `http://服务器IP:8080/` 查看公开首页；管理员进入 `/admin` 登录控制台（旧地址 `/panel` 会自动跳转到 `/admin/dashboard`）。终端用户入口是 `/user`。首页不会暴露管理员入口链接。
+打开 `http://服务器IP:8080/` 查看公开首页。首次启动且未设置 `ADMIN_PASSWORD` 时，访问 `/install` 按向导创建管理员账号；设置过 `ADMIN_PASSWORD` 的无人值守部署仍会在启动时自动创建。管理员控制台是 `/admin`（旧地址 `/panel` 会自动跳转到 `/admin/dashboard`），终端用户入口是 `/user`。首页不会暴露管理员入口链接。
 
-管理员账号来自 `.env`：
+数据默认保存在仓库目录下的 `./data`，Compose 使用目录映射而不是 Docker 命名卷，备份时直接打包该目录即可。
 
-- 用户名：`ADMIN_USERNAME`（示例 `admin`）
-- 密码：`ADMIN_PASSWORD`。未设置时会自动生成一个随机密码，并在首次启动的容器日志中打印一次。
+管理员账号来自 `.env` 或 `/install`：
 
-首次登录后请到 **Settings → Security** 修改密码。同一页面还可以开启 **管理员安全入口**（默认关闭）：开启后 `/admin` 不再可用，必须使用 `/admin/<入口路径>/login` 访问，管理 API 也会校验该入口。
+- 用户名：`ADMIN_USERNAME`（示例 `admin`），或在初始化向导中自定义；
+- 密码：`ADMIN_PASSWORD`。未设置且使用内置前端时，首次启动会开放 `/install` 向导；`SERVE_WEB=false` 的纯 API 部署仍会生成随机密码并在首次启动日志中打印一次。
+
+首次登录后请到 **Settings → Security** 修改密码。初始化完成后 `/install` 会按 404 处理，不再暴露安装入口。同一页面还可以开启 **管理员安全入口**（默认关闭）：开启后 `/admin` 不再可用，必须使用 `/admin/<入口路径>/login` 访问，管理 API 也会校验该入口。
 
 生产环境建议：
 
 1. 用 Nginx / Caddy 提供 HTTPS 反向代理到 `127.0.0.1:8080`。
-2. 设置环境变量 `PANEL_PUBLIC_URL=https://panel.example.com`，或在面板 **Settings → General** 中修改。
+2. 设置环境变量 `PANEL_PUBLIC_URL=https://panel.example.com`，或在初始化向导 / **Settings → General** 中修改。
 3. 设置强 `ADMIN_PASSWORD`，并为 `JWT_SECRET` 配置随机值。
 4. 如果面板位于反向代理之后，用 `TRUSTED_PROXIES` 声明代理地址，否则登录限流会把所有客户端视为同一个 IP。
 
@@ -252,7 +254,7 @@ docker run -d --name mikvace-node --restart unless-stopped \
   -e PANEL_URL="https://panel.example.com" \
   -e NODE_TOKEN="mtn_xxx" \
   -e HY2_RUNTIME=process \
-  -v /var/lib/mikvace:/data \
+  -v "$PWD/data-node:/data" \
   ghcr.io/axmishell/mikvacepanel-node:latest
 ```
 
@@ -279,7 +281,7 @@ docker build -f Dockerfile.node -t ghcr.io/axmishell/mikvacepanel-node:latest .
 | `PANEL_URL` | 必填 | 面板公开地址，例如 `https://panel.example.com` |
 | `NODE_TOKEN` | 必填 | 面板节点页生成的 Token |
 | `DATA_DIR` | `/data` | 容器内持久化目录 |
-| `HOST_DATA_DIR` | `/var/lib/mikvace` | 宿主机数据目录（Docker 运行时使用） |
+| `HOST_DATA_DIR` | 必填（Docker 模式） | 宿主机数据目录的绝对路径（Docker 运行时使用） |
 | `HY2_RUNTIME` | `process` | `process`：Agent 直接启动代理核心；`docker`：启动同机容器 |
 | `HYSTERIA_BIN` | `hysteria` | 进程模式下 Hysteria 路径 |
 | `XRAY_BIN` | `xray` | 进程模式下 Xray 路径 |
@@ -408,7 +410,7 @@ go build -o mikvace-client ./cmd/client
 - **后端**：Go 1.26+、chi、gorilla/websocket、JWT、bcrypt、yaml.v3、modernc.org/sqlite（纯 Go）。
 - **前端**：Vue 3、Vue Router、Vite、lucide-vue-next，无 UI 框架，手写深色响应式界面。
 - **节点端**：Go，进程模式或 Docker 模式，SIGHUP/SIGTERM 管理，自签名证书，iptables 端口跳跃。
-- **数据**：SQLite（WAL），默认 `/data/panel.db`；JWT secret 默认持久化在 `/data/jwt.secret`。
+- **数据**：SQLite（WAL），默认 `/data/panel.db`；PostgreSQL / MySQL 方言层已就位，作为可选后端分阶段接入；JWT secret 默认持久化在 `/data/jwt.secret`。
 
 ---
 

@@ -94,6 +94,8 @@ Agent 断线重连时：
 
 SQLite 使用 WAL 模式；`VACUUM INTO` 生成一致性备份快照。
 
+存储层通过 `internal/store/dialect` 和 `store.DB` 包装层隔离方言：业务 SQL 继续使用 `?`，PostgreSQL 自动重写为 `$1`。SQLite 仍是默认后端；PostgreSQL 18 与 MySQL 8.0 作为可选后端分阶段接入，当前版本若选择远程后端会在启动时明确拒绝，避免写入未完成迁移的库。
+
 ## 安全边界
 
 ### 面板

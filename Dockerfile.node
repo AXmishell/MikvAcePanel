@@ -26,6 +26,5 @@ ENV DATA_DIR=/data \
     HYSTERIA_BIN=/usr/local/bin/hysteria \
     XRAY_BIN=/usr/local/bin/xray \
     XRAY_IMAGE=ghcr.io/xtls/xray-core:latest
-VOLUME ["/data"]
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/usr/local/bin/mikvace-node"]

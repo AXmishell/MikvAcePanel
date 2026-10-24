@@ -20,8 +20,8 @@ services:
       SERVE_WEB: "${SERVE_WEB:-true}"
       FRONTEND_URL: "${FRONTEND_URL:-}"
       ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
-      # Leave empty to generate a random password on first boot (printed once
-      # in the panel logs). Set a strong value in .env for unattended installs.
+      # Leave empty to open the /install wizard on first boot (when SERVE_WEB
+      # is true). Set a strong value in .env for unattended installs.
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       JWT_SECRET: "${JWT_SECRET:-}"
       SESSION_TTL_HOURS: "${SESSION_TTL_HOURS:-24}"
@@ -32,8 +32,17 @@ services:
       REDIS_PREFIX: "${REDIS_PREFIX:-mikvace:}"
       REDIS_REQUIRED: "${REDIS_REQUIRED:-false}"
       CERT_ENC_KEY: "${CERT_ENC_KEY:-}"
+      # Database backend. SQLite is the default; the remote backends are wired
+      # in incrementally and will be enabled in a later release.
+      DB_DRIVER: "${DB_DRIVER:-sqlite}"
+      DATABASE_URL: "${DATABASE_URL:-}"
+      DB_MAX_OPEN: "${DB_MAX_OPEN:-}"
+      DB_MAX_IDLE: "${DB_MAX_IDLE:-}"
+      DB_CONN_LIFETIME: "${DB_CONN_LIFETIME:-}"
+    # Bind-mount the repository-local data directory instead of a named volume.
+    # Everything (panel.db, backups, JWT secret, cert.key) stays inside ./data.
     volumes:
-      - panel-data:/data
+      - ./data:/data
 
   redis:
     image: redis:7-alpine
@@ -42,8 +51,4 @@ services:
     profiles: ["redis"]
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - redis-data:/data
-
-volumes:
-  panel-data:
-  redis-data:
+      - ./data/redis:/data

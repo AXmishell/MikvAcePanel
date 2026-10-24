@@ -75,14 +75,13 @@ func (s *Store) GetGroup(ctx context.Context, id int64) (*model.Group, error) {
 func (s *Store) CreateGroup(ctx context.Context, g *model.Group) (*model.Group, error) {
 	nowT := now()
 	g.CreatedAt, g.UpdatedAt = nowT, nowT
-	res, err := s.DB.ExecContext(ctx,
+	id, err := s.InsertID(ctx,
 		`INSERT INTO groups (name, description, color, subscription_title, max_devices, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		g.Name, g.Description, g.Color, g.SubscriptionTitle, g.MaxDevices, ts(nowT), ts(nowT))
 	if err != nil {
 		return nil, attr(err, "create group")
 	}
-	id, _ := res.LastInsertId()
 	return s.GetGroup(ctx, id)
 }
 

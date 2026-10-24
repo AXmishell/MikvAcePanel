@@ -61,14 +61,13 @@ func (s *Store) CreateAPIKey(ctx context.Context, name, prefix, hash string, sco
 	if rateLimit <= 0 {
 		rateLimit = 60
 	}
-	res, err := s.DB.ExecContext(ctx,
+	id, err := s.InsertID(ctx,
 		`INSERT INTO api_keys (name, prefix, token_hash, scopes, rate_limit, enabled, created_at, expires_at)
 		 VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
 		name, prefix, hash, JoinScopes(scopes), rateLimit, ts(now()), tsPtr(expires))
 	if err != nil {
 		return nil, attr(err, "create api key")
 	}
-	id, _ := res.LastInsertId()
 	row := s.DB.QueryRowContext(ctx, apiKeySelect+` WHERE id = ?`, id)
 	return scanAPIKey(row)
 }

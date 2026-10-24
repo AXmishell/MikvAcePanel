@@ -8,13 +8,20 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/axmishell/mikvacepanel/internal/store/dialect"
 )
 
 // Config is the panel runtime configuration, loaded from environment variables.
 type Config struct {
 	Addr          string
 	DataDir       string
+	DBDriver      string
+	DBDSN         string
 	DBPath        string
+	DBMaxOpen     int
+	DBMaxIdle     int
+	DBConnMaxLife time.Duration
 	JWTSecret     string
 	PublicURL     string
 	ServeWeb      bool
@@ -40,10 +47,23 @@ type Config struct {
 // defaults.
 func LoadConfig() Config {
 	dataDir := env("DATA_DIR", "./data")
+	dbDSN := env("DATABASE_URL", env("DB_DSN", ""))
+	dbDriver := strings.ToLower(strings.TrimSpace(env("DB_DRIVER", "")))
+	if dbDriver == "" {
+		dbDriver = dialect.ForDSN(dbDSN)
+	}
+	if dbDriver == "" {
+		dbDriver = dialect.SQLite
+	}
 	c := Config{
 		Addr:          env("ADDR", ":8080"),
 		DataDir:       dataDir,
+		DBDriver:      dbDriver,
+		DBDSN:         dbDSN,
 		DBPath:        env("DB_PATH", filepath.Join(dataDir, "panel.db")),
+		DBMaxOpen:     envInt("DB_MAX_OPEN", 0),
+		DBMaxIdle:     envInt("DB_MAX_IDLE", 0),
+		DBConnMaxLife: envDuration("DB_CONN_LIFETIME", 0),
 		JWTSecret:     env("JWT_SECRET", ""),
 		PublicURL:     strings.TrimRight(env("PANEL_PUBLIC_URL", "http://localhost:8080"), "/"),
 		ServeWeb:      envBool("SERVE_WEB", true),
@@ -112,4 +132,28 @@ func envBool(key string, def bool) bool {
 		return false
 	}
 	return def
+}
+
+func envInt(key string, def int) int {
+	v, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(v) == "" {
+		return def
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n <= 0 {
+		return def
+	}
+	return n
+}
+
+func envDuration(key string, def time.Duration) time.Duration {
+	v, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(v) == "" {
+		return def
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(v))
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
 }

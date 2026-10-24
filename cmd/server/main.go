@@ -34,12 +34,20 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: parseLevel(*logLevel)}))
 	slog.SetDefault(logger)
 
-	st, err := store.Open(cfg.DBPath)
+	st, err := store.OpenConfig(store.Config{
+		Driver:          cfg.DBDriver,
+		DSN:             cfg.DBDSN,
+		Path:            cfg.DBPath,
+		MaxOpenConns:    cfg.DBMaxOpen,
+		MaxIdleConns:    cfg.DBMaxIdle,
+		ConnMaxLifetime: cfg.DBConnMaxLife,
+	})
 	if err != nil {
-		logger.Error("open database", "error", err)
+		logger.Error("open database", "error", err, "driver", cfg.DBDriver)
 		os.Exit(1)
 	}
 	defer st.Close()
+	logger.Info("database ready", "driver", st.Dialect().Name())
 
 	app, err := server.New(cfg, st, logger)
 	if err != nil {

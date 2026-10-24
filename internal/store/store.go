@@ -1,4 +1,4 @@
-// Package store implements the panel's SQLite persistence layer.
+// Package store implements the panel's SQL persistence layer.
 package store
 
 import (
@@ -15,12 +15,29 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/axmishell/mikvacepanel/internal/model"
+	"github.com/axmishell/mikvacepanel/internal/store/dialect"
 )
 
-// Store wraps the SQLite database.
+// Store wraps the panel database.
 type Store struct {
-	DB   *sql.DB
+	DB   *DB
 	Path string
+}
+
+// Config selects and configures a database backend.
+//
+// SQLite is the default and only backend enabled in this phase. PostgreSQL and
+// MySQL are accepted by the dialect layer but OpenConfig deliberately rejects
+// them until schema generation and the remaining SQL compatibility work land.
+type Config struct {
+	Driver string
+	// DSN is required for PostgreSQL and MySQL.
+	DSN string
+	// Path is the SQLite file location.
+	Path            string
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
 }
 
 var (
@@ -32,6 +49,21 @@ var (
 
 // Open opens (and migrates) the SQLite database at path.
 func Open(path string) (*Store, error) {
+	return OpenConfig(Config{Driver: dialect.SQLite, Path: path})
+}
+
+// OpenConfig opens the configured backend.
+func OpenConfig(cfg Config) (*Store, error) {
+	d, err := dialect.For(cfg.Driver)
+	if err != nil {
+		return nil, err
+	}
+	if d.Name() != dialect.SQLite {
+		// The dialect layer is in place; remote backends are switched on after
+		// the schema metadata and DML compatibility work lands.
+		return nil, fmt.Errorf("%s backend is not enabled yet; use sqlite for now", d.Name())
+	}
+	path := strings.TrimSpace(cfg.Path)
 	if path == "" {
 		path = "data/panel.db"
 	}
@@ -42,19 +74,75 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("apply pending restore: %w", err)
 	}
 	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(8000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)", path)
-	db, err := sql.Open("sqlite", dsn)
+	raw, err := sql.Open(d.DriverName(), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	db.SetMaxOpenConns(8)
-	db.SetMaxIdleConns(4)
-	db.SetConnMaxLifetime(time.Hour)
-	s := &Store{DB: db, Path: path}
+	applyPool(raw, cfg, 8, 4, time.Hour)
+	s := &Store{DB: &DB{DB: raw, dialect: d}, Path: path}
 	if err := s.Migrate(context.Background()); err != nil {
-		_ = db.Close()
+		_ = raw.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+// applyPool applies explicit pool settings, falling back to backend defaults.
+func applyPool(db *sql.DB, cfg Config, defOpen, defIdle int, defLife time.Duration) {
+	open, idle, life := cfg.MaxOpenConns, cfg.MaxIdleConns, cfg.ConnMaxLifetime
+	if open <= 0 {
+		open = defOpen
+	}
+	if idle <= 0 {
+		idle = defIdle
+	}
+	if life <= 0 {
+		life = defLife
+	}
+	if idle > open {
+		idle = open
+	}
+	db.SetMaxOpenConns(open)
+	db.SetMaxIdleConns(idle)
+	db.SetConnMaxLifetime(life)
+}
+
+// Dialect reports the active backend.
+func (s *Store) Dialect() dialect.Dialect { return s.DB.Dialect() }
+
+// execer is implemented by *DB and *Tx.
+type execer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// InsertID runs a single-row INSERT and returns its generated id.
+//
+// PostgreSQL does not support database/sql's LastInsertId, so the statement is
+// extended with RETURNING id. SQLite and MySQL keep using LastInsertId.
+func (s *Store) InsertID(ctx context.Context, query string, args ...any) (int64, error) {
+	return s.insertID(ctx, s.DB, query, args...)
+}
+
+// InsertIDTx is InsertID inside an existing transaction.
+func (s *Store) InsertIDTx(ctx context.Context, tx *Tx, query string, args ...any) (int64, error) {
+	return s.insertID(ctx, tx, query, args...)
+}
+
+func (s *Store) insertID(ctx context.Context, q execer, query string, args ...any) (int64, error) {
+	if s.Dialect().Name() == dialect.Postgres {
+		stmt := strings.TrimRight(strings.TrimSpace(query), ";") + " RETURNING id"
+		var id int64
+		if err := q.QueryRowContext(ctx, stmt, args...).Scan(&id); err != nil {
+			return 0, err
+		}
+		return id, nil
+	}
+	res, err := q.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
 }
 
 // applyPendingRestore swaps in a database uploaded through the restore API.

@@ -20,4 +20,4 @@ services:
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       DATA_DIR: "/data"
     volumes:
-      - "${NODE_DATA_DIR:-/var/lib/mikvace}:/data"
+      - "${NODE_DATA_DIR:-./data-node}:/data"

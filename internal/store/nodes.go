@@ -203,7 +203,7 @@ func (s *Store) CreateNode(ctx context.Context, n *model.Node, tokenHash, tokenP
 	if n.Port == 0 {
 		n.Port = 443
 	}
-	res, err := s.DB.ExecContext(ctx,
+	id, err := s.InsertID(ctx,
 		`INSERT INTO nodes (name, type, flag, ip, domain, sni, listen, port, port_range, hop_interval,
 		 obfs_type, obfs_password, stats_port, stats_secret, xray_json, hy2_json, cores_json, ssh_port, ssh_user, ssh_password, ssh_key, ssh_host_key, ssh_install_docker,
 		 tls_mode, acme_email, bandwidth_up, bandwidth_down,
@@ -218,7 +218,6 @@ func (s *Store) CreateNode(ctx context.Context, n *model.Node, tokenHash, tokenP
 	if err != nil {
 		return nil, attr(err, "create node")
 	}
-	id, _ := res.LastInsertId()
 	if err := s.SetNodeGroups(ctx, id, groupIDs); err != nil {
 		return nil, err
 	}
@@ -555,7 +554,7 @@ func (s *Store) SaveNodeConfigBundle(ctx context.Context, nodeID int64, yaml str
 	}
 	rev := lastRev + 1
 	nowT := now()
-	res, err := tx.ExecContext(ctx,
+	id, err := s.InsertIDTx(ctx, tx,
 		`INSERT INTO node_configs (node_id, revision, yaml, hash, configs_json, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		nodeID, rev, yaml, hash, marshalJSON(configs), ts(nowT))
 	if err != nil {
@@ -565,7 +564,6 @@ func (s *Store) SaveNodeConfigBundle(ctx context.Context, nodeID int64, yaml str
 		rev, ts(nowT), nodeID); err != nil {
 		return nil, false, err
 	}
-	id, _ := res.LastInsertId()
 	if err := tx.Commit(); err != nil {
 		return nil, false, err
 	}

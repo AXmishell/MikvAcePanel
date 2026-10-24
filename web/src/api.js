@@ -33,6 +33,15 @@ export function resetAdminConfig() {
   adminConfigPromise = null
 }
 
+// First-run setup. These endpoints are public by design and only succeed while
+// the administrators table is empty.
+export function fetchInstallStatus() {
+  return send('/install/status', {}, '', null, false)
+}
+export function installPanel(data) {
+  return send('/install', { method: 'POST', body: data }, '', null, false)
+}
+
 // Build an administrator URL that keeps the current security entrance.
 export function adminPath(subpath = '') {
   const entry = getAdminEntry()
@@ -121,6 +130,8 @@ function adminHeaders(extra = {}) {
 }
 
 export const api = {
+  installStatus: () => fetchInstallStatus(),
+  install: (data) => installPanel(data),
   login: (username, password) => request('/login', { method: 'POST', body: { username, password } }),
   login2FA: (challenge, code) => request('/login/2fa', { method: 'POST', body: { challenge, code } }),
   twoFactorStatus: () => request('/2fa'),

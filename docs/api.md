@@ -50,10 +50,10 @@ Authorization: Bearer <token>
 X-Admin-Entry: <入口路径>
 ```
 
-缺少或校验失败返回 `404 {"error":"not found"}`。`GET /api/admin/config` 是公开探测接口，只返回是否启用（不返回入口路径）：
+缺少或校验失败返回 `404 {"error":"not found"}`。`GET /api/admin/config` 是公开探测接口，只返回是否启用、面板名称以及是否已完成初始化（不返回入口路径）：
 
 ```json
-{ "securityEntryEnabled": true, "panelName": "MikvAce Panel" }
+{ "securityEntryEnabled": true, "panelName": "MikvAce Panel", "installed": true }
 ```
 
 API Key（`Authorization: Bearer ck_...`）不受安全入口限制。
@@ -64,13 +64,45 @@ API Key（`Authorization: Bearer ck_...`）不受安全入口限制。
 
 | Method | Path | 说明 |
 | --- | --- | --- |
-| GET | `/api/health` | 健康检查、版本、uptime、Agent Hub 状态 |
+| GET | `/api/health` | 健康检查、版本、uptime、Agent Hub 状态、数据库驱动 |
+| GET | `/api/install/status` | 首次初始化状态（是否已安装、面板名称、数据库驱动） |
+| POST | `/api/install` | 创建第一个管理员；仅在管理员表为空时可用 |
 | GET | `/api/agent/version` | Agent 可用版本信息 |
 | GET | `/api/agent/install.sh` | 节点安装脚本（通过参数传 panel/token） |
 | POST | `/api/auth` | Hysteria 2 外部认证 |
 | GET | `/api/files/:token` | 用户订阅 |
 | GET | `/api/files/info/:token` | 订阅信息 |
 | GET | `/api/node/ws` | 节点 Agent 控制通道（WebSocket） |
+
+### 首次初始化
+
+`GET /api/install/status`：
+
+```json
+{
+  "installed": false,
+  "needsSetup": true,
+  "panelName": "MikvAce Panel",
+  "publicUrl": "https://panel.example.com",
+  "database": "sqlite",
+  "version": "v1.2.3"
+}
+```
+
+`POST /api/install` 创建第一个管理员，请求体：
+
+```json
+{
+  "username": "admin",
+  "password": "至少 12 个字符",
+  "panelName": "MikvAce Panel",
+  "publicUrl": "https://panel.example.com"
+}
+```
+
+成功返回与 `/api/login` 相同结构的 `token` / `expiresAt` / `admin`，前端会直接进入控制台。已有管理员时返回 `409 {"error":"panel is already installed"}`。用户名规则为 3–32 位字母、数字、点、下划线或短横线。
+
+初始化完成后，`/install` 页面按 404 处理（前端路由直接渲染 NotFound），这是预期行为，不是故障。
 
 ### POST /api/auth
 

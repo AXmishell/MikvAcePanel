@@ -82,7 +82,7 @@ func (s *Store) CreateUser(ctx context.Context, u *model.User, groupIDs, nodeIDs
 	}
 	nowT := now()
 	u.CreatedAt, u.UpdatedAt = nowT, nowT
-	res, err := s.DB.ExecContext(ctx,
+	id, err := s.InsertID(ctx,
 		`INSERT INTO users (user_id, username, password, login_password_hash, subscription_token, xray_uuid, enabled,
 		 traffic_tx, traffic_rx, traffic_limit, max_devices, expire_at, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -91,7 +91,6 @@ func (s *Store) CreateUser(ctx context.Context, u *model.User, groupIDs, nodeIDs
 	if err != nil {
 		return nil, attr(err, "create user")
 	}
-	id, _ := res.LastInsertId()
 	u.ID = id
 	if err := s.SetUserGroups(ctx, id, groupIDs); err != nil {
 		return nil, err

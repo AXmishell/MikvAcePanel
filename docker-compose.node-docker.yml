@@ -18,10 +18,10 @@ services:
       HY2_RUNTIME: "docker"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       DATA_DIR: "/data"
-      # Host path of the data volume, because the agent starts a sibling
-      # Hysteria container and must reference the host path, not its own /data.
-      HOST_DATA_DIR: "${NODE_DATA_DIR:-/var/lib/mikvace}"
+      # Host path of the data directory. The agent starts a sibling Hysteria
+      # container, so this must be an absolute host path, not a relative one.
+      HOST_DATA_DIR: "${NODE_DATA_DIR:?set NODE_DATA_DIR to an absolute host path}"
       HY2_IMAGE: "${HY2_IMAGE:-tobyxdd/hysteria:latest}"
     volumes:
-      - "${NODE_DATA_DIR:-/var/lib/mikvace}:/data"
+      - "${NODE_DATA_DIR:?set NODE_DATA_DIR to an absolute host path}:/data"
       - /var/run/docker.sock:/var/run/docker.sock

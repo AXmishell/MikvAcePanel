@@ -40,7 +40,7 @@ docker compose up -d --build
 docker compose logs -f panel
 ```
 
-打开 `http://服务器IP:8080/` 查看公开首页，管理员进入 `/admin` 登录控制台（旧地址 `/panel` 会自动跳转到 `/admin/dashboard`）。
+打开 `http://服务器IP:8080/` 查看公开首页。首次启动且没有设置 `ADMIN_PASSWORD` 时，打开 `/install` 创建第一个管理员；管理员控制台位于 `/admin`（旧地址 `/panel` 会自动跳转到 `/admin/dashboard`）。
 
 ### 使用 GHCR 预构建镜像
 
@@ -51,16 +51,24 @@ docker run -d --name mikvace-panel --restart unless-stopped \
   -e ADMIN_USERNAME="admin" \
   -e ADMIN_PASSWORD="请替换为强密码" \
   -e JWT_SECRET="$(openssl rand -hex 32)" \
-  -v panel-data:/data \
+  -v "$PWD/data:/data" \
   ghcr.io/axmishell/mikvacepanel:latest
 ```
+
+使用目录映射而非命名卷：数据会写入当前目录的 `./data`，直接打包该目录即可完成备份。
 
 镜像标签：`main`、`latest`（main 分支）与 `sha-<commit>`；发布 `v*.*.*` 标签时同时提供语义化版本，并更新 `latest`。`latest` 指向最后一次成功构建的镜像，需要固定版本请使用语义化版本标签。
 
 ## 2. 首次登录
 
-- 用户名：`ADMIN_USERNAME`
-- 密码：`ADMIN_PASSWORD`
+首次启动有两种初始化方式：
+
+- **未设置 `ADMIN_PASSWORD`**：访问 `http://服务器IP:8080/install`，在向导中设置管理员用户名、密码、面板名称和公共访问地址。提交后会自动登录。
+- **已设置 `ADMIN_PASSWORD`**：启动时自动创建 `ADMIN_USERNAME` 对应的管理员，直接打开 `/admin` 登录即可。
+
+!!! note "安装入口只在首次运行开放"
+
+    创建管理员后，`/install` 会返回 404 并渲染 404 页面，不会暴露安装向导。需要重新初始化时，请手动清空 `admins` 表，或恢复一个没有管理员的数据库备份。
 
 首次登录后：
 
@@ -68,10 +76,10 @@ docker run -d --name mikvace-panel --restart unless-stopped \
 2. 建议启用 **两步验证（TOTP）**，保存一次性恢复码；
 3. 在 **设置 → 常规** 确认 `public_url` 与浏览器访问地址一致。
 
-!!! tip "初始密码"
+!!! tip "纯 API 部署"
 
-    没有提供 `ADMIN_PASSWORD` 时，面板会随机生成一个强密码，并在首次启动的日志中打印一次。
-    请立即保存该密码并在首次登录后修改。管理员只在数据库首次初始化时创建，之后修改环境变量不会覆盖已有密码。
+    `SERVE_WEB=false` 时没有 `/install` 页面。此时若未设置 `ADMIN_PASSWORD`，面板会随机生成一个强密码并在首次启动日志中打印一次。
+    管理员只在数据库首次初始化时创建，之后修改环境变量不会覆盖已有密码。
 
 ## 3. 添加第一个节点
 
@@ -93,7 +101,7 @@ docker run -d --name mikvace-node --restart unless-stopped \
   -e PANEL_URL="https://panel.example.com" \
   -e NODE_TOKEN="mtn_xxx" \
   -e HY2_RUNTIME=process \
-  -v /var/lib/mikvace:/data \
+  -v "$PWD/data-node:/data" \
   ghcr.io/axmishell/mikvacepanel-node:latest
 ```
 

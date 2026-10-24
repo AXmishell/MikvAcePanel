@@ -55,7 +55,7 @@ func (s *Store) InsertMetric(ctx context.Context, m *model.NodeMetric) error {
 	if m.TS.IsZero() {
 		m.TS = now()
 	}
-	res, err := s.DB.ExecContext(ctx,
+	id, err := s.InsertID(ctx,
 		`INSERT INTO node_metrics (node_id, ts, cpu_pct, mem_used, mem_total, disk_used, disk_total,
 		 load1, uptime_sec, online, traffic_tx, traffic_rx, hy2_running)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -64,7 +64,7 @@ func (s *Store) InsertMetric(ctx context.Context, m *model.NodeMetric) error {
 	if err != nil {
 		return err
 	}
-	m.ID, _ = res.LastInsertId()
+	m.ID = id
 	return nil
 }
 

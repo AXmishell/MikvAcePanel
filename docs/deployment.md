@@ -20,10 +20,15 @@
 | --- | --- | --- |
 | `ADDR` | `:8080` | 面板监听地址 |
 | `DATA_DIR` | `./data` | 数据目录，Docker 镜像内为 `/data` |
+| `DB_DRIVER` | `sqlite` | 数据库后端：`sqlite` / `postgres` / `mysql`（远程后端分阶段接入） |
+| `DATABASE_URL` | 空 | 远程数据库 DSN，例如 `postgres://user:pass@db:5432/mikvace?sslmode=require` |
 | `DB_PATH` | `<DATA_DIR>/panel.db` | SQLite 路径 |
+| `DB_MAX_OPEN` | 后端默认 | 最大连接数（SQLite 默认 8，远程后端预留更高值） |
+| `DB_MAX_IDLE` | 后端默认 | 最大空闲连接数 |
+| `DB_CONN_LIFETIME` | 后端默认 | 连接最长复用时间，例如 `30m` |
 | `PANEL_PUBLIC_URL` | `http://localhost:8080` | 对外地址，用于订阅和节点认证回调 |
-| `ADMIN_USERNAME` | `admin` | 首次初始化的管理员用户名 |
-| `ADMIN_PASSWORD` | 自动生成 | 首次初始化的管理员密码；未设置时随机生成并在启动日志中打印一次 |
+| `ADMIN_USERNAME` | `admin` | 自动初始化时的管理员用户名 |
+| `ADMIN_PASSWORD` | 空 | 设置后启动时自动创建管理员；留空且 `SERVE_WEB=true` 时改用 `/install` 向导 |
 | `JWT_SECRET` | 自动生成 | JWT/恢复码签名密钥；未设置时写入 `DATA_DIR/jwt.secret` |
 | `SESSION_TTL_HOURS` | `24` | 管理员会话有效期（小时） |
 | `CERT_ENC_KEY` | 自动生成 | 证书私钥/DNS 凭据/2FA 密钥的加密密钥；未设置时写入 `DATA_DIR/cert.key` |
@@ -57,16 +62,49 @@ services:
       ADMIN_PASSWORD: "请替换"
       JWT_SECRET: "请替换为至少32字节随机值"
     volumes:
-      - panel-data:/data
-
-volumes:
-  panel-data:
+      - ./data:/data
 ```
 
 - 只监听 `127.0.0.1:8080`，由反向代理对外提供 HTTPS；
 - 如果面板直接暴露，改为 `8080:8080` 并配置防火墙；
-- `panel-data` 必须持久化，否则重启后用户、节点、证书全部丢失。
+- 数据使用当前目录映射（`./data`），不使用 Docker 命名卷。权限、备份和迁移都按普通目录处理；`./data` 必须持久化，否则重启后用户、节点、证书全部丢失。
+- 如果 `ADMIN_PASSWORD` 留空，首次启动后访问 `/install` 完成管理员初始化；无人值守部署建议直接设置强密码。
 - 使用反向代理时设置 `TRUSTED_PROXIES=127.0.0.1`（Docker 网桥场景填代理的容器地址），否则面板会忽略 `X-Forwarded-For`，把所有客户端当成代理 IP，登录限流和审计日志将不准确。
+
+!!! warning "从命名卷迁移"
+
+    旧版本使用 `panel-data` 命名卷。升级到目录映射前先停止面板，再把卷内容复制到 `./data`：
+
+    ```bash
+    docker compose down
+    mkdir -p ./data
+    docker run --rm \
+      -v mikvacepanel_panel-data:/from \
+      -v "$PWD/data:/to" \
+      alpine sh -c 'cp -a /from/. /to/'
+    docker compose up -d
+    ```
+
+    卷名取决于 Compose 项目名（默认是目录名 + `_panel-data`），可用 `docker volume ls` 确认。复制完成后建议保留旧卷一段时间，确认面板和备份都正常后再删除。
+
+### 数据库后端
+
+默认使用 SQLite，数据文件为 `./data/panel.db`。代码已经引入方言层（`internal/store/dialect`）和统一的 `DB` 包装层，PostgreSQL 18 与 MySQL 8.0 作为可选后端分阶段接入：
+
+```bash
+# SQLite（默认）
+DB_DRIVER=sqlite
+
+# PostgreSQL（待启用）
+DB_DRIVER=postgres
+DATABASE_URL=postgres://user:pass@postgres:5432/mikvace?sslmode=require
+
+# MySQL 8.0（待启用）
+DB_DRIVER=mysql
+DATABASE_URL=user:pass@tcp(mysql:3306)/mikvace?charset=utf8mb4&collation=utf8mb4_bin&parseTime=false&loc=UTC
+```
+
+当前版本若选择 `postgres` 或 `mysql` 会在启动时明确报错，不会半途写入远程库。切换到远程库前请先在 **设置 → 备份** 创建备份；跨库迁移工具会在后续阶段提供。
 
 ## HTTPS 反向代理
 

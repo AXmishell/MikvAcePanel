@@ -75,6 +75,7 @@ type Server struct {
 
 	configSyncMu sync.Mutex
 	backupMu     sync.Mutex
+	installMu    sync.Mutex
 
 	adminVerMu sync.Mutex
 	adminVer   map[int64]adminVersionEntry
@@ -167,31 +168,40 @@ func (s *Server) bootstrap(ctx context.Context) error {
 	if err := s.store.EnsureDefaultSettings(ctx); err != nil {
 		return err
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(s.cfg.AdminPassword), bcrypt.DefaultCost)
-	if err != nil {
-		return err
-	}
-	created, err := s.store.EnsureAdmin(ctx, s.cfg.AdminUsername, string(hash))
-	if err != nil {
-		return err
-	}
-	if created {
-		if s.cfg.AdminPasswordGenerated {
-			// Print the generated password exactly once so the operator can log
-			// in; it is not stored in plaintext anywhere else.
-			s.log.Warn("bootstrap administrator created with a generated password; store it now and change it after login",
-				"username", s.cfg.AdminUsername, "password", s.cfg.AdminPassword)
-		} else {
-			s.log.Warn("bootstrap administrator created", "username", s.cfg.AdminUsername,
-				"password_source", "ADMIN_PASSWORD environment variable")
+	// With the embedded web UI and no explicit ADMIN_PASSWORD, first-run setup
+	// belongs to the /install wizard. API-only deployments and unattended
+	// installs keep the previous auto-bootstrap behaviour.
+	if s.cfg.AdminPasswordGenerated && s.cfg.ServeWeb {
+		if n, err := s.store.CountAdmins(ctx); err == nil && n == 0 {
+			s.log.Info("panel installation required", "path", "/install")
+		}
+	} else {
+		hash, err := bcrypt.GenerateFromPassword([]byte(s.cfg.AdminPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return err
+		}
+		created, err := s.store.EnsureAdmin(ctx, s.cfg.AdminUsername, string(hash))
+		if err != nil {
+			return err
+		}
+		if created {
+			if s.cfg.AdminPasswordGenerated {
+				// Print the generated password exactly once so the operator can
+				// log in; it is not stored in plaintext anywhere else.
+				s.log.Warn("bootstrap administrator created with a generated password; store it now and change it after login",
+					"username", s.cfg.AdminUsername, "password", s.cfg.AdminPassword)
+			} else {
+				s.log.Warn("bootstrap administrator created", "username", s.cfg.AdminUsername,
+					"password_source", "ADMIN_PASSWORD environment variable")
+			}
+		}
+		if created && (s.cfg.AdminPasswordGenerated || s.cfg.AdminPassword == "admin123" ||
+			s.cfg.AdminPassword == "change-me-now" || len(s.cfg.AdminPassword) < 12) {
+			_ = s.store.SetSetting(ctx, "bootstrap_warning", "The administrator password is weak or was generated automatically. Change it in Settings → Security.")
 		}
 	}
 	if pub, _ := s.store.GetSetting(ctx, "public_url"); strings.TrimSpace(pub) == "" && s.cfg.PublicURL != "" {
 		_ = s.store.SetSetting(ctx, "public_url", strings.TrimRight(s.cfg.PublicURL, "/"))
-	}
-	if created && (s.cfg.AdminPasswordGenerated || s.cfg.AdminPassword == "admin123" ||
-		s.cfg.AdminPassword == "change-me-now" || len(s.cfg.AdminPassword) < 12) {
-		_ = s.store.SetSetting(ctx, "bootstrap_warning", "The administrator password is weak or was generated automatically. Change it in Settings → Security.")
 	}
 	return nil
 }
@@ -228,6 +238,8 @@ func (s *Server) routes() http.Handler {
 
 	r.Get("/api/health", s.handleHealth)
 	r.Get("/api/admin/config", s.handleAdminConfig)
+	r.With(noStore).Get("/api/install/status", s.handleInstallStatus)
+	r.With(noStore).Post("/api/install", s.handleInstall)
 	r.With(s.requireAdminEntry).Post("/api/login", s.handleLogin)
 	r.With(s.requireAdminEntry).Post("/api/login/2fa", s.handleLogin2FA)
 	r.Post("/api/auth", s.handleHy2Auth)
@@ -349,7 +361,8 @@ func (s *Server) routes() http.Handler {
 		}
 		// `/` is a public landing page; `/panel` keeps redirecting into the
 		// administrator console for existing bookmarks.
-		r.Get("/", s.serveSPA)
+		r.Get("/", s.serveRoot)
+		r.Get("/install", s.serveInstall)
 		r.Get("/panel", redirectPanel)
 		r.Get("/panel/*", redirectPanel)
 		r.Get("/admin", s.serveAdminSPA)
@@ -424,6 +437,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, map[string]any{
 		"ok": ok, "version": version.String(), "uptime": int64(time.Since(s.started).Seconds()),
 		"hub": s.hub.Stats(), "redis": redisInfo,
+		"database": map[string]any{"driver": s.store.Dialect().Name()},
 	})
 }
 
@@ -543,6 +557,28 @@ func (s *Server) originAllowed(origin string) bool {
 	return strings.HasPrefix(origin, "http://localhost:") || strings.HasPrefix(origin, "http://127.0.0.1:")
 }
 
+// serveRoot sends first-run visitors to the setup wizard instead of showing an
+// empty public landing page. Once an administrator exists the normal SPA is
+// served.
+func (s *Server) serveRoot(w http.ResponseWriter, r *http.Request) {
+	if n, err := s.store.CountAdmins(r.Context()); err == nil && n == 0 {
+		http.Redirect(w, r, "/install", http.StatusFound)
+		return
+	}
+	s.serveSPA(w, r)
+}
+
+// serveInstall keeps the first-run wizard available only while no
+// administrator exists. Afterwards it returns the SPA shell with a 404 status
+// so the client-side NotFound view renders and the endpoint is not advertised.
+func (s *Server) serveInstall(w http.ResponseWriter, r *http.Request) {
+	if n, err := s.store.CountAdmins(r.Context()); err == nil && n > 0 {
+		s.writeIndex(w, http.StatusNotFound)
+		return
+	}
+	s.serveSPA(w, r)
+}
+
 func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 	// Never answer unknown API paths with the SPA shell.
 	if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
@@ -574,13 +610,20 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	b, err := fs.ReadFile(dist, "index.html")
+	s.writeIndex(w, http.StatusOK)
+}
+
+// writeIndex serves the SPA shell with the given status. The installer uses
+// 404 after setup while still letting the Vue NotFound view render.
+func (s *Server) writeIndex(w http.ResponseWriter, status int) {
+	b, err := fs.ReadFile(webui.FS(), "index.html")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "frontend is not built")
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
 	_, _ = w.Write(b)
 }
 
