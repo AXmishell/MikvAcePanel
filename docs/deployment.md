@@ -312,6 +312,22 @@ Caddy 会自动处理证书、HTTP/2 和 WebSocket。
 
 ## 直接运行二进制
 
+### 预构建二进制
+
+推送到 `v*.*.*` 标签后，`.github/workflows/release.yml` 会自动发布 `mikvace-server` / `mikvace-node` / `mikvace-client` 的跨平台归档和 `checksums.txt` 到 GitHub Releases。面板与客户端支持 Linux / macOS / Windows 的 amd64、arm64；节点 Agent 只发布 Linux amd64 / arm64，且归档不包含 Hysteria/Xray 核心，推荐节点继续使用 GHCR 镜像。
+
+```bash
+VERSION=1.2.3
+BASE="https://github.com/AXmishell/MikvAcePanel/releases/download/v${VERSION}"
+curl -fLO "$BASE/mikvace-server_${VERSION}_linux_amd64.tar.gz"
+curl -fLO "$BASE/checksums.txt"
+sha256sum -c checksums.txt --ignore-missing
+tar -xzf "mikvace-server_${VERSION}_linux_amd64.tar.gz"
+sudo install -m 0755 mikvace-server /usr/local/bin/
+```
+
+### 从源码构建
+
 ```bash
 make build
 sudo install -m 0755 bin/mikvace-server /usr/local/bin/
@@ -446,6 +462,8 @@ backups/
 docker pull ghcr.io/axmishell/mikvacepanel-node:latest
 # 重新执行面板生成的安装命令，或 docker rm -f mikvace-node 后重新运行
 ```
+
+二进制部署升级时，从 GitHub Releases 下载对应平台归档，校验 `checksums.txt` 后替换 `/usr/local/bin/mikvace-server` 并重启 systemd 服务即可；数据库迁移会随启动自动执行。
 
 ## 备份与恢复
 

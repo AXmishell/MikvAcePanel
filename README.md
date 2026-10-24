@@ -160,6 +160,36 @@ docker pull ghcr.io/axmishell/mikvacepanel-node:latest   # 节点 Agent
 
 标签规则：`main` 分支发布 `main`、`latest`、`sha-<commit>`；`v1.2.3` 标签发布 `1.2.3`、`1.2`、`latest`、`sha-<commit>`。`latest` 始终指向最后一次成功构建的镜像，因此后续的 `main` 构建会覆盖发布标签产生的 `latest`；需要稳定版本请使用语义化版本标签。
 
+### 预构建二进制（GitHub Releases）
+
+推送 `v*.*.*` 标签时，`.github/workflows/release.yml` 会运行测试、重建前端并生成以下归档，然后创建 GitHub Release：
+
+- `mikvace-server_<version>_<os>_<arch>.tar.gz` / `.zip`：面板，内嵌前端，支持 Linux / macOS / Windows 的 amd64、arm64；
+- `mikvace-node_<version>_linux_<arch>.tar.gz`：节点 Agent，仅 Linux amd64 / arm64（依赖 iptables 与 Docker）；归档不包含 Hysteria/Xray 核心，进程模式需自行安装，推荐直接使用 GHCR 节点镜像；
+- `mikvace-client_<version>_<os>_<arch>.tar.gz` / `.zip`：命令行客户端，平台同面板；
+- `checksums.txt`：所有归档的 SHA-256。
+
+带 `-` 的标签（例如 `v1.2.3-rc.1`）会发布为预发行版。下载后先校验再安装：
+
+```bash
+VERSION=1.2.3
+BASE="https://github.com/AXmishell/MikvAcePanel/releases/download/v${VERSION}"
+curl -fLO "$BASE/mikvace-server_${VERSION}_linux_amd64.tar.gz"
+curl -fLO "$BASE/checksums.txt"
+sha256sum -c checksums.txt --ignore-missing
+tar -xzf "mikvace-server_${VERSION}_linux_amd64.tar.gz"
+sudo install -m 0755 mikvace-server /usr/local/bin/
+```
+
+发布新版本：
+
+```bash
+git tag -a v1.2.3 -m "v1.2.3"
+git push origin v1.2.3
+```
+
+Docker 镜像由 `.github/workflows/docker.yml` 在同一标签上并行构建，两个工作流互不依赖。
+
 ### 本地开发
 
 ```bash
@@ -481,6 +511,7 @@ go test ./...          # 单元 + 接口 + WebSocket 集成测试
 go vet ./...
 make web               # 构建前端
 make build             # 前端 + 三个二进制
+make release           # 生成 dist/ 下的跨平台发布归档
 make docker            # 面板镜像
 make docker-node       # 节点镜像
 ```

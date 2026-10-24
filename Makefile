@@ -8,7 +8,7 @@ LDFLAGS := -s -w \
 	-X github.com/axmishell/mikvacepanel/internal/version.Commit=$(COMMIT) \
 	-X github.com/axmishell/mikvacepanel/internal/version.BuildDate=$(BUILD_DATE)
 
-.PHONY: all web server server-api node client build test fmt vet clean docker docker-node dev docs docs-serve smoke test-cert-e2e
+.PHONY: all web server server-api node client build test fmt vet clean docker docker-node release dev docs docs-serve smoke test-cert-e2e
 
 all: build
 
@@ -70,5 +70,9 @@ docker-node:
 	docker build -f Dockerfile.node -t ghcr.io/axmishell/mikvacepanel-node:latest \
 		--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) .
 
+# Cross-platform archives for a GitHub Release (requires web/dist).
+release: web
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_DATE=$(BUILD_DATE) ./scripts/release.sh
+
 clean:
-	rm -rf $(BIN) web/dist
+	rm -rf $(BIN) dist web/dist
