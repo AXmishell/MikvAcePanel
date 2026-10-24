@@ -2,6 +2,8 @@
 
 一个面向 **Hysteria 2** 和 **Xray VLESS / REALITY** 的自托管代理管理面板。整体思路参考 [CELERITY-panel](https://github.com/ClickDevTech/CELERITY-panel)，后端使用 Go，前端使用 Vue 3 单页应用，节点端支持 Docker 镜像，通过 WebSocket 连接服务端并接受配置下发，同时把代理核心日志上报到服务端做规则化分析。
 
+本项目主要解决的是节点容器化和证书导致的节点80端口占用问题，面板申请证书后下发到节点部署
+
 ## 文档
 
 在线文档：**https://mikvacepanel.gpcn.cc/**
