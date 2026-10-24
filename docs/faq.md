@@ -127,29 +127,37 @@ https://panel.example.com
 
 ## 启动日志反复出现 `read /config/panel.yaml: is a directory`
 
-宿主机上的 `panel.yaml` 不存在时，Docker（包括 1Panel 新建容器/编排）会把单文件挂载点创建成目录，面板因此无法读取配置。
+说明容器把 `/config/panel.yaml` 当成了目录。通常是使用了单文件挂载 `./panel.yaml:/config/panel.yaml`，而宿主机上还没有这个文件，Docker / 1Panel 就自动创建了同名目录。
 
-处理方式：
+当前 `docker-compose.yml` 默认使用目录映射：
 
-1. 在宿主机创建文件后再启动：
+```yaml
+volumes:
+  - ./data:/data
+  - ./config:/config
+```
+
+配置放在 `./config/panel.yaml`；目录不存在时 Docker 会自动创建，`/install` 直接写入文件，不会再出现该错误。
+
+如果还在用旧写法，二选一：
+
+1. 改成目录映射（推荐）：把原配置移到 `./config/panel.yaml`，然后**重建容器**：
 
    ```bash
-   cd /opt/mikvacepanel      # compose 所在目录
+   docker compose up -d --force-recreate
+   ```
+
+   1Panel 中请“停止 → 删除容器 → 重新创建”。`restart` 不会改变已经建立的挂载类型。
+
+2. 继续使用单文件挂载：先创建宿主机文件再启动：
+
+   ```bash
+   rmdir panel.yaml 2>/dev/null   # 删除 Docker 建出来的空目录
    cp panel.example.yaml panel.yaml
-   docker compose restart
+   docker compose up -d --force-recreate
    ```
 
-2. 或者改为挂载整个目录，让容器自己创建配置：
-
-   ```yaml
-   volumes:
-     - ./data:/data
-     - ./config:/config
-   ```
-
-   执行 `cp panel.example.yaml ./config/panel.yaml` 后重启。
-
-新版面板检测到 `--config` 指向目录时会记录 warning 并回退到 `/data/panel.yaml`，仍可打开 `/install`；日志中会出现 `config path is a directory, using fallback`。修复挂载后请把该文件复制回 `/config/panel.yaml` 再重启，避免配置留在数据卷里。
+新版面板检测到 `--config` 指向目录时会输出 `config path is a directory, using fallback`，并回退到 `/data/panel.yaml`，仍能打开 `/install`；修复挂载后把该文件复制回 `./config/panel.yaml` 再重建容器即可。
 
 排查时可进入容器确认挂载类型：
 

@@ -20,10 +20,11 @@
 ```bash
 git clone https://github.com/AXmishell/MikvAcePanel.git
 cd MikvAcePanel
-cp panel.example.yaml panel.yaml
+mkdir -p config
+cp panel.example.yaml config/panel.yaml
 ```
 
-编辑 `panel.yaml`：
+编辑 `config/panel.yaml`：
 
 ```yaml
 panel:
@@ -47,24 +48,25 @@ docker compose logs -f panel
 ### 使用 GHCR 预构建镜像
 
 ```bash
-cp panel.example.yaml panel.yaml
-# 编辑 panel.yaml 后：
+mkdir -p config
+cp panel.example.yaml config/panel.yaml
+# 编辑 config/panel.yaml 后：
 docker run -d --name mikvace-panel --restart unless-stopped \
   -p 8080:8080 \
-  -v "$PWD/panel.yaml:/config/panel.yaml" \
+  -v "$PWD/config:/config" \
   -v "$PWD/data:/data" \
   ghcr.io/axmishell/mikvacepanel:latest --config /config/panel.yaml
 ```
 
-使用目录映射而非命名卷：数据会写入当前目录的 `./data`，直接打包该目录即可完成备份。`panel.yaml` 需要可写，`/install` 会把面板名称、公共地址、管理员用户名和数据库配置写回该文件；远程数据库的 DSN 单独写入 `./data/database.dsn`，不会进入 YAML。
+使用目录映射而非命名卷：配置写入 `./config/panel.yaml`，数据写入 `./data`，直接打包这两个目录即可完成备份。`/install` 会把面板名称、公共地址、管理员用户名和数据库配置写回 `config/panel.yaml`；远程数据库的 DSN 单独写入 `./data/database.dsn`，不会进入 YAML。
 
-> **注意（1Panel / Docker 单文件挂载）**：宿主机上不存在 `panel.yaml` 时，Docker 会把 `/config/panel.yaml` 创建成目录，日志出现 `read /config/panel.yaml: is a directory`。请先创建宿主文件（`cp panel.example.yaml panel.yaml` 或 `touch panel.yaml`）再启动；也可以改为挂载 `./config:/config` 并把配置放到 `./config/panel.yaml`。新版面板检测到目录时会自动回退到 `/data/panel.yaml` 并继续启动安装器。
+> **注意**：请挂载 `./config` 目录，不要挂载单个 `./panel.yaml`。宿主机文件不存在时，Docker / 1Panel 会把单文件挂载点创建成目录，日志出现 `read /config/panel.yaml: is a directory`。新版面板检测到目录时会自动回退到 `/data/panel.yaml` 并继续启动安装器。
 
 镜像标签：`main`、`latest`（main 分支）与 `sha-<commit>`；发布 `v*.*.*` 标签时同时提供语义化版本，并更新 `latest`。`latest` 指向最后一次成功构建的镜像，需要固定版本请使用语义化版本标签。
 
 ## 2. 首次登录
 
-应用配置只从 `panel.yaml` 读取，不读取环境变量，也不使用 `.env`。`panel.example.yaml` 默认 `database.driver: setup`：首次启动进入**安装器模式**，只提供 `/install` 和数据库配置接口，**不会打开或创建 SQLite 文件**；保存后端后进程重启，才进入完整面板。
+应用配置只从 YAML 读取（Docker 部署为 `config/panel.yaml`），不读取环境变量，也不使用 `.env`。`panel.example.yaml` 默认 `database.driver: setup`：首次启动进入**安装器模式**，只提供 `/install` 和数据库配置接口，**不会打开或创建 SQLite 文件**；保存后端后进程重启，才进入完整面板。
 
 首次启动有两种初始化方式：
 

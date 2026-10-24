@@ -14,7 +14,7 @@
 
 ## 配置文件
 
-应用配置**只从 YAML 读取**，不读取任何环境变量，也不使用 `.env`。面板模板为 `panel.example.yaml`，节点模板为 `node.example.yaml`；复制为 `panel.yaml` / `node.yaml` 后按需修改。
+应用配置**只从 YAML 读取**，不读取任何环境变量，也不使用 `.env`。面板模板为 `panel.example.yaml`，节点模板为 `node.example.yaml`；复制为 `panel.yaml` / `node.yaml` 后按需修改。Docker Compose 使用目录映射，宿主机路径为 `config/panel.yaml`，容器内为 `/config/panel.yaml`。
 
 查找顺序：`--config` 参数 → `panel.yaml` → `config/panel.yaml` → `/config/panel.yaml` → `/data/panel.yaml`。
 
@@ -60,15 +60,20 @@ admin:
   password_file: "/etc/mikvace/admin.password"
 ```
 
-Docker 部署时把密钥文件放到 `./config/`，并在 compose 中追加只读挂载：
+Docker 部署时把密钥文件放到 `./config/`。compose 已把整个目录映射到容器的 `/config`，无需再单独挂载：
 
-```yaml
-    volumes:
-      - ./panel.yaml:/config/panel.yaml
-      - ./config/admin.password:/config/admin.password:ro
+```bash
+sudo install -d -m 700 ./config
+sudo install -m 600 /dev/null ./config/admin.password
+printf '%s' '请替换为强密码' | sudo tee ./config/admin.password >/dev/null
 ```
 
-配置中写 `/config/admin.password` 即可。
+在 `config/panel.yaml` 中写：
+
+```yaml
+admin:
+  password_file: "/config/admin.password"
+```
 
 `jwt_secret_file` 与 `cert_key_file` 一旦使用后不要随意更换：
 
@@ -120,40 +125,40 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - ./data:/data
-      - ./panel.yaml:/config/panel.yaml
+      - ./config:/config
 ```
 
 - 只监听 `127.0.0.1:8080`，由反向代理对外提供 HTTPS；
 - 需要修改宿主机端口时，直接改 compose 的 `ports`，或用 `compose.override.yaml` 覆盖；不再使用 `.env` 插值；
 - 如果面板直接暴露，改为 `8080:8080` 并配置防火墙；
 - 数据使用当前目录映射（`./data`），不使用 Docker 命名卷。`./data` 必须持久化，否则重启后用户、节点、证书全部丢失。
-- `panel.yaml` 需要可写，`/install` 会把面板名称、公共地址、管理员用户名和数据库配置写回；也可以预先配置 `admin.password_file` 进行无人值守初始化。
+- 配置目录使用 `./config` 映射到容器 `/config`。`./config/panel.yaml` 需要可写，`/install` 会把面板名称、公共地址、管理员用户名和数据库配置写回；也可以预先配置 `admin.password_file` 进行无人值守初始化。
 - 通过 `/install` 选择 PostgreSQL / MySQL 时，DSN 会写到 `/data/database.dsn`，请确保 `./data` 持久化。
 - 使用反向代理时在 `server.trusted_proxies` 中填写代理地址，否则面板会忽略 `X-Forwarded-For`，把所有客户端当成代理 IP，登录限流和审计日志将不准确。
 
-!!! warning "1Panel / Docker 单文件挂载：先创建 panel.yaml"
+!!! note "为什么挂载 ./config 目录而不是单个 panel.yaml"
 
-    Docker 在宿主机文件不存在时，会把单文件挂载点创建成**目录**。1Panel 新建容器或编排时如果挂载目录里还没有 `panel.yaml`，启动日志会反复出现：
+    Docker 在宿主机文件不存在时，会把单文件挂载点创建成**目录**。旧版做法 `./panel.yaml:/config/panel.yaml` 如果在启动前没有创建 `panel.yaml`，日志就会反复出现：
 
     ```text
     ERROR load config error="read /config/panel.yaml: is a directory" path=/config/panel.yaml
     ```
 
-    部署前先创建文件：
+    目录映射则没有这个问题：`./config` 不存在时 Docker 会自动创建，`/install` 直接写入 `/config/panel.yaml`。如果已经遇到该错误，请改成上面的目录映射，然后在 1Panel / Compose 中**重建容器**（`restart` 不会改变挂载类型）：
 
     ```bash
-    cp panel.example.yaml panel.yaml   # 或 touch panel.yaml
+    docker compose up -d --force-recreate
     ```
 
-    或者改为挂载整个配置目录（1Panel 中更稳妥）：
+    目录映射后，把配置放到 `./config/panel.yaml` 即可；面板检测到 `--config` 指向目录时也会记录 warning 并回退到 `/data/panel.yaml`，不会 crash-loop。
 
-    ```yaml
-    volumes:
-      - ./data:/data
-      - ./config:/config
+    从旧版单文件挂载升级时，先移动配置再重建容器：
+
+    ```bash
+    mkdir -p config
+    mv panel.yaml config/panel.yaml
+    docker compose up -d --force-recreate
     ```
-
-    然后把 `panel.example.yaml` 复制为 `./config/panel.yaml`。面板检测到 `--config` 指向目录时不会再退出，而是记录一条 warning 并回退到 `/data/panel.yaml`（位于持久化的 `./data` 卷内），可以直接打开 `/install`。修复挂载后，把生成的 `/data/panel.yaml` 复制回 `/config/panel.yaml` 再重启，即可恢复原布局。
 
 !!! warning "从命名卷迁移"
 

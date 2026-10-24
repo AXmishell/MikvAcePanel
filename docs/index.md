@@ -86,7 +86,8 @@ hide:
 ```bash
 git clone https://github.com/AXmishell/MikvAcePanel.git
 cd MikvAcePanel
-cp panel.example.yaml panel.yaml
+mkdir -p config
+cp panel.example.yaml config/panel.yaml
 # 修改 panel.public_url；database.driver 默认 setup，/install 会先选数据库
 docker compose up -d --build
 ```

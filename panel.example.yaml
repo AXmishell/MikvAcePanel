@@ -1,5 +1,6 @@
 # MikvAce Panel configuration.
-# Copy to panel.yaml, then run /install or set admin.password_file.
+# Copy to panel.yaml (or config/panel.yaml for docker compose), then run
+# /install or set admin.password_file.
 # All application settings live here; environment variables are not read.
 version: 1
 

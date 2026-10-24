@@ -97,22 +97,23 @@ docs/               API、用户中心、节点、证书签发、2FA、日志分
 ## 快速开始（Docker Compose）
 
 ```bash
-cp panel.example.yaml panel.yaml  # 修改 panel.public_url、server.data_dir 等
+mkdir -p config
+cp panel.example.yaml config/panel.yaml  # 修改 panel.public_url、server.data_dir 等
 docker compose up -d --build
 ```
 
-> **注意**：如果宿主目录里没有 `panel.yaml`，Docker / 1Panel 会把 `/config/panel.yaml` 创建成目录，日志出现 `read /config/panel.yaml: is a directory`。请先执行上面的 `cp`（或改为挂载 `./config:/config`，把配置放到 `./config/panel.yaml`）。新版面板会自动回退到 `/data/panel.yaml` 继续启动，详见[常见问题](docs/faq.md#启动日志反复出现-read-configpanelyaml-is-a-directory)。
+> **注意**：compose 使用 `./config:/config` 目录映射，配置放在 `./config/panel.yaml`。如果沿用旧版的单文件挂载 `./panel.yaml:/config/panel.yaml`，而宿主机上没有该文件，Docker / 1Panel 会把挂载点创建成目录，日志出现 `read /config/panel.yaml: is a directory`。新版面板会自动回退到 `/data/panel.yaml` 继续启动，详见[常见问题](docs/faq.md#启动日志反复出现-read-configpanelyaml-is-a-directory)。
 
 打开 `http://服务器IP:8080/` 查看公开首页。首次启动且 `admin.password_file` 为空时，访问 `/install`：向导第一步选择数据后端（SQLite / PostgreSQL / MySQL），第二步创建管理员账号。配置了密码文件的无人值守部署会在启动时自动创建。管理员控制台是 `/admin`（旧地址 `/panel` 会自动跳转到 `/admin/dashboard`），终端用户入口是 `/user`。
 
-应用配置**只从 `panel.yaml` 读取**，不读取环境变量，也不使用 `.env`。Compose 只负责端口和数据目录映射。
+Docker 部署时应用配置**只从 `config/panel.yaml` 读取**，不读取环境变量，也不使用 `.env`。Compose 只负责端口、配置目录和数据目录映射。
 
-数据默认保存在仓库目录下的 `./data`。管理员账号来自 `panel.yaml` 或 `/install`：
+数据默认保存在仓库目录下的 `./data`。管理员账号来自 `config/panel.yaml` 或 `/install`：
 
 - 用户名：`admin.username`，初始化向导会更新该字段；
 - 密码：`admin.password_file` 指向的密钥文件；留空则由 `/install` 创建管理员（密码只以 bcrypt 存入数据库，不写入 YAML）。
 
-数据库也可以在 `/install` 第一步选择。`panel.example.yaml` 默认使用 `database.driver: setup`：**首次启动只运行安装向导，不会创建 SQLite 文件**；选择并保存后端后才真正打开数据库。SQLite 使用 `database.path`；选择 PostgreSQL / MySQL 时，向导会先测试连接，再把 DSN 写入 `data_dir/database.dsn`（权限 0600），并更新 `panel.yaml` 的 `database.driver` / `database.dsn_file`。**保存后面板会自动重启一次**，管理员创建页面会在重启完成后继续。DSN 不会写进 `panel.yaml`。
+数据库也可以在 `/install` 第一步选择。`panel.example.yaml` 默认使用 `database.driver: setup`：**首次启动只运行安装向导，不会创建 SQLite 文件**；选择并保存后端后才真正打开数据库。SQLite 使用 `database.path`；选择 PostgreSQL / MySQL 时，向导会先测试连接，再把 DSN 写入 `data_dir/database.dsn`（权限 0600），并更新 `config/panel.yaml` 的 `database.driver` / `database.dsn_file`。**保存后面板会自动重启一次**，管理员创建页面会在重启完成后继续。DSN 不会写进 `panel.yaml`。
 
 首次登录后请到 **Settings → Security** 修改密码。初始化完成后 `/install` 会按 404 处理，不再暴露安装入口。同一页面还可以开启 **管理员安全入口**（默认关闭）：开启后 `/admin` 不再可用，必须使用 `/admin/<入口路径>/login` 访问，管理 API 也会校验该入口。
 
@@ -121,7 +122,7 @@ docker compose up -d --build
 生产环境建议：
 
 1. 用 Nginx / Caddy 提供 HTTPS 反向代理到 `127.0.0.1:8080`。
-2. 在 `panel.yaml` 设置 `panel.public_url: https://panel.example.com`，或在初始化向导 / **Settings → General** 中修改。
+2. 在 `config/panel.yaml` 设置 `panel.public_url: https://panel.example.com`，或在初始化向导 / **Settings → General** 中修改。
 3. 使用密钥文件：`admin.password_file`、`security.jwt_secret_file`、`security.cert_key_file`，权限保持 0600。
 4. 如果面板位于反向代理之后，在 `server.trusted_proxies` 声明代理地址，否则登录限流会把所有客户端视为同一个 IP。
 
@@ -143,7 +144,7 @@ redis:
 使用 Docker Compose 时可通过 profile 一并启动 Redis：
 
 ```bash
-# panel.yaml 中设置 redis.url_file，并把 redis.url 挂载到容器
+# config/panel.yaml 中设置 redis.url_file，并把 redis.url 放到 ./config/ 下
 docker compose --profile redis up -d --build
 ```
 

@@ -33,7 +33,7 @@ panel.yaml
 node.yaml
 node.token
 *.token
-config/*.yaml
+config/*
 !config/*.example.yaml
 .env
 docker.env

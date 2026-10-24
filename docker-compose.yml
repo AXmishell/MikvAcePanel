@@ -14,11 +14,12 @@ services:
         max-file: "3"
     ports:
       - "8080:8080"
-    # panel.yaml is mounted writable so /install can persist panel.name,
-    # panel.public_url and admin.username. It never contains secret values.
+    # Mount the whole /config directory: Docker creates it automatically and
+    # /install can persist panel.yaml there. A single-file bind mount of a
+    # missing host file would be created as a directory by Docker/1Panel.
     volumes:
       - ./data:/data
-      - ./panel.yaml:/config/panel.yaml
+      - ./config:/config
 
   redis:
     image: redis:7-alpine
