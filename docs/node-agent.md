@@ -9,7 +9,8 @@
 5. 维护端口跳跃 iptables 规则；
 6. 采集 Hysteria 日志并批量上报；
 7. 轮询 Hysteria `trafficStats` 或 Xray `StatsService`，上报每用户流量；
-8. 每 10 秒上报 CPU / 内存 / 磁盘 / load / uptime。
+8. 每 10 秒上报 CPU / 内存 / 磁盘 / load / uptime；
+9. 维护本地用户认证快照，面板故障时继续为 Hysteria 新连接认证。
 
 ---
 
@@ -121,9 +122,11 @@ WantedBy=multi-user.target
 | `XRAY_IMAGE` | `ghcr.io/xtls/xray-core:latest` | Xray Docker 模式镜像 |
 | `HY2_CONTAINER` | `mikvace-hysteria` | Docker 模式容器名 |
 | `PANEL_INSECURE` | `false` | 跳过面板 TLS 校验（仅自签名面板） |
+| `OFFLINE_AUTH` | `true` | 面板故障时使用本地用户快照继续为 Hysteria 认证 |
+| `AUTH_LISTEN` | `127.0.0.1:9998` | 本地认证网关地址；只允许回环地址 |
 | `LOG_LEVEL` | `info` | `debug/info/warn/error` |
 
-对应命令行参数：`--panel`、`--token`、`--data-dir`、`--host-data-dir`、`--runtime`、`--hysteria-bin`、`--hysteria-image`、`--container`、`--insecure`、`--log-level`。
+对应命令行参数：`--panel`、`--token`、`--data-dir`、`--host-data-dir`、`--runtime`、`--hysteria-bin`、`--hysteria-image`、`--container`、`--insecure`、`--log-level`、`--offline-auth`、`--auth-listen`。
 
 ---
 
@@ -138,12 +141,65 @@ WantedBy=multi-user.target
 ├── certs/key.pem
 ├── certs/ech.pem          # 可选的 ECH 私钥 + 客户端配置（面板下发）
 ├── certs/client_ca.pem    # 可选的 mTLS 客户端 CA（面板下发）
-└── state/meta.json        # revision / protocol / port hopping 元信息
+├── state/meta.json        # revision / protocol / port hopping 元信息
+├── state/users.json       # 离线认证快照（0600，包含用户连接密码）
+└── state/auth.key         # 本地认证网关密钥（0600）
 ```
 
 进程模式下，Agent 会把配置中的 `/data/` 前缀改写为实际 `DATA_DIR`；Docker 模式下保持不变，因为 Hysteria 容器也把数据目录挂载到 `/data`。
 
 `ech.pem` 与 `client_ca.pem` 随 `config` 消息的 `files` 字段下发：`ech` 对应 `/data/certs/ech.pem`（0600），`clientCA` 对应 `/data/certs/client_ca.pem`（0644）。面板不会把 ECH 私钥返回给浏览器，只保留从 `ECH CONFIGS` 块提取的客户端配置列表。
+
+---
+
+## 面板故障时的离线认证
+
+Hysteria 2 默认把认证请求回调到面板 `/api/auth`。面板进程故障、数据库不可用或网络中断时，新连接会全部认证失败。节点 Agent 现在在本地维护一个认证网关：
+
+```text
+客户端 ── QUIC ──▶ Hysteria 2 ── HTTP auth ──▶ 127.0.0.1:9998（Agent 本地网关）
+                                                      │
+                                   面板可达 ──────────┼──▶ 面板 /api/auth（权威认证）
+                                   面板不可达 ────────┴──▶ state/users.json（最后一次快照）
+```
+
+### 工作方式
+
+1. 面板在 Agent 连接后（`hello`）立即推送 `user.snapshot`，之后每 5 分钟由 Agent 请求一次；
+2. 用户、分组、节点可见性、密码、启用状态、到期时间或流量配额变化时，面板会主动补推；
+3. Agent 把快照原子写入 `state/users.json`（0600），并只对 `hysteria` 节点生效；
+4. Agent 把下发配置里的 `auth.http.url` 改写为 `http://127.0.0.1:9998/api/auth?...`，无需修改面板模板；
+5. 面板可达时，网关原样代理请求，面板的设备限制、在线状态、认证日志和配额判断都不变；
+6. 控制通道断开或面板认证接口连续失败时，网关切换到快照认证，并保留 15 秒重试间隔。
+
+Xray 不需要这套机制：用户 UUID/密码本来就写在 `config.json` 中，面板故障时 Xray 继续使用本地配置，Agent 重启也会从本地配置启动两个核心。
+
+### 离线判断规则
+
+| 条件 | 来源 |
+| --- | --- |
+| 用户存在且密码匹配 | 快照 |
+| `enabled` | 快照（面板只下发启用用户） |
+| 到期时间 | 快照中的 `expire_at`，离线期间按本机时间判断 |
+| 流量上限 | 快照中的最后一次 `traffic_tx/rx` |
+| 设备数 | 快照中的有效设备上限 + 本机 IP 宽限期计数 |
+
+快照是“最后一次已知状态”，因此面板故障期间：
+
+- 面板上刚修改的密码/禁用操作，如果快照尚未送达，可能仍会短暂生效；
+- 用户离线期间继续消耗的流量无法实时写回面板，可能超过快照中的上限；
+- 设备数由节点本地重新计数，不与面板内存中的设备表共享；
+- 节点重启后仍可离线认证，快照和密钥都在 `DATA_DIR/state/`。
+
+面板恢复后会自动重连并刷新快照；建议定期备份 `DATA_DIR/state/users.json` 与 `auth.key`，或直接备份整个数据目录。
+
+### 部署要求
+
+- **必须是 host 网络**：官方 Compose 使用 `network_mode: host`。Docker 模式下 Hysteria 是兄弟容器，只有 host 网络才能访问 Agent 的 `127.0.0.1:9998`。
+- 同一台宿主机运行多个节点时，用 `AUTH_LISTEN=127.0.0.1:9997` 等为每个节点分配不同端口。
+- 网关只绑定回环地址，并校验 `state/auth.key`；不要把 `AUTH_LISTEN` 改成 `0.0.0.0`（Agent 会拒绝启动）。
+- 快照包含 Hysteria 连接密码，`state/` 目录和 `users.json` 必须保持仅 root 可读；面板与 Agent 之间应使用 WSS/HTTPS。
+- 不需要离线认证时可设置 `OFFLINE_AUTH=false`，Agent 会恢复为直接回调面板。
 
 ---
 

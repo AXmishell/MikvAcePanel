@@ -166,6 +166,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 				Runtime: h.Runtime, OnlineUsers: h.OnlineUsers,
 			})
 			_ = s.store.UpdateNodeCapabilities(r.Context(), node.ID, h.Capabilities)
+			s.sendUserSnapshot(r.Context(), node.ID)
 			var notAfter *time.Time
 			if h.Cert.NotAfter > 0 {
 				t := time.Unix(h.Cert.NotAfter, 0).UTC()
@@ -228,6 +229,10 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					"命令 "+ack.Action+" 执行失败："+ack.Output)
 			}
 			s.log.Info("command ack", "node", node.Name, "action", ack.Action, "ok", ack.OK)
+		case "users.request":
+			// The agent asks for a fresh offline auth snapshot after connecting
+			// and periodically while it stays online.
+			s.sendUserSnapshot(r.Context(), node.ID)
 		case "ping":
 			_ = ac.sendJSON(map[string]any{"type": "pong", "payload": map[string]any{"ts": time.Now().Unix()}})
 		default:

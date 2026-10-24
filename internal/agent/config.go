@@ -6,6 +6,7 @@ package agent
 import (
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,6 +30,13 @@ type Config struct {
 	Heartbeat     time.Duration
 	StatsInterval time.Duration
 	Version       string
+
+	// AuthListen is the loopback address of the node-local Hysteria auth
+	// gateway. The agent rewrites auth.http.url to this address so it can fall
+	// back to a cached user snapshot when the panel is unreachable.
+	AuthListen string
+	// OfflineAuth enables the local auth gateway and snapshot cache.
+	OfflineAuth bool
 }
 
 // ParseConfig reads environment variables and optional command line flags.
@@ -49,6 +57,8 @@ func ParseConfig(args []string, version string) (Config, error) {
 		Heartbeat:     10 * time.Second,
 		StatsInterval: 15 * time.Second,
 		Version:       version,
+		AuthListen:    envOr("AUTH_LISTEN", "127.0.0.1:9998"),
+		OfflineAuth:   envBool("OFFLINE_AUTH", true),
 	}
 	fs := flag.NewFlagSet("mikvace-node", flag.ContinueOnError)
 	fs.StringVar(&c.PanelURL, "panel", c.PanelURL, "panel base URL (e.g. https://panel.example.com)")
@@ -63,6 +73,8 @@ func ParseConfig(args []string, version string) (Config, error) {
 	fs.StringVar(&c.ContainerName, "container", c.ContainerName, "hysteria docker container name")
 	fs.BoolVar(&c.PanelInsecure, "insecure", c.PanelInsecure, "skip panel TLS certificate verification")
 	fs.StringVar(&c.LogLevel, "log-level", c.LogLevel, "log level")
+	fs.StringVar(&c.AuthListen, "auth-listen", c.AuthListen, "loopback address for the local Hysteria auth gateway")
+	fs.BoolVar(&c.OfflineAuth, "offline-auth", c.OfflineAuth, "enable cached authentication when the panel is down")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -78,6 +90,16 @@ func ParseConfig(args []string, version string) (Config, error) {
 	}
 	if c.Runtime != "process" && c.Runtime != "docker" {
 		return c, fmt.Errorf("--runtime must be process or docker")
+	}
+	if c.OfflineAuth {
+		host, _, err := net.SplitHostPort(c.AuthListen)
+		if err != nil {
+			return c, fmt.Errorf("AUTH_LISTEN must be host:port: %w", err)
+		}
+		ip := net.ParseIP(host)
+		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			return c, fmt.Errorf("AUTH_LISTEN must bind to loopback (got %q); disable OFFLINE_AUTH to use panel auth only", c.AuthListen)
+		}
 	}
 	if c.Heartbeat < 3*time.Second {
 		c.Heartbeat = 3 * time.Second

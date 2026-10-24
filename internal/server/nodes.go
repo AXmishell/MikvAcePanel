@@ -200,6 +200,9 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg, pushed := s.syncNodeConfig(r.Context(), saved, false)
+	if saved.HasCore("hysteria") {
+		s.sendUserSnapshot(r.Context(), saved.ID)
+	}
 	if fresh, err := s.store.GetNode(r.Context(), saved.ID); err == nil {
 		saved = fresh
 	}
@@ -807,6 +810,9 @@ func (s *Server) syncXrayNodes(ctx context.Context) {
 			s.syncNodeConfig(ctx, &nodes[i], false)
 		}
 	}
+	// Hysteria users are not embedded in the config, so refresh the offline
+	// auth cache separately after every user/group change.
+	s.pushHysteriaAuthSnapshots(ctx)
 }
 
 func validatePortRange(value string) error {

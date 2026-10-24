@@ -190,6 +190,31 @@ func (s *Store) GetUserNodeIDs(ctx context.Context, userID int64) ([]int64, erro
 	return out, rows.Err()
 }
 
+// GroupDeviceLimits returns the smallest positive device limit configured by
+// each user's groups. It is used to build the node auth snapshot without an
+// N+1 query per user.
+func (s *Store) GroupDeviceLimits(ctx context.Context) (map[int64]int, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT ug.user_id, MIN(g.max_devices)
+		 FROM user_groups ug JOIN groups g ON g.id = ug.group_id
+		 WHERE g.max_devices > 0
+		 GROUP BY ug.user_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]int{}
+	for rows.Next() {
+		var id int64
+		var limit int
+		if err := rows.Scan(&id, &limit); err != nil {
+			return nil, err
+		}
+		out[id] = limit
+	}
+	return out, rows.Err()
+}
+
 // SetUserGroups replaces the group assignments of a user.
 func (s *Store) SetUserGroups(ctx context.Context, userID int64, groupIDs []int64) error {
 	tx, err := s.DB.BeginTx(ctx, nil)

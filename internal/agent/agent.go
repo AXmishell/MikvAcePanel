@@ -62,6 +62,9 @@ type Agent struct {
 	pendingConfig   []byte
 	pendingHost     string
 	pendingManaged  bool
+
+	// auth is the node-local Hysteria auth gateway and offline cache.
+	auth *localAuthServer
 }
 
 type nodeMeta struct {
@@ -112,6 +115,9 @@ func New(cfg Config, logger *slog.Logger) (*Agent, error) {
 	}
 	a.stats = newStatsPoller("", "127.0.0.1:9999")
 	a.xrayStats = newXrayStatsPoller(cfg)
+	if cfg.OfflineAuth {
+		a.auth = newLocalAuthServer(cfg, logger, a.connectedToPanel)
+	}
 	return a, nil
 }
 
@@ -136,6 +142,64 @@ func (a *Agent) runtimesState() (map[string]Runtime, []string) {
 		out[core] = rt
 	}
 	return out, append([]string{}, a.cores...)
+}
+
+// connectedToPanel is used by the local auth gateway to avoid waiting for a
+// panel timeout on every connection attempt while the control channel is down.
+func (a *Agent) connectedToPanel() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.connected
+}
+
+// prepareConfig applies data-directory rewrites and points Hysteria's auth URL
+// at the local gateway (or back at the panel when the gateway is unavailable).
+func (a *Agent) prepareConfig(text string) string {
+	out := PrepareConfig(a.cfg, text)
+	if a.auth != nil && a.auth.Ready() {
+		return a.auth.Rewrite(out)
+	}
+	if base := strings.TrimRight(a.cfg.PanelURL, "/"); base != "" {
+		return rewriteAuthURL(out, base, "")
+	}
+	return out
+}
+
+// refreshStoredConfigs updates auth URLs in the configs loaded from disk. This
+// keeps the offline gateway working when AUTH_LISTEN changes between restarts,
+// and restores panel auth if the gateway could not bind.
+func (a *Agent) refreshStoredConfigs() {
+	runtimes, cores := a.runtimesState()
+	for _, core := range cores {
+		rt := runtimes[core]
+		if rt == nil {
+			continue
+		}
+		a.configMu.Lock()
+		text := a.currentConfigs[core]
+		a.configMu.Unlock()
+		if text == "" {
+			continue
+		}
+		next := a.prepareConfig(text)
+		if next == text {
+			continue
+		}
+		var check func(string) error
+		if core == "xray" {
+			check = func(p string) error { return ValidateXrayConfig(a.cfg, p) }
+		}
+		if err := a.writeConfigFileChecked(rt, next, check); err != nil {
+			a.log.Warn("refresh local config", "core", core, "error", err)
+			continue
+		}
+		a.configMu.Lock()
+		a.currentConfigs[core] = next
+		if a.currentConfig == text {
+			a.currentConfig = next
+		}
+		a.configMu.Unlock()
+	}
 }
 
 func (a *Agent) hasCore(core string) bool {
@@ -201,6 +265,15 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 	}()
 	defer a.stopAccessTail()
+	if a.auth != nil {
+		if err := a.auth.Start(ctx); err != nil {
+			a.log.Warn("local auth gateway unavailable; panel auth remains in use", "error", err)
+		} else {
+			a.log.Info("local auth gateway listening", "addr", a.auth.Addr())
+		}
+		defer a.auth.Close()
+	}
+	a.refreshStoredConfigs()
 	go a.logBatcher(ctx)
 	go a.retransmitLoop(ctx)
 	go a.certRetryLoop(ctx)
@@ -342,6 +415,7 @@ func (a *Agent) session(ctx context.Context) error {
 		return conn.WriteControl(websocket.PongMessage, []byte(message), time.Now().Add(10*time.Second))
 	})
 	a.sendHello()
+	a.write("users.request", map[string]any{})
 	a.resendPending()
 	a.maybeRequestCert(context.Background(), "reconnect")
 
@@ -349,6 +423,7 @@ func (a *Agent) session(ctx context.Context) error {
 	defer cancel()
 	go a.heartbeatLoop(sessionCtx)
 	go a.statsLoop(sessionCtx)
+	go a.userSnapshotLoop(sessionCtx)
 
 	for {
 		var msg wsMessage
@@ -375,6 +450,20 @@ func (a *Agent) session(ctx context.Context) error {
 			a.log.Warn("certificate issuance failed", "error", p.Error)
 		case "cert.renew":
 			a.requestCertificate("renew", true)
+		case "user.snapshot":
+			var snap model.UserAuthSnapshot
+			if err := json.Unmarshal(msg.Payload, &snap); err != nil {
+				a.log.Warn("invalid user auth snapshot", "error", err)
+				break
+			}
+			if a.auth == nil {
+				break
+			}
+			if err := a.auth.SetSnapshot(snap); err != nil {
+				a.log.Warn("persist user auth snapshot", "error", err)
+			} else {
+				a.log.Info("user auth snapshot updated", "users", len(snap.Users), "generatedAt", snap.GeneratedAt)
+			}
 		case "log.ack":
 			var p struct {
 				BatchID string `json:"batchId"`
@@ -418,12 +507,16 @@ func (a *Agent) sendHello() {
 	certFP := a.meta.CertFingerprint
 	certAfter := a.meta.CertNotAfter
 	a.configMu.Unlock()
+	caps := []string{CapabilityCSR, CapabilityMultiCore}
+	if a.auth != nil && a.auth.Ready() {
+		caps = append(caps, "auth.offline.v1")
+	}
 	a.write("hello", map[string]any{
 		"version": a.cfg.Version, "os": osName(), "arch": archName(),
 		"hy2Version": hy2Version, "xrayVersion": xrayVersion, "cores": cores,
 		"runtime":      runtimeName,
 		"onlineUsers":  a.onlineCount(),
-		"capabilities": []string{CapabilityCSR, CapabilityMultiCore},
+		"capabilities": caps,
 		"cert": map[string]any{
 			"fingerprint": certFP,
 			"notAfter":    certAfter,
@@ -491,6 +584,21 @@ func (a *Agent) writeRaw(msg any) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// userSnapshotLoop keeps the offline auth cache reasonably fresh while the
+// panel is reachable. User mutations also trigger an immediate push.
+func (a *Agent) userSnapshotLoop(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.write("users.request", map[string]any{})
+		}
+	}
 }
 
 func (a *Agent) heartbeatLoop(ctx context.Context) {
@@ -797,7 +905,7 @@ func (a *Agent) handleConfig(raw json.RawMessage) {
 
 	prepared := map[string]string{}
 	for core, text := range configs {
-		prepared[core] = PrepareConfig(a.cfg, text)
+		prepared[core] = a.prepareConfig(text)
 	}
 	a.configMu.Lock()
 	unchanged := msg.Revision == a.appliedRevision && len(prepared) == len(a.currentConfigs)
@@ -883,7 +991,7 @@ func (a *Agent) applyConfigs(revision int64, cores []string, configs map[string]
 		if rt == nil {
 			return fmt.Errorf("no runtime available for %s", core)
 		}
-		text := PrepareConfig(a.cfg, configs[core])
+		text := a.prepareConfig(configs[core])
 		var check func(string) error
 		if core == "xray" {
 			check = func(p string) error { return ValidateXrayConfig(a.cfg, p) }

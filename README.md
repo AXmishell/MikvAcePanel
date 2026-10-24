@@ -28,7 +28,7 @@ mkdocs build --strict # 输出 site/
 - **Xray 多协议入站**：VLESS / VMess / Trojan / Shadowsocks；TCP / WebSocket / gRPC / XHTTP / mKCP；REALITY / TLS / 无加密；管理员可在新建节点时按协议开关启用，一个节点可配置多个入站。
 - **订阅分发**：Clash/Mihomo YAML、sing-box JSON、Shadowrocket Base64、原始 URI 列表、Xray JSON；支持 HAPP 路由头与 providerid。
 - **终端用户中心**：用户使用 ID + 登录密码进入 `/user`，查看订阅、流量、到期与设备；登录密码与连接密码相互独立，均可由用户或管理员修改；管理端可直接指定订阅 Token。管理员控制台位于 `/admin`，与用户入口完全分离。
-- **Hysteria 2 认证**：节点把客户端认证请求转发到 `POST /api/auth`，支持启用/禁用、到期、流量限额、设备数限制（按唯一 IP + 宽限期）。
+- **Hysteria 2 认证**：节点把客户端认证请求转发到 `POST /api/auth`，支持启用/禁用、到期、流量限额、设备数限制（按唯一 IP + 宽限期）；Agent 还会持久化用户认证快照，面板故障时 Hysteria 新连接仍可继续认证。
 - **节点管理**：面板生成 Hysteria / Xray 服务端配置，通过 WebSocket 实时下发；支持版本、运行状态、配置 revision、错误回报、启动/停止/重启。
 - **证书统一签发**：面板通过 ACME DNS-01 申请证书，Agent 提交 CSR、安装证书链（私钥不出节点）；节点自签 ACME 只使用 TLS-ALPN，不再占用 80 端口。
 - **两步验证（2FA）**：管理员可使用标准 TOTP 应用登录，提供一次性恢复码；2FA 密钥加密存储，支持自助关闭与恢复码重置。
@@ -288,6 +288,8 @@ docker build -f Dockerfile.node -t ghcr.io/axmishell/mikvacepanel-node:latest .
 | `HY2_IMAGE` | `tobyxdd/hysteria:latest` | Hysteria Docker 模式镜像 |
 | `XRAY_IMAGE` | `ghcr.io/xtls/xray-core:latest` | Xray Docker 模式镜像 |
 | `PANEL_INSECURE` | `false` | 面板使用自签名 HTTPS 时设为 `true` |
+| `OFFLINE_AUTH` | `true` | 面板故障时用本地用户快照继续为 Hysteria 认证 |
+| `AUTH_LISTEN` | `127.0.0.1:9998` | 本地认证网关地址，只允许回环地址 |
 | `LOG_LEVEL` | `info` | Agent 日志级别 |
 
 更多说明见 [docs/node-agent.md](docs/node-agent.md)。
@@ -420,6 +422,7 @@ go build -o mikvace-client ./cmd/client
 - 修改默认管理员密码，并设置 `JWT_SECRET`（至少 32 字节随机值）。
 - 节点 Token 等同于节点身份，泄露后请在节点页 **Reset token**。
 - 数据库包含用户密码（订阅认证用）和节点统计密钥，请限制 `/data` 权限并做好备份。
+- 节点 `DATA_DIR/state/users.json` 是离线认证快照，包含 Hysteria 连接密码；Agent 以 0600 写入，请确保只有 root 可读，并保持面板到节点使用 HTTPS/WSS。
 - 端口跳跃需要 `NET_ADMIN`，请只在自己控制的节点上运行。
 - 建议在面板前增加反向代理的速率限制和访问控制；面板自带登录失败限流。
 

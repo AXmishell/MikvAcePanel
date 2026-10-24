@@ -55,6 +55,7 @@ Agent 断线重连时：
 | `heartbeat` | CPU/内存/磁盘/load/uptime/在线数/累计流量 |
 | `logs` | 日志批次 + batch id |
 | `stats` | 用户流量增量 + batch id |
+| `users.request` | 请求刷新离线认证用户快照 |
 | `config.ack` | revision、成功/失败、pending |
 | `command.ack` | start/stop/restart 结果 |
 | `cert.request` | CSR、域名、公钥指纹 |
@@ -68,6 +69,7 @@ Agent 断线重连时：
 | `cert.push` | 证书链、指纹、有效期；上传模式含私钥 |
 | `cert.error` | 签发失败原因 |
 | `cert.renew` | 管理员触发续期 |
+| `user.snapshot` | 节点离线认证快照（启用用户、密码、到期、流量、设备上限） |
 | `log.ack` / `stats.ack` | 幂等确认 |
 
 日志和统计使用 batch id，服务端以 `(node_id, batch_id)` 唯一索引保证只应用一次；Agent 未收到 ack 会重发。
@@ -138,5 +140,5 @@ SQLite 使用 WAL 模式；`VACUUM INTO` 生成一致性备份快照。
 | 节点断线 | 代理继续按本地配置运行；面板标记离线并记录事件 |
 | 配置被拒绝 | 面板记录错误；Agent 回滚旧配置并重启 |
 | 证书续期失败 | 旧证书继续服务；到期前定时重试 |
-| 面板离线 | 节点继续运行；managed 证书无法续期 |
+| 面板离线 | 节点继续运行；Hysteria 使用本地认证快照，Xray 使用本地配置；managed 证书无法续期 |
 | 数据库损坏 | 从 `backups/` 恢复；原库保留为 `pre-restore` |
