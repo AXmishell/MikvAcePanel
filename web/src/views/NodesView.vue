@@ -253,6 +253,12 @@
         <div class="field"><label>跳跃间隔</label><input v-model="form.hopInterval" type="text" placeholder="30s" />
           <span class="hint">仅端口跳跃模式生效，支持 <span class="mono">30s</span>、<span class="mono">1m</span> 等写法。</span>
         </div>
+        <div class="field full"><strong>订阅入口</strong></div>
+        <div class="field full">
+          <label class="checkbox"><input v-model="form.hy2.includeTls" type="checkbox" /> 在订阅中显示 TLS 入口</label>
+          <label class="checkbox"><input v-model="form.hy2.includeHopping" type="checkbox" /> 在订阅中显示 Hopping 入口</label>
+          <span class="hint">同时开启会为同一节点生成两条 Hy2 配置；关闭其中一个可避免重复。至少保留一个；仅保留 Hopping 时必须配置端口跳跃范围。</span>
+        </div>
 
         <div class="field full"><strong>混淆与带宽</strong></div>
         <div class="field">
@@ -792,6 +798,7 @@ function hy2Defaults() {
     },
     mimic: { enabled: false, interface: '', xdpMode: '', path: '', extraArgsText: '' },
     listenPortRange: '', trafficListen: '',
+    includeTls: true, includeHopping: true,
     ignoreClientBandwidth: false, disableLossCompensation: false,
     disableUDP: false, udpIdleTimeout: '', speedTest: false,
     geckoMinPacketSize: 0, geckoMaxPacketSize: 0,

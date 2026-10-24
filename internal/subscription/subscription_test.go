@@ -184,6 +184,90 @@ func TestEndpointsUseEffectiveListenPort(t *testing.T) {
 	}
 }
 
+func boolPtr(v bool) *bool { return &v }
+
+func TestEndpointToggles(t *testing.T) {
+	user := &model.User{UserID: "alice", Password: "secret"}
+	base := model.Node{
+		ID: 1, Name: "Edge", IP: "203.0.113.1", Port: 443, TLSMode: "selfsigned",
+		PortRange: "20000-50000", HopInterval: "30s",
+	}
+
+	// Both toggles missing keep the historical behavior: TLS + Hopping.
+	n := base
+	eps := Endpoints(n)
+	if len(eps) != 2 || eps[0].Label != "TLS" || eps[1].Label != "Hopping" {
+		t.Fatalf("default endpoints = %+v", eps)
+	}
+
+	// Hopping only.
+	n.Hy2.IncludeTLS = boolPtr(false)
+	n.Hy2.IncludeHopping = boolPtr(true)
+	eps = Endpoints(n)
+	if len(eps) != 1 || eps[0].Label != "Hopping" {
+		t.Fatalf("hopping-only endpoints = %+v", eps)
+	}
+	parsed, err := url.Parse(URI(user, n, eps[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Query().Get("mport") != "20000-50000" {
+		t.Fatalf("hopping uri missing mport: %s", parsed)
+	}
+
+	// TLS only.
+	n.Hy2.IncludeTLS = boolPtr(true)
+	n.Hy2.IncludeHopping = boolPtr(false)
+	eps = Endpoints(n)
+	if len(eps) != 1 || eps[0].Label != "TLS" {
+		t.Fatalf("tls-only endpoints = %+v", eps)
+	}
+	parsed, err = url.Parse(URI(user, n, eps[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Query().Get("mport") != "" {
+		t.Fatalf("tls-only uri must not advertise mport: %s", parsed)
+	}
+
+	// Hopping only with the built-in range.
+	n = base
+	n.PortRange = ""
+	n.Hy2.IncludeTLS = boolPtr(false)
+	n.Hy2.IncludeHopping = boolPtr(true)
+	n.Hy2.ListenPortRange = "20000-50000"
+	eps = Endpoints(n)
+	if len(eps) != 1 || eps[0].Label != "Hopping" || eps[0].PortRange != "20000-50000" {
+		t.Fatalf("built-in hopping-only endpoints = %+v", eps)
+	}
+
+	// Both disabled publishes nothing (the API rejects this for Hysteria nodes).
+	n = base
+	n.Hy2.IncludeTLS = boolPtr(false)
+	n.Hy2.IncludeHopping = boolPtr(false)
+	if eps := Endpoints(n); len(eps) != 0 {
+		t.Fatalf("disabled endpoints = %+v", eps)
+	}
+
+	// Hopping enabled without a range has nothing to publish.
+	n = base
+	n.PortRange = ""
+	n.Hy2.IncludeTLS = boolPtr(false)
+	n.Hy2.IncludeHopping = boolPtr(true)
+	if eps := Endpoints(n); len(eps) != 0 {
+		t.Fatalf("range-less hopping endpoints = %+v", eps)
+	}
+
+	// Missing TLS toggle still defaults to enabled.
+	n = base
+	n.Hy2.IncludeTLS = nil
+	n.Hy2.IncludeHopping = boolPtr(false)
+	eps = Endpoints(n)
+	if len(eps) != 1 || eps[0].Label != "TLS" {
+		t.Fatalf("default TLS endpoint = %+v", eps)
+	}
+}
+
 func TestEndpointsDomain(t *testing.T) {
 	_, nodes := fixture()
 	eps := Endpoints(nodes[1])

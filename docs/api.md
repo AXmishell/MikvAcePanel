@@ -357,6 +357,7 @@ Hysteria 2 扩展选项放在请求体的 `hy2` 对象中（证书私钥等敏�
 | `realm` | Realms 模式与 STUN/打洞调优（2.9+，与端口跳跃互斥） |
 | `mimic` | `enabled`、`interface`、`xdpMode`、`path`、`extraArgs`（2.12+，与端口跳跃互斥） |
 | `listenPortRange` | Hysteria 内置 UDP 端口范围监听（2.8+，与 Agent 端口跳跃互斥） |
+| `includeTls` / `includeHopping` | 是否在订阅中输出 TLS / Hopping 入口，缺省 `true`；至少保留一个，仅保留 Hopping 时需要配置端口范围 |
 | `trafficListen` | `trafficStats.listen` 主机部分 |
 | `ignoreClientBandwidth` / `disableLossCompensation` / `disableUDP` / `udpIdleTimeout` / `speedTest` | 服务端限速与 UDP 行为 |
 | `geckoMinPacketSize` / `geckoMaxPacketSize` | Gecko 混淆分片大小（2.9.2+） |

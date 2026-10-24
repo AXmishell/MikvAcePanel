@@ -39,6 +39,11 @@ type Hy2Settings struct {
 	// ListenPortRange asks Hysteria itself to listen on a UDP port range.
 	// Mutually exclusive with the agent managed iptables PortRange.
 	ListenPortRange string `json:"listenPortRange,omitempty"`
+	// IncludeTLS and IncludeHopping choose which client endpoints are
+	// published in subscriptions. nil keeps both for nodes created before the
+	// toggles existed.
+	IncludeTLS     *bool `json:"includeTls,omitempty"`
+	IncludeHopping *bool `json:"includeHopping,omitempty"`
 	// TrafficListen overrides the host of trafficStats.listen (port stays
 	// panel managed).
 	TrafficListen string `json:"trafficListen,omitempty"`
@@ -162,4 +167,16 @@ func (h Hy2Settings) Hy2ListenPortRange() string {
 // IsRealm reports whether the node uses the Realms P2P mode.
 func (h Hy2Settings) IsRealm() bool {
 	return h.Realm != nil && h.Realm.URI != ""
+}
+
+// PublishesTLS reports whether the plain TLS endpoint is included in
+// subscriptions. A missing toggle defaults to true for backward compatibility.
+func (h Hy2Settings) PublishesTLS() bool {
+	return h.IncludeTLS == nil || *h.IncludeTLS
+}
+
+// PublishesHopping reports whether the port-hopping endpoint is included in
+// subscriptions. A missing toggle defaults to true for backward compatibility.
+func (h Hy2Settings) PublishesHopping() bool {
+	return h.IncludeHopping == nil || *h.IncludeHopping
 }

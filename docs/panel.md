@@ -70,6 +70,8 @@
 - 需要 `NET_ADMIN` 与 host 网络；
 - 目前仅 IPv4。
 
+订阅中的 **TLS** 与 **Hopping** 入口可分别关闭（`includeTls` / `includeHopping`），避免同一节点重复出现；至少保留一个，仅保留 Hopping 时必须配置端口范围。
+
 ### 其他参数
 
 - `listen` / `port`、统计端口、统计密钥；

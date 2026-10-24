@@ -99,12 +99,15 @@ func Endpoints(n model.Node) []Endpoint {
 		ObfsType: n.ObfsType, ObfsPassword: n.ObfsPassword,
 		ECHConfig: strings.TrimSpace(n.Hy2.ECHConfig),
 	}
-	out := []Endpoint{base}
+	out := []Endpoint{}
+	if n.Hy2.PublishesTLS() {
+		out = append(out, base)
+	}
 	portRange := strings.TrimSpace(n.PortRange)
 	if strings.TrimSpace(n.Hy2.ListenPortRange) != "" {
 		portRange = strings.TrimSpace(n.Hy2.ListenPortRange)
 	}
-	if portRange != "" {
+	if portRange != "" && n.Hy2.PublishesHopping() {
 		hop := base
 		hop.Label = "Hopping"
 		hop.PortRange = portRange

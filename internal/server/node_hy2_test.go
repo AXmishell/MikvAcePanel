@@ -37,6 +37,53 @@ func TestValidateHy2VersionGate(t *testing.T) {
 	}
 }
 
+func TestValidateHy2SubscriptionEndpoints(t *testing.T) {
+	on, off := true, false
+	hysteria := []string{"hysteria"}
+
+	// Both disabled would remove the node from every subscription.
+	h := &model.Hy2Settings{IncludeTLS: &off, IncludeHopping: &off}
+	if err := validateHy2(h, nil, "selfsigned", "", "", hysteria, nil); err == nil ||
+		!strings.Contains(err.Error(), "at least one") {
+		t.Fatalf("expected both-disabled rejection, got %v", err)
+	}
+
+	// Hopping only needs a range.
+	h = &model.Hy2Settings{IncludeTLS: &off, IncludeHopping: &on}
+	if err := validateHy2(h, nil, "selfsigned", "", "", hysteria, nil); err == nil ||
+		!strings.Contains(err.Error(), "port range") {
+		t.Fatalf("expected range requirement, got %v", err)
+	}
+	if err := validateHy2(h, nil, "selfsigned", "20000-50000", "", hysteria, nil); err != nil {
+		t.Fatalf("agent range should allow hopping-only: %v", err)
+	}
+	h.ListenPortRange = "20000-50000"
+	if err := validateHy2(h, nil, "selfsigned", "", "", hysteria, nil); err != nil {
+		t.Fatalf("built-in range should allow hopping-only: %v", err)
+	}
+
+	// TLS only needs no range.
+	h = &model.Hy2Settings{IncludeTLS: &on, IncludeHopping: &off}
+	if err := validateHy2(h, nil, "selfsigned", "", "", hysteria, nil); err != nil {
+		t.Fatalf("tls-only should pass: %v", err)
+	}
+
+	// The toggles are irrelevant on a pure Xray node.
+	h = &model.Hy2Settings{IncludeTLS: &off, IncludeHopping: &off}
+	if err := validateHy2(h, nil, "selfsigned", "", "", []string{"xray"}, nil); err != nil {
+		t.Fatalf("pure xray node must not be constrained: %v", err)
+	}
+
+	// Realms and mimic do not publish share links, so they are exempt.
+	h = &model.Hy2Settings{
+		IncludeTLS: &off, IncludeHopping: &off,
+		Realm: &model.Hy2Realm{URI: "realm://public@realm.hy2.io/my-server-8f3a"},
+	}
+	if err := validateHy2(h, nil, "selfsigned", "", "", hysteria, nil); err != nil {
+		t.Fatalf("realm node must be exempt: %v", err)
+	}
+}
+
 func TestValidateHy2Conflicts(t *testing.T) {
 	h := &model.Hy2Settings{
 		ListenPortRange: "20000-50000",

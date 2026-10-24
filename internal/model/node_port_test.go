@@ -78,6 +78,23 @@ func TestEffectiveListenPort(t *testing.T) {
 	}
 }
 
+func TestPublishesEndpoints(t *testing.T) {
+	var h Hy2Settings
+	if !h.PublishesTLS() || !h.PublishesHopping() {
+		t.Fatal("missing toggles must default to enabled")
+	}
+
+	on, off := true, false
+	h = Hy2Settings{IncludeTLS: &off, IncludeHopping: &on}
+	if h.PublishesTLS() || !h.PublishesHopping() {
+		t.Fatal("explicit endpoint toggles were not honoured")
+	}
+	h = Hy2Settings{IncludeTLS: &on, IncludeHopping: &off}
+	if !h.PublishesTLS() || h.PublishesHopping() {
+		t.Fatal("explicit endpoint toggles were not honoured")
+	}
+}
+
 func TestListenHost(t *testing.T) {
 	cases := []struct {
 		listen string

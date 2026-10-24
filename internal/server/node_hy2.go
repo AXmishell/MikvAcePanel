@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -280,6 +281,16 @@ func validateHy2(h *model.Hy2Settings, existing *model.Node, tlsMode, portRange,
 		}
 		if portRange != "" {
 			return fmt.Errorf("built-in listen port range and agent port hopping are mutually exclusive")
+		}
+	}
+	// Subscription endpoint toggles. Without at least one endpoint a Hysteria
+	// node would silently disappear from every subscription.
+	if slices.Contains(cores, "hysteria") && !h.IsRealm() && !(h.Mimic != nil && h.Mimic.Enabled) {
+		if !h.PublishesTLS() && !h.PublishesHopping() {
+			return fmt.Errorf("at least one Hysteria subscription endpoint (TLS or Hopping) must be enabled")
+		}
+		if !h.PublishesTLS() && portRange == "" && h.ListenPortRange == "" {
+			return fmt.Errorf("Hopping-only subscriptions require a port range")
 		}
 	}
 	if h.TrafficListen != "" {
