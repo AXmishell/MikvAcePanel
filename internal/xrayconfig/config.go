@@ -254,7 +254,9 @@ func normalizeInbound(n *model.Node, ib *model.XrayInbound, index int) error {
 	}
 	ib.Listen = strings.TrimSpace(ib.Listen)
 	if ib.Listen == "" {
-		ib.Listen = strings.TrimSpace(n.Listen)
+		// The node-wide listen address is a Hysteria host:port, while Xray's
+		// inbound listen takes a host only.
+		ib.Listen = n.ListenHost()
 	}
 	ib.Transport = strings.ToLower(strings.TrimSpace(ib.Transport))
 	if ib.Transport == "" {

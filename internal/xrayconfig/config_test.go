@@ -29,6 +29,34 @@ func fixture() (*model.Node, []model.User) {
 	return n, users
 }
 
+func TestInboundInheritsListenHost(t *testing.T) {
+	cases := []struct {
+		nodeListen string
+		want       string
+	}{
+		{":15443", ""},
+		{"0.0.0.0:15443", "0.0.0.0"},
+		{"[::]:15443", "::"},
+		{"0.0.0.0", "0.0.0.0"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		n := &model.Node{
+			ID: 1, Type: "xray", Port: 443, Listen: tc.nodeListen,
+			Xray: model.XraySettings{
+				Transport: "tcp", Security: "reality",
+				RealityDest: "www.cloudflare.com:443", RealitySNI: []string{"www.cloudflare.com"},
+			},
+		}
+		if err := Normalize(n); err != nil {
+			t.Fatalf("listen %q: %v", tc.nodeListen, err)
+		}
+		if got := n.Xray.Inbounds[0].Listen; got != tc.want {
+			t.Errorf("listen %q: inbound listen = %q, want %q", tc.nodeListen, got, tc.want)
+		}
+	}
+}
+
 func TestRenderReality(t *testing.T) {
 	n, users := fixture()
 	if n.Xray.RealityPrivateKey == "" || n.Xray.RealityPublicKey == "" {

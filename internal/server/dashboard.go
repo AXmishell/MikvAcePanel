@@ -30,6 +30,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	nodeItems := make([]map[string]any, 0, len(nodes))
 	for _, n := range nodes {
+		port := n.Port
+		if n.HasCore("hysteria") {
+			port = n.EffectiveListenPort()
+		}
 		item := map[string]any{
 			"id": n.ID, "name": n.Name, "flag": n.Flag, "status": n.Status,
 			"active": n.Active, "onlineUsers": n.OnlineUsers, "maxOnline": n.MaxOnline,
@@ -38,7 +42,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			"configError": n.ConfigError, "lastSeenAt": n.LastSeenAt,
 			"agentVersion": n.AgentVersion, "os": n.OS, "arch": n.Arch,
 			"hy2Version": n.Hy2Version, "runtime": n.Runtime, "connected": s.hub.Connected(n.ID),
-			"domain": n.Domain, "ip": n.IP, "port": n.Port,
+			"domain": n.Domain, "ip": n.IP, "port": port,
 		}
 		if m, ok := latest[n.ID]; ok {
 			item["metrics"] = m

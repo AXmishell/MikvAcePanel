@@ -452,12 +452,9 @@ func (s *Server) nodeFromPayload(p *nodePayload, existing *model.Node) (*model.N
 	// The first core is the node's primary type; it keeps legacy endpoints and
 	// the Type column meaningful while Cores drives multi-core rendering.
 	nodeType = cores[0]
-	port := p.Port
-	if port == 0 {
-		port = 443
-	}
-	if port < 1 || port > 65535 {
-		return nil, fmt.Errorf("port must be between 1 and 65535")
+	listen, port, err := normalizeNodeListen(p.Listen, p.Port)
+	if err != nil {
+		return nil, err
 	}
 	tlsMode := strings.ToLower(strings.TrimSpace(p.TLSMode))
 	if tlsMode == "" {
@@ -551,7 +548,7 @@ func (s *Server) nodeFromPayload(p *nodePayload, existing *model.Node) (*model.N
 	n := &model.Node{
 		Name: name, Type: nodeType, Flag: strings.TrimSpace(p.Flag),
 		IP: strings.TrimSpace(p.IP), Domain: domain, SNI: strings.TrimSpace(p.SNI),
-		Listen: strings.TrimSpace(p.Listen), Port: port, PortRange: portRange,
+		Listen: listen, Port: port, PortRange: portRange,
 		HopInterval: strings.TrimSpace(p.HopInterval), ObfsType: obfs, ObfsPassword: p.ObfsPassword,
 		StatsPort: statsPort, SSHPort: sshPort, SSHUser: strings.TrimSpace(p.SSHUser),
 		SSHPassword: p.SSHPassword, SSHKey: p.SSHKey, SSHHostKey: strings.TrimSpace(p.SSHHostKey),
@@ -683,12 +680,15 @@ func (s *Server) syncNodeConfig(ctx context.Context, n *model.Node, force bool) 
 		if n.Hy2.ClientCA != "" {
 			files["clientCA"] = n.Hy2.ClientCA
 		}
+		// Port hopping redirects to the port Hysteria actually listens on.
+		// The node port and the listen address may differ on legacy rows.
+		listenPort := n.EffectiveListenPort()
 		if hasCapability(n.Capabilities, CapabilityMultiCore) {
-			pushed = s.hub.PushConfigBundle(n.ID, cfg.Revision, configs, cfg.Cores, n.TLSMode, n.Domain, host, agentPortRange, n.Port, files)
+			pushed = s.hub.PushConfigBundle(n.ID, cfg.Revision, configs, cfg.Cores, n.TLSMode, n.Domain, host, agentPortRange, listenPort, files)
 		} else {
 			// Older agents only understand a single core; keep them working
 			// with the node's primary core.
-			pushed = s.hub.PushConfig(n.ID, cfg.Revision, primary, configs[primary], n.TLSMode, n.Domain, host, agentPortRange, n.Port, files)
+			pushed = s.hub.PushConfig(n.ID, cfg.Revision, primary, configs[primary], n.TLSMode, n.Domain, host, agentPortRange, listenPort, files)
 		}
 	}
 	return cfg, pushed

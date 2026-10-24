@@ -8,6 +8,56 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestEnsureListenPort(t *testing.T) {
+	cases := []struct {
+		listen string
+		port   int
+		want   string
+	}{
+		{"", 443, ":443"},
+		{":15443", 443, ":15443"},
+		{"15443", 443, ":15443"},
+		{"0.0.0.0:15443", 443, "0.0.0.0:15443"},
+		{"0.0.0.0", 15443, "0.0.0.0:15443"},
+		{"::", 15443, "[::]:15443"},
+		{"[::]", 443, "[::]:443"},
+		{"localhost", 8443, "localhost:8443"},
+	}
+	for _, tc := range cases {
+		if got := ensureListenPort(tc.listen, tc.port); got != tc.want {
+			t.Errorf("ensureListenPort(%q, %d) = %q, want %q", tc.listen, tc.port, got, tc.want)
+		}
+	}
+}
+
+func TestRenderNormalizesLegacyListen(t *testing.T) {
+	n := &model.Node{ID: 1, Port: 15443, Listen: "0.0.0.0", TLSMode: "selfsigned"}
+	text, _, err := Render(n, "https://panel.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(text), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg["listen"]; got != "0.0.0.0:15443" {
+		t.Fatalf("listen = %v, want 0.0.0.0:15443", got)
+	}
+
+	// The built-in range still takes precedence over the node listen address.
+	n.Hy2.ListenPortRange = "20000-50000"
+	text, _, err = Render(n, "https://panel.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal([]byte(text), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg["listen"]; got != ":20000-50000" {
+		t.Fatalf("range listen = %v, want :20000-50000", got)
+	}
+}
+
 func TestRenderSelfSigned(t *testing.T) {
 	n := &model.Node{
 		ID: 7, Name: "Tokyo", IP: "203.0.113.10", Port: 443, StatsPort: 9999, StatsSecret: "s3cret",

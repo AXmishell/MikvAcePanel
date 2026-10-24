@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -280,18 +282,17 @@ func Build(n *model.Node, panelURL string) (*ServerConfig, error) {
 		return nil, fmt.Errorf("panel public URL is not configured")
 	}
 	h := n.Hy2
-	listen := n.Listen
+	port := n.Port
+	if port < 1 || port > 65535 {
+		port = 443
+	}
+	listen := strings.TrimSpace(n.Listen)
 	if h.IsRealm() {
 		listen = strings.TrimSpace(h.Realm.URI)
 	} else if h.ListenPortRange != "" {
 		listen = ":" + strings.TrimSpace(h.ListenPortRange)
-	}
-	if listen == "" {
-		port := n.Port
-		if port == 0 {
-			port = 443
-		}
-		listen = fmt.Sprintf(":%d", port)
+	} else {
+		listen = ensureListenPort(listen, port)
 	}
 	cfg := &ServerConfig{
 		Listen: listen,
@@ -420,6 +421,32 @@ func Build(n *model.Node, panelURL string) (*ServerConfig, error) {
 		}
 	}
 	return cfg, nil
+}
+
+// ensureListenPort keeps a complete host:port listen address, appends the node
+// port to a legacy bare host, and falls back to ":port" when listen is empty.
+// Rows written before listen validation existed may contain "0.0.0.0" or
+// "::", which Hysteria rejects with "missing port in address".
+func ensureListenPort(listen string, port int) string {
+	if port < 1 || port > 65535 {
+		port = 443
+	}
+	listen = strings.TrimSpace(listen)
+	if listen == "" {
+		return fmt.Sprintf(":%d", port)
+	}
+	if _, _, err := net.SplitHostPort(listen); err == nil {
+		return listen
+	}
+	// Legacy rows may contain a bare port such as "15443".
+	if p, err := strconv.Atoi(listen); err == nil && p >= 1 && p <= 65535 {
+		return ":" + listen
+	}
+	host := listen
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 func sniGuard(h model.Hy2Settings) string {

@@ -136,6 +136,54 @@ func TestTitleAndHeaders(t *testing.T) {
 	}
 }
 
+func TestEndpointsUseEffectiveListenPort(t *testing.T) {
+	u := &model.User{UserID: "alice", Password: "secret"}
+
+	// The listen address is the source of truth for the bound port.
+	n := model.Node{ID: 1, Name: "Custom", IP: "203.0.113.1", Port: 443, Listen: ":15443", TLSMode: "selfsigned"}
+	eps := Endpoints(n)
+	if len(eps) != 1 {
+		t.Fatalf("endpoints = %d", len(eps))
+	}
+	if eps[0].Port != 15443 {
+		t.Fatalf("endpoint port = %d, want 15443", eps[0].Port)
+	}
+	parsed, err := url.Parse(URI(u, n, eps[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Host != "203.0.113.1:15443" {
+		t.Fatalf("uri host = %q, want 203.0.113.1:15443", parsed.Host)
+	}
+
+	// The built-in range binds its lowest port, not the stale node port.
+	n = model.Node{
+		ID: 2, Name: "Range", IP: "203.0.113.2", Port: 15443, TLSMode: "selfsigned",
+		Hy2: model.Hy2Settings{ListenPortRange: "20000-50000"},
+	}
+	eps = Endpoints(n)
+	if len(eps) != 2 {
+		t.Fatalf("endpoints = %d", len(eps))
+	}
+	for i, e := range eps {
+		if e.Port != 20000 {
+			t.Fatalf("endpoint %d port = %d, want 20000", i, e.Port)
+		}
+	}
+	if eps[1].PortRange != "20000-50000" {
+		t.Fatalf("hopping range = %q", eps[1].PortRange)
+	}
+	for i, e := range eps {
+		parsed, err := url.Parse(URI(u, n, e))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if parsed.Host != "203.0.113.2:20000" {
+			t.Fatalf("endpoint %d uri host = %q, want 203.0.113.2:20000", i, parsed.Host)
+		}
+	}
+}
+
 func TestEndpointsDomain(t *testing.T) {
 	_, nodes := fixture()
 	eps := Endpoints(nodes[1])

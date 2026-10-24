@@ -91,8 +91,10 @@ func Endpoints(n model.Node) []Endpoint {
 		sni = strings.TrimSpace(n.SNI)
 	}
 	hasCert := (strings.EqualFold(n.TLSMode, "acme") || strings.EqualFold(n.TLSMode, "managed")) && n.Domain != ""
+	// Publish the port Hysteria actually binds. The node port and the listen
+	// address may differ, and the built-in range only binds its lowest port.
 	base := Endpoint{
-		Label: "TLS", Host: host, Port: defaultInt(n.Port, 443),
+		Label: "TLS", Host: host, Port: n.EffectiveListenPort(),
 		SNI: sni, HasCert: hasCert, Insecure: !hasCert,
 		ObfsType: n.ObfsType, ObfsPassword: n.ObfsPassword,
 		ECHConfig: strings.TrimSpace(n.Hy2.ECHConfig),
@@ -120,13 +122,6 @@ func Label(n model.Node, e Endpoint) string {
 	}
 	parts = append(parts, n.Name, e.Label)
 	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
-}
-
-func defaultInt(v, def int) int {
-	if v > 0 {
-		return v
-	}
-	return def
 }
 
 // userInfo returns the URL-escaped userinfo used inside share links.
