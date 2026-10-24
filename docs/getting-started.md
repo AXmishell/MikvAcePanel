@@ -20,7 +20,7 @@
 ```bash
 git clone https://github.com/AXmishell/MikvAcePanel.git
 cd MikvAcePanel
-cp .env.example .env
+cp .env.panel.example .env
 ```
 
 编辑 `.env`：
@@ -95,6 +95,14 @@ docker run -d --name mikvace-node --restart unless-stopped \
   -e HY2_RUNTIME=process \
   -v /var/lib/mikvace:/data \
   ghcr.io/axmishell/mikvacepanel-node:latest
+```
+
+如果使用 Compose 部署节点，复制节点模板并填写参数：
+
+```bash
+cp .env.node.example .env
+# 填写 PANEL_URL、NODE_TOKEN 等
+docker compose -f docker-compose.node.yml up -d
 ```
 
 等待面板显示 **Online**，配置 revision 变为已应用。详细参数和 Docker 运行时模式见 [节点 Agent](node-agent.md)。

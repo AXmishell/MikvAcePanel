@@ -29,11 +29,12 @@ docker run -d --name mikvace-node --restart unless-stopped \
   ghcr.io/axmishell/mikvacepanel-node:latest
 ```
 
-或使用 `docker-compose.node.yml`：
+或使用 `docker-compose.node.yml` 与节点模板：
 
 ```bash
-PANEL_URL=https://panel.example.com NODE_TOKEN=mtn_xxx \
-  docker compose -f docker-compose.node.yml up -d
+cp .env.node.example .env
+# 填写 PANEL_URL、NODE_TOKEN 等
+docker compose -f docker-compose.node.yml up -d
 ```
 
 ### 方式 B：Agent 管理 Hysteria 容器

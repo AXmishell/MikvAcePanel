@@ -86,7 +86,7 @@ hide:
 ```bash
 git clone https://github.com/AXmishell/MikvAcePanel.git
 cd MikvAcePanel
-cp .env.example .env
+cp .env.panel.example .env
 # 修改 ADMIN_PASSWORD、PANEL_PUBLIC_URL 等
 docker compose up -d --build
 ```

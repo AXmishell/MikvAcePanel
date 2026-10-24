@@ -95,7 +95,7 @@ docs/               API、用户中心、节点、证书签发、2FA、日志分
 ## 快速开始（Docker Compose）
 
 ```bash
-cp .env.example .env       # 可选：修改端口/初始密码/公开地址
+cp .env.panel.example .env  # 面板模板：可选修改端口/初始密码/公开地址
 docker compose up -d --build
 ```
 
@@ -254,6 +254,14 @@ docker run -d --name mikvace-node --restart unless-stopped \
   -e HY2_RUNTIME=process \
   -v /var/lib/mikvace:/data \
   ghcr.io/axmishell/mikvacepanel-node:latest
+```
+
+也可以使用节点模板与 Compose 部署（进程模式；Docker 模式改用 `docker-compose.node-docker.yml`）：
+
+```bash
+cp .env.node.example .env
+# 填写 PANEL_URL、NODE_TOKEN 等
+docker compose -f docker-compose.node.yml up -d
 ```
 
 上面的命令直接使用 GHCR 上的预构建镜像。需要本地构建时，可以构建同名镜像覆盖它：

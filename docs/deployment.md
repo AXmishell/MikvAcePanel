@@ -14,6 +14,8 @@
 
 ## 环境变量
 
+仓库根目录提供两份带中英注释的模板：面板使用 `.env.panel.example`，节点使用 `.env.node.example`。复制为 `.env` 后按需修改即可。
+
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `ADDR` | `:8080` | 面板监听地址 |
@@ -23,6 +25,7 @@
 | `ADMIN_USERNAME` | `admin` | 首次初始化的管理员用户名 |
 | `ADMIN_PASSWORD` | 自动生成 | 首次初始化的管理员密码；未设置时随机生成并在启动日志中打印一次 |
 | `JWT_SECRET` | 自动生成 | JWT/恢复码签名密钥；未设置时写入 `DATA_DIR/jwt.secret` |
+| `SESSION_TTL_HOURS` | `24` | 管理员会话有效期（小时） |
 | `CERT_ENC_KEY` | 自动生成 | 证书私钥/DNS 凭据/2FA 密钥的加密密钥；未设置时写入 `DATA_DIR/cert.key` |
 | `CORS_ORIGINS` | 空 | 前端开发时的允许来源，逗号分隔 |
 | `TRUSTED_PROXIES` | 空 | 可信反向代理的 IP/CIDR，逗号分隔；仅这些来源的 `X-Forwarded-For` / `X-Real-IP` 会被采信 |

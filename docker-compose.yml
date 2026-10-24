@@ -24,6 +24,7 @@ services:
       # in the panel logs). Set a strong value in .env for unattended installs.
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       JWT_SECRET: "${JWT_SECRET:-}"
+      SESSION_TTL_HOURS: "${SESSION_TTL_HOURS:-24}"
       CORS_ORIGINS: "${CORS_ORIGINS:-}"
       TRUSTED_PROXIES: "${TRUSTED_PROXIES:-}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
