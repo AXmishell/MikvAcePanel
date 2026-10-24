@@ -8,7 +8,7 @@ LDFLAGS := -s -w \
 	-X github.com/axmishell/mikvacepanel/internal/version.Commit=$(COMMIT) \
 	-X github.com/axmishell/mikvacepanel/internal/version.BuildDate=$(BUILD_DATE)
 
-.PHONY: all web server server-api node client build test fmt vet clean docker docker-node dev docs docs-serve smoke
+.PHONY: all web server server-api node client build test fmt vet clean docker docker-node dev docs docs-serve smoke test-cert-e2e
 
 all: build
 
@@ -48,6 +48,10 @@ vet:
 # L0/L1 + temporary panel API smoke test.
 smoke:
 	./scripts/smoke.sh
+
+# Full DNS-01 issuance path against a local Pebble CA (requires Docker).
+test-cert-e2e:
+	./scripts/cert-e2e.sh
 
 dev:
 	go run ./cmd/server -addr :8080 -data ./data

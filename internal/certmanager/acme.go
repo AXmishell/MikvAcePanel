@@ -203,8 +203,10 @@ func (m *Manager) obtain(ctx context.Context, j *job, domains []string, csr *x50
 				return "", ctx.Err()
 			}
 			_ = m.st.SetNodeCertStatus(ctx, j.nodeID, "validating", "")
-			if err := waitForTXT(ctx, records, propagationWait); err != nil {
-				return "", err
+			if m.txtWait > 0 {
+				if err := waitForTXT(ctx, records, m.txtWait); err != nil {
+					return "", err
+				}
 			}
 		} else {
 			provider, err := newDNSProvider(settings.Provider, settings.DNSConfig)
@@ -223,8 +225,10 @@ func (m *Manager) obtain(ctx context.Context, j *job, domains []string, csr *x50
 					return "", fmt.Errorf("DNS provider: %w", err)
 				}
 			}
-			if err := waitForTXT(ctx, records, propagationWait); err != nil {
-				return "", err
+			if m.txtWait > 0 {
+				if err := waitForTXT(ctx, records, m.txtWait); err != nil {
+					return "", err
+				}
 			}
 		}
 		for _, p := range pending {

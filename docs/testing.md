@@ -112,7 +112,7 @@ SMOKE_PANEL_PASSWORD=<password> \
 | S13 | 用户过期/超流量 | 设置过期或配额 | 从 Xray clients 移除；Hy2 认证失败 |
 | S14 | 流量幂等 | 重放同一 stats batch | 只计一次 |
 | S15 | 在线数 | 客户端连接后等待心跳 | 2 分钟内 online +1 |
-| S16 | 证书签发 | managed 模式申请 | 证书下发，Xray TLS 可用 |
+| S16 | 证书签发 | managed 模式申请 | 证书下发，Xray TLS 可用；详见 [证书签发测试](certificates-testing.md) |
 | S17 | 日志分析 | 产生 access/error 日志 | 面板可检索、规则告警 |
 | S18 | 备份恢复 | 备份后恢复 | 节点、用户、配置版本一致 |
 | S19 | 旧数据兼容 | 使用旧 DB 启动 | 迁移成功，旧节点可渲染 |

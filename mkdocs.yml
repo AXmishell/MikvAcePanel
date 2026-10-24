@@ -100,4 +100,5 @@ nav:
       - 日志分析: log-analysis.md
       - 架构与安全: architecture.md
       - 测试方案: testing.md
+      - 证书签发测试: certificates-testing.md
   - 常见问题: faq.md

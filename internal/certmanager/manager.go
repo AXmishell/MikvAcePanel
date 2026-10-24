@@ -85,13 +85,17 @@ type Manager struct {
 	key  []byte
 	push PushFunc
 
-	mu   sync.Mutex
-	jobs map[int64]*job
+	mu      sync.Mutex
+	jobs    map[int64]*job
+	txtWait time.Duration
 }
 
 // New creates a certificate manager.
 func New(st *store.Store, logger *slog.Logger, key []byte, push PushFunc) *Manager {
-	return &Manager{st: st, log: logger, key: key, push: push, jobs: map[int64]*job{}}
+	return &Manager{
+		st: st, log: logger, key: key, push: push,
+		jobs: map[int64]*job{}, txtWait: propagationWait,
+	}
 }
 
 // HandleRequest validates a CSR from a node and starts issuance in the
