@@ -52,10 +52,10 @@ docker run -d --name mikvace-panel --restart unless-stopped \
   -e ADMIN_PASSWORD="请替换为强密码" \
   -e JWT_SECRET="$(openssl rand -hex 32)" \
   -v panel-data:/data \
-  ghcr.io/axmishell/mikvacepanel:main
+  ghcr.io/axmishell/mikvacepanel:latest
 ```
 
-镜像标签：`main`（main 分支）与 `sha-<commit>`；发布 `v*.*.*` 标签时同时提供语义化版本，并更新 `latest`。
+镜像标签：`main`、`latest`（main 分支）与 `sha-<commit>`；发布 `v*.*.*` 标签时同时提供语义化版本，并更新 `latest`。`latest` 指向最后一次成功构建的镜像，需要固定版本请使用语义化版本标签。
 
 ## 2. 首次登录
 
@@ -94,7 +94,7 @@ docker run -d --name mikvace-node --restart unless-stopped \
   -e NODE_TOKEN="mtn_xxx" \
   -e HY2_RUNTIME=process \
   -v /var/lib/mikvace:/data \
-  ghcr.io/axmishell/mikvacepanel-node:main
+  ghcr.io/axmishell/mikvacepanel-node:latest
 ```
 
 等待面板显示 **Online**，配置 revision 变为已应用。详细参数和 Docker 运行时模式见 [节点 Agent](node-agent.md)。

@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: mikvacepanel/panel:latest
+    image: ghcr.io/axmishell/mikvacepanel:latest
     container_name: mikvace-panel
     restart: unless-stopped
     logging:

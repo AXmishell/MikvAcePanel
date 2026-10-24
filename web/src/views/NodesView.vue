@@ -71,7 +71,7 @@
           <button class="btn btn-sm" :disabled="!n.connected" @click="command(n, 'restart')"><RotateCcw :size="13" /> 重启</button>
           <button class="btn btn-sm" :disabled="!n.connected" @click="command(n, 'stop')"><Square :size="13" /> 停止</button>
           <button class="btn btn-sm" @click="openEdit(n)"><Pencil :size="13" /> 编辑</button>
-          <button class="icon-btn danger" title="删除节点" @click="askDelete(n)"><Trash2 :size="15" /></button>
+          <button v-tip="'删除节点'" class="icon-btn danger" @click="askDelete(n)"><Trash2 :size="15" /></button>
         </div>
       </article>
     </div>

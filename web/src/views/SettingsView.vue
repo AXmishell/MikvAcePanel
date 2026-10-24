@@ -311,8 +311,8 @@
                 </td>
                 <td>
                   <div class="row-actions">
-                    <button class="icon-btn" :title="k.enabled ? '禁用' : '启用'" @click="toggleKey(k)"><Power :size="15" /></button>
-                    <button class="icon-btn danger" title="删除" @click="deleteKey(k)"><Trash2 :size="15" /></button>
+                    <button v-tip="k.enabled ? '禁用' : '启用'" class="icon-btn" @click="toggleKey(k)"><Power :size="15" /></button>
+                    <button v-tip="'删除密钥'" class="icon-btn danger" @click="deleteKey(k)"><Trash2 :size="15" /></button>
                   </div>
                 </td>
               </tr>
@@ -396,8 +396,8 @@
                 <td>{{ fmtBytes(b.size) }}</td>
                 <td class="small dim">{{ fmtDate(b.createdAt) }}</td>
                 <td><div class="row-actions">
-                  <button class="icon-btn" title="Download" @click="downloadBackup(b)"><Download :size="15" /></button>
-                  <button class="icon-btn danger" title="删除" @click="deleteBackup(b)"><Trash2 :size="15" /></button>
+                  <button v-tip="'下载备份'" class="icon-btn" @click="downloadBackup(b)"><Download :size="15" /></button>
+                  <button v-tip="'删除备份'" class="icon-btn danger" @click="deleteBackup(b)"><Trash2 :size="15" /></button>
                 </div></td>
               </tr>
               <tr v-if="!backups.length"><td colspan="4"><div class="empty">暂无备份。</div></td></tr>

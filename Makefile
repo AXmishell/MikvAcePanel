@@ -59,11 +59,11 @@ docs-serve:
 	mkdocs serve
 
 docker:
-	docker build -t mikvacepanel/panel:latest \
+	docker build -t ghcr.io/axmishell/mikvacepanel:latest \
 		--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) .
 
 docker-node:
-	docker build -f Dockerfile.node -t ghcr.io/axmishell/mikvacepanel-node:main \
+	docker build -f Dockerfile.node -t ghcr.io/axmishell/mikvacepanel-node:latest \
 		--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) .
 
 clean:

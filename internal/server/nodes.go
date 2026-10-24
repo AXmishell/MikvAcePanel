@@ -418,7 +418,7 @@ func (s *Server) installCommand(n *model.Node, runtime string) string {
   --network host --cap-add NET_ADMIN \
   -e PANEL_URL=%q -e NODE_TOKEN=%q -e HY2_RUNTIME=%s%s \
   -v /var/lib/mikvace:/data \
-  ghcr.io/axmishell/mikvacepanel-node:main`, pub, n.Token, runtime, extra)
+  ghcr.io/axmishell/mikvacepanel-node:latest`, pub, n.Token, runtime, extra)
 }
 
 func (s *Server) installCompose(n *model.Node, runtime string) string {
@@ -430,7 +430,7 @@ func (s *Server) installCompose(n *model.Node, runtime string) string {
 	if runtime == "docker" {
 		return fmt.Sprintf(`services:
   node:
-    image: ghcr.io/axmishell/mikvacepanel-node:main
+    image: ghcr.io/axmishell/mikvacepanel-node:latest
     container_name: mikvace-node
     restart: unless-stopped
     network_mode: host
@@ -447,7 +447,7 @@ func (s *Server) installCompose(n *model.Node, runtime string) string {
 	}
 	return fmt.Sprintf(`services:
   node:
-    image: ghcr.io/axmishell/mikvacepanel-node:main
+    image: ghcr.io/axmishell/mikvacepanel-node:latest
     container_name: mikvace-node
     restart: unless-stopped
     network_mode: host

@@ -43,7 +43,7 @@
 ```yaml
 services:
   panel:
-    image: ghcr.io/axmishell/mikvacepanel:main
+    image: ghcr.io/axmishell/mikvacepanel:latest
     container_name: mikvace-panel
     restart: unless-stopped
     ports:
@@ -230,7 +230,7 @@ backups/
 节点镜像升级：
 
 ```bash
-docker pull ghcr.io/axmishell/mikvacepanel-node:main
+docker pull ghcr.io/axmishell/mikvacepanel-node:latest
 # 重新执行面板生成的安装命令，或 docker rm -f mikvace-node 后重新运行
 ```
 

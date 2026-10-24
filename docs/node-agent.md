@@ -26,7 +26,7 @@ docker run -d --name mikvace-node --restart unless-stopped \
   -e NODE_TOKEN="mtn_xxx" \
   -e HY2_RUNTIME=process \
   -v /var/lib/mikvace:/data \
-  ghcr.io/axmishell/mikvacepanel-node:main
+  ghcr.io/axmishell/mikvacepanel-node:latest
 ```
 
 或使用 `docker-compose.node.yml`：
@@ -49,7 +49,7 @@ docker run -d --name mikvace-node --restart unless-stopped \
   -e HOST_DATA_DIR=/var/lib/mikvace \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /var/lib/mikvace:/data \
-  ghcr.io/axmishell/mikvacepanel-node:main
+  ghcr.io/axmishell/mikvacepanel-node:latest
 ```
 
 此时 Hysteria 容器使用 `tobyxdd/hysteria:latest`，挂载宿主机 `/var/lib/mikvace` 到 `/data`。Agent 在容器内看到的 `/data` 并不是宿主机路径，因此必须用 `HOST_DATA_DIR` 告诉它宿主机实际路径。

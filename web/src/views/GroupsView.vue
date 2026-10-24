@@ -20,8 +20,8 @@
             <div class="dim small">{{ g.subscriptionTitle || g.name }}</div>
           </div>
           <div class="spacer"></div>
-          <button class="icon-btn" title="编辑" @click="openEdit(g)"><Pencil :size="15" /></button>
-          <button class="icon-btn danger" title="删除" @click="askDelete(g)"><Trash2 :size="15" /></button>
+          <button v-tip="'编辑'" class="icon-btn" @click="openEdit(g)"><Pencil :size="15" /></button>
+          <button v-tip="'删除分组'" class="icon-btn danger" @click="askDelete(g)"><Trash2 :size="15" /></button>
         </div>
         <p class="group-desc">{{ g.description || '暂无描述' }}</p>
         <div class="group-stats">

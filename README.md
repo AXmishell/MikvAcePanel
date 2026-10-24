@@ -144,10 +144,10 @@ docker compose --profile redis up -d --build
 
 ```bash
 docker pull ghcr.io/axmishell/mikvacepanel:latest      # 面板（内嵌前端）
-docker pull ghcr.io/axmishell/mikvacepanel-node:main   # 节点 Agent
+docker pull ghcr.io/axmishell/mikvacepanel-node:latest   # 节点 Agent
 ```
 
-标签规则：`main` 分支发布 `main`、`sha-<commit>`；`v1.2.3` 标签发布 `1.2.3`、`1.2`、`latest`、`sha-<commit>`。
+标签规则：`main` 分支发布 `main`、`latest`、`sha-<commit>`；`v1.2.3` 标签发布 `1.2.3`、`1.2`、`latest`、`sha-<commit>`。`latest` 始终指向最后一次成功构建的镜像，因此后续的 `main` 构建会覆盖发布标签产生的 `latest`；需要稳定版本请使用语义化版本标签。
 
 ### 本地开发
 
@@ -253,7 +253,7 @@ docker run -d --name mikvace-node --restart unless-stopped \
   -e NODE_TOKEN="mtn_xxx" \
   -e HY2_RUNTIME=process \
   -v /var/lib/mikvace:/data \
-  ghcr.io/axmishell/mikvacepanel-node:main
+  ghcr.io/axmishell/mikvacepanel-node:latest
 ```
 
 上面的命令直接使用 GHCR 上的预构建镜像。需要本地构建时，可以构建同名镜像覆盖它：
@@ -261,7 +261,7 @@ docker run -d --name mikvace-node --restart unless-stopped \
 ```bash
 make docker-node
 # 或
-docker build -f Dockerfile.node -t ghcr.io/axmishell/mikvacepanel-node:main .
+docker build -f Dockerfile.node -t ghcr.io/axmishell/mikvacepanel-node:latest .
 ```
 
 节点环境变量：

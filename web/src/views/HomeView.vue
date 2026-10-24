@@ -20,7 +20,7 @@
 
       <div class="spacer"></div>
 
-      <button class="icon-btn" :title="theme.current === 'light' ? '切换为深色主题' : '切换为浅色主题'" @click="toggleTheme">
+      <button class="icon-btn" v-tip="theme.current === 'light' ? '切换为深色主题' : '切换为浅色主题'" @click="toggleTheme">
         <Moon v-if="theme.current === 'light'" :size="17" />
         <Sun v-else :size="17" />
       </button>

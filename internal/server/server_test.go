@@ -449,7 +449,7 @@ func TestSSHInstallScript(t *testing.T) {
 		"PANEL_URL='http://panel.test'",
 		"--network host",
 		"curl -fsSL https://get.docker.com",
-		"ghcr.io/axmishell/mikvacepanel-node:main",
+		"ghcr.io/axmishell/mikvacepanel-node:latest",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)

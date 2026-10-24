@@ -63,16 +63,16 @@
               <td class="small nowrap dim">{{ u.lastSeenAt ? fmtRelative(u.lastSeenAt) : 'never' }}</td>
               <td>
                 <div class="row-actions">
-                  <button class="icon-btn" title="编辑" @click="openEdit(u)"><Pencil :size="15" /></button>
-                  <button class="icon-btn" :title="u.enabled ? '禁用' : '启用'" @click="toggle(u)">
+                  <button v-tip="'编辑'" class="icon-btn" @click="openEdit(u)"><Pencil :size="15" /></button>
+                  <button v-tip="u.enabled ? '禁用' : '启用'" class="icon-btn" @click="toggle(u)">
                     <Power :size="15" />
                   </button>
-                  <button class="icon-btn" title="连接信息" @click="openConnections(u)"><Cable :size="15" /></button>
-                  <button class="icon-btn" title="复制订阅链接" @click="copySub(u)"><Copy :size="15" /></button>
-                  <button class="icon-btn" title="重置订阅链接" @click="resetSub(u)"><RefreshCw :size="15" /></button>
-                  <button class="icon-btn" title="重置设备" @click="openResetDevices(u)"><Smartphone :size="15" /></button>
-                  <button class="icon-btn" title="重置流量统计" @click="resetTraffic(u)"><Gauge :size="15" /></button>
-                  <button class="icon-btn danger" title="删除" @click="remove(u)"><Trash2 :size="15" /></button>
+                  <button v-tip="'连接信息'" class="icon-btn" @click="openConnections(u)"><Cable :size="15" /></button>
+                  <button v-tip="'复制订阅链接'" class="icon-btn" @click="copySub(u)"><Copy :size="15" /></button>
+                  <button v-tip="'重置订阅链接'" class="icon-btn" @click="resetSub(u)"><RefreshCw :size="15" /></button>
+                  <button v-tip="'重置设备'" class="icon-btn" @click="openResetDevices(u)"><Smartphone :size="15" /></button>
+                  <button v-tip="'重置流量统计'" class="icon-btn" @click="resetTraffic(u)"><Gauge :size="15" /></button>
+                  <button v-tip="'删除用户'" class="icon-btn danger" @click="remove(u)"><Trash2 :size="15" /></button>
                 </div>
               </td>
             </tr>

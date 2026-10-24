@@ -743,6 +743,68 @@ pre.code {
   .login-card { padding: 24px; border: 0; background: transparent; box-shadow: none; }
 }
 
+/* ---------- tooltips ---------- */
+.app-tooltip {
+  position: fixed;
+  z-index: 3000;
+  --tip-line: var(--line-strong);
+  max-width: min(260px, calc(100vw - 16px));
+  width: max-content;
+  padding: 5px 9px;
+  border: 1px solid var(--tip-line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 12px 34px -14px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.16);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+  text-align: center;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(3px) scale(0.96);
+  transform-origin: 50% 100%;
+  transition: opacity 0.13s ease, transform 0.13s ease, visibility 0.13s;
+}
+.app-tooltip[data-placement="bottom"] {
+  transform: translateY(-3px) scale(0.96);
+  transform-origin: 50% 0;
+}
+.app-tooltip.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+}
+.app-tooltip[data-tone="danger"] {
+  --tip-line: color-mix(in srgb, var(--danger) 45%, var(--line-strong));
+  color: var(--danger);
+}
+.app-tooltip::after {
+  content: "";
+  position: absolute;
+  left: var(--tip-arrow-x, 50%);
+  width: 7px;
+  height: 7px;
+  background: var(--panel);
+  border: 1px solid var(--tip-line);
+  transform: translateX(-50%) rotate(45deg);
+}
+.app-tooltip[data-placement="top"]::after {
+  bottom: -4.5px;
+  border-top: 0;
+  border-left: 0;
+}
+.app-tooltip[data-placement="bottom"]::after {
+  top: -4.5px;
+  border-bottom: 0;
+  border-right: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.001ms !important;

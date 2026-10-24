@@ -12,12 +12,12 @@
       <a v-if="branding.supportUrl" class="btn btn-sm btn-soft portal-support" :href="branding.supportUrl" target="_blank" rel="noopener">
         <LifeBuoy :size="14" /> 联系支持
       </a>
-      <button class="icon-btn" :title="theme.current === 'light' ? '切换为深色主题' : '切换为浅色主题'" @click="toggleTheme">
+      <button class="icon-btn" v-tip="theme.current === 'light' ? '切换为深色主题' : '切换为浅色主题'" @click="toggleTheme">
         <Moon v-if="theme.current === 'light'" :size="17" />
         <Sun v-else :size="17" />
       </button>
-      <button class="icon-btn" title="刷新" :disabled="loading" @click="load"><RefreshCw :size="17" /></button>
-      <button class="icon-btn" title="退出登录" @click="logout"><LogOut :size="17" /></button>
+      <button class="icon-btn" v-tip="'刷新'" :disabled="loading" @click="load"><RefreshCw :size="17" /></button>
+      <button class="icon-btn" v-tip="'退出登录'" @click="logout"><LogOut :size="17" /></button>
     </header>
 
     <main class="portal-main">
