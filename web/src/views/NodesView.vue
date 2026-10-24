@@ -81,9 +81,9 @@
       <div class="tabs">
         <button class="tab" :class="{ active: tab === 'basic' }" @click="tab = 'basic'">连接</button>
         <button class="tab" :class="{ active: tab === 'tls' }" @click="tab = 'tls'">TLS 与传输</button>
-        <button class="tab" :class="{ active: tab === 'ssh' }" @click="tab = 'ssh'">SSH 自动安装</button>
+        <button v-if="hasHysteria" class="tab" :class="{ active: tab === 'hy2' }" @click="tab = 'hy2'">Hysteria 2 设置</button>
         <button v-if="hasHysteria" class="tab" :class="{ active: tab === 'advanced' }" @click="tab = 'advanced'">ACL 与高级</button>
-        <button v-if="hasHysteria" class="tab" :class="{ active: tab === 'hy2' }" @click="tab = 'hy2'">Hysteria 2 调优</button>
+        <button class="tab" :class="{ active: tab === 'ssh' }" @click="tab = 'ssh'">SSH 自动安装</button>
       </div>
 
       <div v-show="tab === 'basic'" class="form-grid">
@@ -142,6 +142,7 @@
       </div>
 
       <div v-show="tab === 'tls' && (hasHysteria || hasXray)" class="form-grid">
+        <div class="field full"><strong>证书与 TLS</strong></div>
         <div class="field">
           <label>TLS 模式</label>
           <Select v-model="form.tlsMode" :options="TLS_MODE_OPTIONS" />
@@ -175,24 +176,8 @@
         </div>
       </div>
 
-      <div v-show="tab === 'tls' && hasHysteria" class="form-grid">
-        <div class="field"><label>端口跳跃范围</label><input v-model="form.portRange" type="text" placeholder="20000-50000" />
-          <span class="hint">Agent 会自动安装 iptables REDIRECT 规则，留空关闭。</span>
-        </div>
-        <div class="field"><label>跳跃间隔</label><input v-model="form.hopInterval" type="text" placeholder="30s" /></div>
-        <div class="field">
-          <label>混淆</label>
-          <Select v-model="form.obfsType" :options="OBFS_OPTIONS" />
-        </div>
-        <div class="field"><label>混淆密码</label><input v-model="form.obfsPassword" type="text" placeholder="启用时必填" /></div>
-        <div class="field"><label>上行带宽</label><input v-model="form.bandwidthUp" type="text" placeholder="1 gbps" /></div>
-        <div class="field"><label>下行带宽</label><input v-model="form.bandwidthDown" type="text" placeholder="1 gbps" /></div>
-        <div class="field full"><span class="hint">伪装方式、QUIC、拥塞控制、DNS、嗅探、mTLS、ECH、Realms 等选项在“Hysteria 2 调优”页签中配置。</span></div>
-      </div>
-
-
-
-      <div v-show="tab === 'tls' && hasXray" class="form-grid">
+      <div v-show="tab === 'tls' && hasXray" class="form-grid" :class="{ 'section-gap': hasHysteria }">
+        <div class="field full"><strong>Xray 入站</strong></div>
         <div class="field">
           <label>API 端口</label>
           <input v-model.number="form.xray.apiPort" type="number" min="1" max="65535" placeholder="61000" />
@@ -327,15 +312,8 @@
           <input v-model="form.hy2.realm.uri" type="text" placeholder="realm://public@realm.hy2.io/my-server-8f3a" />
           <span class="hint">需要 Hysteria 2.9+。启用后 listen 由面板改写为 realm URI，并与端口跳跃互斥；分享链接无法表达 Realms，客户端需手动配置。</span>
         </div>
-        <div class="field"><label>内置端口范围（listen）</label><input v-model="form.hy2.listenPortRange" type="text" placeholder="20000-50000" />
-          <span class="hint">Hysteria 2.8+ 自行监听并维护防火墙规则，与上面的“端口跳跃范围”互斥。</span>
-        </div>
         <div class="field"><label>流量统计监听主机</label><input v-model="form.hy2.trafficListen" type="text" placeholder="127.0.0.1" />
           <span class="hint">只改主机，端口仍由“统计端口”控制；默认仅本机。</span>
-        </div>
-        <div class="field"><label>Gecko 最小分片</label><input v-model.number="form.hy2.geckoMinPacketSize" type="number" min="0" max="2048" placeholder="512" /></div>
-        <div class="field"><label>Gecko 最大分片</label><input v-model.number="form.hy2.geckoMaxPacketSize" type="number" min="0" max="2048" placeholder="1200" />
-          <span class="hint">仅在选择 Gecko 混淆时生效，需 Hysteria 2.9.2+。</span>
         </div>
 
         <div class="field full"><strong>QUIC 参数</strong></div>
@@ -351,6 +329,35 @@
           <span class="hint">默认流/连接窗口为 8MB / 20MB，建议保持 2:5 比例；不清楚时留空。</span>
         </div>
 
+        </template>
+
+        <template v-if="hy2Section === 'transport'">
+        <div class="field full"><strong>端口跳跃</strong></div>
+        <div class="field full"><span class="hint">端口跳跃范围与内置端口范围互斥；同时填写时以内置端口范围为准。</span></div>
+        <div class="field"><label>端口跳跃范围</label><input v-model="form.portRange" type="text" placeholder="20000-50000" />
+          <span class="hint">Agent 会自动安装 iptables REDIRECT 规则，留空关闭。</span>
+        </div>
+        <div class="field"><label>内置端口范围（listen）</label><input v-model="form.hy2.listenPortRange" type="text" placeholder="20000-50000" />
+          <span class="hint">Hysteria 2.8+ 自行监听并维护防火墙规则。</span>
+        </div>
+        <div class="field"><label>跳跃间隔</label><input v-model="form.hopInterval" type="text" placeholder="30s" />
+          <span class="hint">仅端口跳跃模式生效，支持 <span class="mono">30s</span>、<span class="mono">1m</span> 等写法。</span>
+        </div>
+
+        <div class="field full"><strong>混淆与带宽</strong></div>
+        <div class="field">
+          <label>混淆</label>
+          <Select v-model="form.obfsType" :options="OBFS_OPTIONS" />
+        </div>
+        <div class="field"><label>混淆密码</label><input v-model="form.obfsPassword" type="text" placeholder="启用时必填" /></div>
+        <div class="field"><label>上行带宽</label><input v-model="form.bandwidthUp" type="text" placeholder="1 gbps" /></div>
+        <div class="field"><label>下行带宽</label><input v-model="form.bandwidthDown" type="text" placeholder="1 gbps" />
+          <span class="hint">用于 Brutal 拥塞控制；选择 BBR 时可留空。</span>
+        </div>
+        <div class="field"><label>Gecko 最小分片</label><input v-model.number="form.hy2.geckoMinPacketSize" type="number" min="0" max="2048" placeholder="512" /></div>
+        <div class="field"><label>Gecko 最大分片</label><input v-model.number="form.hy2.geckoMaxPacketSize" type="number" min="0" max="2048" placeholder="1200" />
+          <span class="hint">仅在选择 Gecko 混淆时生效，需 Hysteria 2.9.2+。</span>
+        </div>
         </template>
 
         <template v-if="hy2Section === 'performance'">
@@ -514,10 +521,16 @@
           <div class="flex" style="margin-bottom: 7px"><strong class="small">一键安装脚本（--runtime {{ install.runtimeMode }}）</strong><div class="spacer"></div><button class="btn btn-sm" @click="copy(install.installScript)"><Copy :size="13" /> 复制</button></div>
           <pre class="code">{{ install.installScript }}</pre>
         </div>
-        <details>
-          <summary class="small dim" style="cursor: pointer">docker-compose.yml</summary>
-          <pre class="code" style="margin-top: 8px">{{ install.compose }}</pre>
-        </details>
+        <div>
+          <div class="flex" style="margin-bottom: 7px">
+            <strong class="small">docker-compose.yml（{{ runtimeLabel(install.runtimeMode) }}）</strong>
+            <div class="spacer"></div>
+            <button class="btn btn-sm" @click="copy(install.compose)"><Copy :size="13" /> 复制</button>
+            <button class="btn btn-sm" @click="downloadCompose"><Download :size="13" /> 下载</button>
+          </div>
+          <pre class="code">{{ install.compose }}</pre>
+          <div class="small dim" style="margin-top: 6px">保存为 docker-compose.yml 后执行 <span class="mono">docker compose up -d</span>。修改运行方式后请重新打开安装信息。</div>
+        </div>
         <div class="flex">
           <span class="dim small">令牌: <span class="mono">{{ install.token }}</span></span>
           <div class="spacer"></div>
@@ -581,7 +594,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
-  Copy, FileCode2, Pencil, Plus, RefreshCw, RotateCcw, ScrollText, Server, Square, Terminal, Trash2, X, Zap,
+  Copy, Download, FileCode2, Pencil, Plus, RefreshCw, RotateCcw, ScrollText, Server, Square, Terminal, Trash2, X, Zap,
 } from 'lucide-vue-next'
 import { adminPath, api } from '../api'
 import { notify } from '../store'
@@ -816,6 +829,7 @@ function hy2Template(overrides = {}) {
 
 const HY2_SECTIONS = [
   { id: 'basic', label: '基础与 QUIC' },
+  { id: 'transport', label: '传输与带宽' },
   { id: 'performance', label: '拥塞与出站' },
   { id: 'masquerade', label: '伪装' },
   { id: 'network', label: 'DNS / ACL' },
@@ -1446,6 +1460,20 @@ async function confirmDelete() {
 async function copy(text) {
   await copyText(text)
   notify('已复制到剪贴板')
+}
+
+function downloadCompose() {
+  if (!install.value?.compose) return
+  const blob = new Blob([install.value.compose], { type: 'text/yaml;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  const name = String(install.value.nodeName || install.value.nodeId || 'node').replace(/[^\w.-]+/g, '-')
+  a.href = url
+  a.download = `mikvace-node-${name}.yml`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }
 
 onMounted(() => {
