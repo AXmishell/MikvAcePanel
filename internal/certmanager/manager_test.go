@@ -14,6 +14,8 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +48,64 @@ func TestEABHelpers(t *testing.T) {
 	}
 	if _, err := decodeEABKey("not valid!"); err == nil {
 		t.Fatal("invalid EAB key accepted")
+	}
+}
+
+func TestRegisterAccountAcceptsExistingAccount(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		wantErr bool
+	}{
+		{"created", http.StatusCreated, false},
+		{"existing", http.StatusOK, false},
+		{"rejected", http.StatusBadRequest, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var serverURL string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Replay-Nonce", "test-nonce")
+				switch r.URL.Path {
+				case "/dir":
+					_, _ = io.WriteString(w, `{"newNonce":"`+serverURL+`/nonce","newAccount":"`+serverURL+`/acct","newOrder":"`+serverURL+`/order"}`)
+				case "/nonce":
+					w.WriteHeader(http.StatusOK)
+				case "/acct":
+					// 200 means the account key is already registered; the CA
+					// then returns the existing account URL in Location.
+					w.Header().Set("Location", serverURL+"/acct/1")
+					w.WriteHeader(tc.status)
+					_, _ = io.WriteString(w, `{"status":"valid"}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			serverURL = srv.URL
+
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := &acme.Client{
+				Key:          key,
+				DirectoryURL: srv.URL + "/dir",
+				HTTPClient:   srv.Client(),
+			}
+			err = registerAccount(context.Background(), client, &acme.Account{})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("registerAccount accepted a rejected registration")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("registerAccount: %v", err)
+			}
+			if tc.status == http.StatusOK && client.KID == "" {
+				t.Fatal("existing account KID was not adopted")
+			}
+		})
 	}
 }
 

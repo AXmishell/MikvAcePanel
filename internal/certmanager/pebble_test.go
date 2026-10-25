@@ -138,6 +138,55 @@ func TestPebbleIssuance(t *testing.T) {
 	if cached["__type"] != "cert.push" || cached["fingerprint"] != fingerprint {
 		t.Fatalf("cached push = %+v", cached)
 	}
+
+	// A second node shares the persisted ACME account key. The CA answers the
+	// duplicate newAccount request with 200 and the existing account URL,
+	// which must not abort issuance.
+	const secondDomain = "node2.example.com"
+	if _, err := st.DB.Exec(`INSERT INTO nodes
+		(id, name, domain, tls_mode, token_hash, created_at, updated_at)
+		VALUES (2, 'pebble-2', ?, 'managed', 'hash2', ?, ?)`, secondDomain, now, now); err != nil {
+		t.Fatal(err)
+	}
+	secondNode := &model.Node{ID: 2, Domain: secondDomain, TLSMode: "managed"}
+	secondCSR, err := testCSR(secondDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.HandleRequest(context.Background(), secondNode, Request{
+		CSRPEM: secondCSR, Domains: []string{secondDomain},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for time.Now().Before(deadline) {
+		if m.Pending(2) != nil {
+			break
+		}
+		if !m.Busy(2) {
+			nc, _ := st.GetNodeCertificate(context.Background(), 2)
+			if nc != nil && nc.LastError != "" {
+				t.Fatalf("second issuance failed before the challenge: %s", nc.LastError)
+			}
+			t.Fatal("second issuance job ended before creating a manual challenge")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if m.Pending(2) == nil {
+		t.Fatal("timed out waiting for the second manual DNS challenge")
+	}
+	if err := m.Confirm(2); err != nil {
+		t.Fatal(err)
+	}
+	second := waitForPush(t, push, 90*time.Second)
+	if second["__type"] == "cert.error" {
+		t.Fatalf("second certificate error: %v", second["error"])
+	}
+	if second["__type"] != "cert.push" {
+		t.Fatalf("second push message = %+v", second)
+	}
+	if _, ok := second["certPEM"].(string); !ok {
+		t.Fatalf("second push payload = %+v", second)
+	}
 }
 
 func waitForPush(t *testing.T, ch <-chan map[string]any, timeout time.Duration) map[string]any {

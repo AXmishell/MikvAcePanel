@@ -173,8 +173,8 @@ func (m *Manager) obtain(ctx context.Context, j *job, domains []string, csr *x50
 	case RequiresEAB(settings.CA):
 		return "", errors.New("LiteSSL requires External Account Binding: set EAB Key ID and HMAC key")
 	}
-	if _, err := client.Register(ctx, acct, acme.AcceptTOS); err != nil {
-		return "", fmt.Errorf("ACME account: %w", err)
+	if err := registerAccount(ctx, client, acct); err != nil {
+		return "", err
 	}
 	order, err := client.AuthorizeOrder(ctx, acme.DomainIDs(domains...))
 	if err != nil {
@@ -292,6 +292,22 @@ func (m *Manager) obtain(ctx context.Context, j *job, domains []string, csr *x50
 		_ = pem.Encode(&b, &pem.Block{Type: "CERTIFICATE", Bytes: part})
 	}
 	return b.String(), nil
+}
+
+// registerAccount creates the ACME account for client's key. The account key is
+// persisted per CA/email and shared by every node, so all issuances after the
+// first hit an already registered key. CAs answer that with 200 and the
+// existing account URL, which x/crypto/acme reports as
+// ErrAccountAlreadyExists after caching the KID. That is the expected path,
+// not a failure.
+func registerAccount(ctx context.Context, client *acme.Client, acct *acme.Account) error {
+	if _, err := client.Register(ctx, acct, acme.AcceptTOS); err != nil {
+		if errors.Is(err, acme.ErrAccountAlreadyExists) {
+			return nil
+		}
+		return fmt.Errorf("ACME account: %w", err)
+	}
+	return nil
 }
 
 // RequiresEAB reports whether the configured ACME directory mandates External
