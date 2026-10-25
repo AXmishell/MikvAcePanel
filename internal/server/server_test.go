@@ -155,6 +155,50 @@ func TestPanelEndToEnd(t *testing.T) {
 	if resp.Header.Get("Profile-Title") == "" || !strings.Contains(resp.Header.Get("Subscription-Userinfo"), "total=5368709120") {
 		t.Fatalf("headers = %v", resp.Header)
 	}
+
+	// Global subscription endpoint mode filters the generated links without
+	// changing the node. The node above keeps both TLS and Hopping enabled.
+	setHy2Mode := func(mode string) {
+		resp := env.do(t, "PUT", "/api/settings", env.token, map[string]any{"subscription_hy2_endpoints": mode})
+		if resp.StatusCode != 200 {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			t.Fatalf("set hy2 mode %q = %d: %s", mode, resp.StatusCode, b)
+		}
+		resp.Body.Close()
+	}
+	uriSub := func() string {
+		req, _ := http.NewRequest("GET", env.srv.URL+"/api/files/"+subToken+"?format=uri", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return string(b)
+	}
+	setHy2Mode("tls")
+	sub := uriSub()
+	if strings.Count(sub, "hysteria2://") != 1 || strings.Contains(sub, "mport=") {
+		t.Fatalf("TLS-only subscription = %s", sub)
+	}
+	setHy2Mode("hopping")
+	sub = uriSub()
+	if strings.Count(sub, "hysteria2://") != 1 || !strings.Contains(sub, "mport=20000-50000") {
+		t.Fatalf("Hopping-only subscription = %s", sub)
+	}
+	setHy2Mode("both")
+	sub = uriSub()
+	if strings.Count(sub, "hysteria2://") != 2 {
+		t.Fatalf("both subscription = %s", sub)
+	}
+	if bad := env.do(t, "PUT", "/api/settings", env.token, map[string]any{"subscription_hy2_endpoints": "invalid"}); bad.StatusCode != 400 {
+		bad.Body.Close()
+		t.Fatalf("invalid hy2 mode = %d", bad.StatusCode)
+	} else {
+		bad.Body.Close()
+	}
+
 	// sing-box requested explicitly.
 	if got := env.do(t, "GET", "/api/files/"+subToken+"?format=singbox", "", nil); got.StatusCode != 200 {
 		t.Fatalf("singbox = %d", got.StatusCode)

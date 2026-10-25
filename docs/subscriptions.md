@@ -111,6 +111,18 @@ hysteria2://userId:password@node.example.com:443?sni=node.example.com&insecure=0
 - 端口跳跃会附加 `mport` 与 `mportHopInt`；
 - obfs 会附加 `obfs` 与 `obfs-password`。
 
+### 订阅入口选择
+
+面板「设置 → 订阅页面」中的 **Hysteria 2 订阅入口** 控制所有订阅下发哪些入口：
+
+| 值 | 行为 |
+| --- | --- |
+| `both` | 按节点自身的 `includeTls` / `includeHopping` 设置下发，默认两条都发 |
+| `tls` | 只下发 TLS 入口，隐藏 Hopping |
+| `hopping` | 只下发 Hopping 入口，隐藏 TLS |
+
+这是**订阅输出过滤**，不会修改节点配置：节点的 TLS 监听、端口跳跃和 iptables 规则仍按原配置运行。全局选择 `tls` 或 `hopping` 时，如果某个节点自身关闭了对应入口，则不会强行重新开启它。
+
 ### Xray / v2rayN
 
 - 一个 Xray 节点可以有多个入站，订阅会为每个入站生成一条独立的代理；

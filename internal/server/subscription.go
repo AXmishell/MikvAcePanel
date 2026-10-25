@@ -64,11 +64,13 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	if format == "" {
 		format = subscription.DetectFormat(r.UserAgent())
 	}
+	settings, _ := s.store.GetSettings(r.Context())
 	nodes, err := s.store.NodesForUser(r.Context(), user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not load nodes")
 		return
 	}
+	applySubscriptionHy2EndpointMode(nodes, settings)
 	if len(nodes) == 0 {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -83,7 +85,6 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("# " + err.Error()))
 		return
 	}
-	settings, _ := s.store.GetSettings(r.Context())
 	title := subscription.Title(user, settings["subscription_title"])
 	updateInterval := parseIntSetting(settings["subscription_update_interval"], 12)
 	if updateInterval <= 0 {
@@ -184,6 +185,7 @@ func (s *Server) renderSubPage(w http.ResponseWriter, r *http.Request, user *mod
 		writeError(w, http.StatusInternalServerError, "could not load nodes")
 		return
 	}
+	applySubscriptionHy2EndpointMode(nodes, settings)
 	subscription.SortNodes(nodes)
 	base := publicBaseURL(r, settings["public_url"])
 	subURL := base + "/api/files/" + user.SubscriptionToken
@@ -249,6 +251,30 @@ func (s *Server) renderSubPage(w http.ResponseWriter, r *http.Request, user *mod
 	w.Header().Set("Pragma", "no-cache")
 	if err := subPageTemplate.Execute(w, data); err != nil {
 		s.log.Warn("render subscription page", "error", err)
+	}
+}
+
+// applySubscriptionHy2EndpointMode narrows the Hysteria endpoints published in
+// subscriptions without changing node configuration. The node keeps its TLS
+// listener and port-hopping rules; only the generated client links are filtered.
+// "tls" drops Hopping links, "hopping" drops plain TLS links, and any other
+// value (including the default "both") follows the per-node includeTls and
+// includeHopping switches.
+func applySubscriptionHy2EndpointMode(nodes []model.Node, settings map[string]string) {
+	mode := strings.ToLower(strings.TrimSpace(settings["subscription_hy2_endpoints"]))
+	if mode != "tls" && mode != "hopping" {
+		return
+	}
+	off := false
+	for i := range nodes {
+		if !nodes[i].HasCore("hysteria") {
+			continue
+		}
+		if mode == "tls" {
+			nodes[i].Hy2.IncludeHopping = &off
+		} else {
+			nodes[i].Hy2.IncludeTLS = &off
+		}
 	}
 }
 

@@ -501,7 +501,7 @@ X-RateLimit-Remaining: 58
 
 超限返回 `429` 和 `Retry-After: 60`。
 
-可写设置项：`panel_name`、`public_url`、`logo_url`、`page_title`、`page_note`、`support_url`、`web_page_url`、`subscription_title`、`subscription_update_interval`、`subscription_buttons`、`device_grace_minutes`、`log_retention_days`、`log_ingest_enabled`、`analysis_window_hours`、`alert_auth_fail_threshold`、`alert_error_burst_threshold`。
+可写设置项：`panel_name`、`public_url`、`logo_url`、`page_title`、`page_note`、`support_url`、`web_page_url`、`subscription_title`、`subscription_update_interval`、`subscription_buttons`、`subscription_hy2_endpoints`、`device_grace_minutes`、`log_retention_days`、`log_ingest_enabled`、`analysis_window_hours`、`alert_auth_fail_threshold`、`alert_error_burst_threshold`。
 
 修改 `public_url` 后会自动重新生成并推送所有节点配置。
 

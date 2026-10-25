@@ -19,7 +19,7 @@ var editableSettings = map[string]bool{
 	"panel_name": true, "public_url": true, "logo_url": true, "page_title": true,
 	"page_note": true, "support_url": true, "web_page_url": true,
 	"subscription_title": true, "subscription_update_interval": true,
-	"subscription_buttons": true, "device_grace_minutes": true,
+	"subscription_buttons": true, "subscription_hy2_endpoints": true, "device_grace_minutes": true,
 	"happ_provider_id": true, "happ_routing_mode": true, "happ_routing_profile": true,
 	"happ_announce":      true,
 	"log_retention_days": true, "log_ingest_enabled": true,
@@ -117,6 +117,18 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "subscription buttons must be a JSON array")
 			return
 		}
+	}
+	if v, ok := values["subscription_hy2_endpoints"]; ok {
+		v = strings.ToLower(strings.TrimSpace(v))
+		switch v {
+		case "", "both":
+			v = "both"
+		case "tls", "hopping":
+		default:
+			writeError(w, http.StatusBadRequest, "subscription Hy2 endpoints must be both, tls or hopping")
+			return
+		}
+		values["subscription_hy2_endpoints"] = v
 	}
 	if v, ok := values["admin_security_path"]; ok {
 		v = strings.TrimSpace(v)
