@@ -104,13 +104,17 @@ router.beforeEach(async (to) => {
 
   if (to.meta.admin) {
     const entry = typeof to.params.entry === 'string' ? to.params.entry : ''
-    setAdminEntry(entry)
+    // Keep the last known entrance when a legacy URL has no entry segment;
+    // clearing it would break the current tab's API calls.
+    if (entry) setAdminEntry(entry)
 
-    let cfg = { securityEntryEnabled: false }
+    let cfg
     try {
       cfg = await fetchAdminConfig()
     } catch {
-      // If the probe fails the login request will surface the real error.
+      // Never expose the admin console when the entrance probe is unavailable:
+      // a network/CORS failure must not be treated as "entrance disabled".
+      return notFound(to)
     }
 
     if (cfg.installed === false) {

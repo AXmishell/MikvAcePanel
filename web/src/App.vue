@@ -39,6 +39,9 @@ setPortalUnauthorizedHandler(() => {
 })
 
 onMounted(async () => {
+  // Let the initial navigation finish so the router guard has stored the
+  // optional admin entrance before the first authenticated API call.
+  await router.isReady()
   if (!auth.token) return
   try {
     const me = await api.me()

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -98,6 +99,12 @@ func TestAdminSecurityEntrance(t *testing.T) {
 	if cfg["securityEntryEnabled"] != false {
 		t.Fatalf("security entry should default to disabled: %+v", cfg)
 	}
+	probe := env.do(t, "GET", "/api/admin/config", "", nil)
+	if got := probe.Header.Get("Cache-Control"); !strings.Contains(got, "no-store") {
+		probe.Body.Close()
+		t.Fatalf("admin config Cache-Control = %q, want no-store", got)
+	}
+	probe.Body.Close()
 
 	// Invalid paths are rejected before the entrance is enabled.
 	for _, bad := range []string{"abc", "has space", "with/slash", "admin"} {
@@ -138,6 +145,15 @@ func TestAdminSecurityEntrance(t *testing.T) {
 	}
 	r.Body.Close()
 
+	// Anonymous admin API requests must also look like a missing path instead
+	// of revealing that the endpoint exists behind the entrance.
+	r = doEntry("GET", "/api/me", "", "", nil)
+	if r.StatusCode != http.StatusNotFound {
+		r.Body.Close()
+		t.Fatalf("anonymous /api/me without entry = %d, want 404", r.StatusCode)
+	}
+	r.Body.Close()
+
 	r = doEntry("POST", "/api/login", "", "wrong-entry", map[string]any{"username": "admin", "password": "testpass123"})
 	if r.StatusCode != http.StatusNotFound {
 		r.Body.Close()
@@ -164,6 +180,18 @@ func TestAdminSecurityEntrance(t *testing.T) {
 	if r.StatusCode != http.StatusOK {
 		r.Body.Close()
 		t.Fatalf("/api/me with entry = %d, want 200", r.StatusCode)
+	}
+	r.Body.Close()
+
+	// A misconfigured enabled entrance (empty path) must fail closed instead
+	// of silently restoring the public /admin console.
+	if err := env.store.SetSetting(ctx, "admin_security_path", ""); err != nil {
+		t.Fatal(err)
+	}
+	r = doEntry("GET", "/api/me", token, "secret-entry", nil)
+	if r.StatusCode != http.StatusNotFound {
+		r.Body.Close()
+		t.Fatalf("/api/me with empty entrance path = %d, want 404", r.StatusCode)
 	}
 	r.Body.Close()
 

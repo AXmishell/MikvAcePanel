@@ -86,7 +86,7 @@ func TestHomepageServesSPAInsteadOfRedirecting(t *testing.T) {
 	if err := st.SetSetting(context.Background(), "admin_security_path", "secret-entry"); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/admin", "/admin/login", "/admin/wrong-entry/login"} {
+	for _, path := range []string{"/admin", "/admin/", "/Admin", "/ADMIN", "/admin/login", "/Admin/login", "/admin/wrong-entry/login"} {
 		resp, err := client.Get(ts.URL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -96,7 +96,7 @@ func TestHomepageServesSPAInsteadOfRedirecting(t *testing.T) {
 			t.Fatalf("%s with security entrance = %d, want 404", path, resp.StatusCode)
 		}
 	}
-	for _, path := range []string{"/admin/secret-entry", "/admin/secret-entry/login", "/admin/secret-entry/dashboard"} {
+	for _, path := range []string{"/admin/secret-entry", "/Admin/secret-entry", "/admin/secret-entry/login", "/admin/secret-entry/dashboard"} {
 		resp, err := client.Get(ts.URL + path)
 		if err != nil {
 			t.Fatal(err)

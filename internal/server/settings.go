@@ -199,22 +199,26 @@ func validAdminSecurityPath(p string) bool {
 func (s *Server) adminSecurityEntry(ctx context.Context) (bool, string) {
 	settings, err := s.store.GetSettings(ctx)
 	if err != nil {
-		return false, ""
+		// Fail closed: when the entrance configuration cannot be read we
+		// cannot prove the admin area is public, so keep it hidden.
+		return true, ""
 	}
 	if !parseBoolSetting(settings["admin_security_enabled"], false) {
 		return false, ""
 	}
-	p := strings.TrimSpace(settings["admin_security_path"])
-	if p == "" {
-		return false, ""
-	}
-	return true, p
+	// An enabled entrance with an empty path is a misconfiguration. Treat it
+	// as enabled (and deny every path) instead of silently falling back to
+	// the public /admin console.
+	return true, strings.TrimSpace(settings["admin_security_path"])
 }
 
 func (s *Server) adminEntryAllowed(r *http.Request) bool {
 	enabled, path := s.adminSecurityEntry(r.Context())
 	if !enabled {
 		return true
+	}
+	if path == "" {
+		return false
 	}
 	got := strings.TrimSpace(r.Header.Get("X-Admin-Entry"))
 	return subtle.ConstantTimeCompare([]byte(got), []byte(path)) == 1
@@ -232,6 +236,25 @@ func (s *Server) requireAdminEntry(next http.Handler) http.Handler {
 	})
 }
 
+// adminUIPathSegment returns the first path segment after /admin. The prefix is
+// matched case-insensitively so /Admin and /ADMIN cannot fall through to the
+// SPA fallback and bypass the entrance check.
+func adminUIPathSegment(p string) (string, bool) {
+	const prefix = "/admin"
+	if len(p) < len(prefix) || !strings.EqualFold(p[:len(prefix)], prefix) {
+		return "", false
+	}
+	rest := p[len(prefix):]
+	if rest == "" {
+		return "", true
+	}
+	if rest[0] != '/' {
+		// /administrator and similar paths are not the admin console.
+		return "", false
+	}
+	return strings.SplitN(rest[1:], "/", 2)[0], true
+}
+
 // adminUIPathAllowed decides whether an /admin SPA route may be served. When
 // the entrance is enabled the first path segment must match the configured
 // secret, so /admin and /admin/login also return 404 at the HTTP layer instead
@@ -241,9 +264,27 @@ func (s *Server) adminUIPathAllowed(r *http.Request) bool {
 	if !enabled {
 		return true
 	}
-	rest := strings.TrimPrefix(r.URL.Path, "/admin/")
-	segment := strings.SplitN(rest, "/", 2)[0]
+	if path == "" {
+		return false
+	}
+	segment, isAdmin := adminUIPathSegment(r.URL.Path)
+	if !isAdmin {
+		return true
+	}
 	return subtle.ConstantTimeCompare([]byte(segment), []byte(path)) == 1
+}
+
+// requireAdminUIEntrance enforces the optional entrance on every request that
+// looks like an /admin route, including case variants that chi's case-sensitive
+// routes would otherwise send to the SPA fallback.
+func (s *Server) requireAdminUIEntrance(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, isAdmin := adminUIPathSegment(r.URL.Path); isAdmin && !s.adminUIPathAllowed(r) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) serveAdminSPA(w http.ResponseWriter, r *http.Request) {

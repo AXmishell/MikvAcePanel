@@ -22,8 +22,14 @@ export function setAdminEntry(entry) {
 let adminConfigPromise = null
 export async function fetchAdminConfig(force = false) {
   if (!force && adminConfigPromise) return adminConfigPromise
-  adminConfigPromise = fetch(BASE + '/admin/config', { headers: { Accept: 'application/json' } })
-    .then((res) => (res.ok ? res.json() : { securityEntryEnabled: false }))
+  adminConfigPromise = fetch(BASE + '/admin/config', {
+    cache: 'no-store',
+    headers: { Accept: 'application/json' },
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error('admin config probe failed')
+      return res.json()
+    })
     .finally(() => {
       adminConfigPromise = null
     })

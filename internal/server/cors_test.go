@@ -29,7 +29,7 @@ func TestCORSAllowsConfiguredOrigin(t *testing.T) {
 	if got := rec.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, "DELETE") {
 		t.Fatalf("allow methods = %q", got)
 	}
-	if got := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, "Authorization") {
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, "Authorization") || !strings.Contains(got, "X-Admin-Entry") {
 		t.Fatalf("allow headers = %q", got)
 	}
 	if got := rec.Header().Get("Access-Control-Expose-Headers"); !strings.Contains(got, "Content-Disposition") {

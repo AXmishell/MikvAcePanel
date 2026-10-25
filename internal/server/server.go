@@ -211,9 +211,10 @@ func (s *Server) routes() http.Handler {
 	r.Use(s.requestLogger)
 	r.Use(s.securityHeaders)
 	r.Use(s.cors)
+	r.Use(s.requireAdminUIEntrance)
 
 	r.Get("/api/health", s.handleHealth)
-	r.Get("/api/admin/config", s.handleAdminConfig)
+	r.With(noStore).Get("/api/admin/config", s.handleAdminConfig)
 	r.With(noStore).Get("/api/install/status", s.handleInstallStatus)
 	r.With(noStore).Post("/api/install/database/test", s.handleInstallDatabaseTest)
 	r.With(noStore).Post("/api/install/database", s.handleInstallDatabase)
@@ -497,7 +498,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 			w.Header().Add("Vary", "Origin")
 			if s.originAllowed(origin) {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key, X-Admin-Entry")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Expose-Headers", "Content-Disposition, X-RateLimit-Limit, X-RateLimit-Remaining, Retry-After")
 				w.Header().Set("Access-Control-Max-Age", "600")
@@ -657,12 +658,15 @@ func (s *Server) setAdminTokenVersion(id int64, version int) {
 func (s *Server) adminAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw := bearerToken(r)
-		if raw == "" {
-			writeError(w, http.StatusUnauthorized, "authentication required")
-			return
-		}
+		// Check the optional entrance before authentication so an anonymous
+		// request cannot distinguish a hidden admin endpoint (404) from one
+		// that requires a session (401). API keys are exempt by design.
 		if !strings.HasPrefix(raw, "ck_") && !s.adminEntryAllowed(r) {
 			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if raw == "" {
+			writeError(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
 		if strings.HasPrefix(raw, "ck_") {
