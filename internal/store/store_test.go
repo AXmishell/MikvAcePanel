@@ -331,3 +331,37 @@ func TestNodeHy2SettingsRoundtrip(t *testing.T) {
 		t.Fatal("update must preserve ECH PEM")
 	}
 }
+
+func TestUpdateNodeVersionsPartial(t *testing.T) {
+	st, ctx := testStore(t)
+	n, err := st.CreateNode(ctx, &model.Node{
+		Name: "versions", IP: "203.0.113.30", Port: 443, Active: true, StatsPort: 9999, TLSMode: "selfsigned",
+	}, "hash", "prefix", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hy2 := "v2.14.0"
+	if err := st.UpdateNodeVersions(ctx, n.ID, NodeVersionUpdate{Hy2Version: &hy2}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetNode(ctx, n.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Hy2Version != "v2.14.0" || got.AgentVersion != "" {
+		t.Fatalf("partial update = %+v", got)
+	}
+	agent, runtimeName, xray := "sha-test", "process", ""
+	if err := st.UpdateNodeVersions(ctx, n.ID, NodeVersionUpdate{
+		AgentVersion: &agent, XrayVersion: &xray, Runtime: &runtimeName,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetNode(ctx, n.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AgentVersion != "sha-test" || got.XrayVersion != "" || got.Runtime != "process" || got.Hy2Version != "v2.14.0" {
+		t.Fatalf("merged update = %+v", got)
+	}
+}

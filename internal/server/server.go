@@ -972,7 +972,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": token, "expiresAt": expires,
 		"admin":   map[string]any{"id": admin.ID, "username": admin.Username},
-		"warning": warning,
+		"warning": warning, "version": version.String(),
 	})
 }
 

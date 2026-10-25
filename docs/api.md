@@ -16,7 +16,7 @@ Content-Type: application/json
 未启用 2FA：
 
 ```json
-{"token":"...","expiresAt":"...","admin":{"id":1,"username":"admin"}}
+{"token":"...","expiresAt":"...","admin":{"id":1,"username":"admin"},"warning":"","version":"v1.2.3"}
 ```
 
 已启用 2FA 时不会直接返回 token：
@@ -135,7 +135,7 @@ API Key（`Authorization: Bearer ck_...`）不受安全入口限制。
 }
 ```
 
-成功返回与 `/api/login` 相同结构的 `token` / `expiresAt` / `admin`，前端会直接进入控制台。已有管理员时返回 `409 {"error":"panel is already installed"}`。用户名规则为 3–32 位字母、数字、点、下划线或短横线。
+成功返回与 `/api/login` 相同结构的 `token` / `expiresAt` / `admin` / `version`，前端会直接进入控制台。已有管理员时返回 `409 {"error":"panel is already installed"}`。用户名规则为 3–32 位字母、数字、点、下划线或短横线。
 
 初始化完成后，`/install` 页面按 404 处理（前端路由直接渲染 NotFound），这是预期行为，不是故障。
 
@@ -342,6 +342,8 @@ Portal JWT 带有 `purpose=portal`，不能访问管理接口；管理员 JWT �
 
 节点请求字段见 [node-agent.md](node-agent.md)。其中 `runtimeMode` 可选 `process`（默认）或 `docker`，会影响 `/install` 返回的 `installCommand`、`installScript` 与 `compose`；Agent 实际回报的运行方式在只读字段 `runtime` 中。
 
+只读版本字段 `agentVersion`、`hy2Version`、`xrayVersion`、`os`、`arch` 来自 Agent 的 `hello`；`heartbeat` 也会携带 `version/hy2Version/xrayVersion/runtime`，因此替换核心二进制后无需重连，面板会在下一次心跳刷新核心版本（Agent 自身版本仍需 Agent 进程重启后重新上报）。
+
 Hysteria 2 扩展选项放在请求体的 `hy2` 对象中（证书私钥等敏感字段不会出现在响应里）：
 
 | 字段 | 说明 |
@@ -524,8 +526,8 @@ Authorization: Bearer <node token>
 
 | type | payload |
 | --- | --- |
-| `hello` | `version, os, arch, hy2Version, runtime, onlineUsers` |
-| `heartbeat` | `cpuPct, memUsed, memTotal, diskUsed, diskTotal, load1, uptimeSec, online, trafficTx, trafficRx, hy2Running` |
+| `hello` | `version, os, arch, hy2Version, xrayVersion, cores, runtime, onlineUsers, capabilities` |
+| `heartbeat` | `cpuPct, memUsed, memTotal, diskUsed, diskTotal, load1, uptimeSec, online, trafficTx, trafficRx, hy2Running, coresRunning, version, hy2Version, xrayVersion, runtime` |
 | `stats` | `batchId, users {userId:{tx,rx}}, online {userId:count}, trafficTx, trafficRx` |
 | `logs` | `batchId, entries [{ts,level,message,raw}]` |
 | `config.ack` | `revision, ok, pending, error` |

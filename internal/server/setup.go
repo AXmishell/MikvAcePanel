@@ -212,6 +212,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		"token":     token,
 		"expiresAt": expires,
 		"admin":     map[string]any{"id": admin.ID, "username": admin.Username},
+		"version":   version.String(),
 	})
 }
 

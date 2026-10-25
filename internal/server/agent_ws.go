@@ -56,6 +56,13 @@ type heartbeatPayload struct {
 	TrafficTx  int64   `json:"trafficTx"`
 	TrafficRx  int64   `json:"trafficRx"`
 	Hy2Running bool    `json:"hy2Running"`
+	// Version fields are optional for backward compatibility with older
+	// agents. Pointers distinguish "not reported" from an empty core value
+	// (for example xrayVersion on a Hysteria-only node).
+	Version     *string `json:"version"`
+	Hy2Version  *string `json:"hy2Version"`
+	XrayVersion *string `json:"xrayVersion"`
+	Runtime     *string `json:"runtime"`
 }
 
 type configAckPayload struct {
@@ -249,6 +256,21 @@ func (s *Server) handleHeartbeat(ctx context.Context, nodeID int64, nodeName str
 	dtx, drx := s.hub.HeartbeatDelta(nodeID, hb.TrafficTx, hb.TrafficRx)
 	if err := s.store.UpdateNodeHeartbeat(ctx, nodeID, hb.Online, dtx, drx); err != nil {
 		s.log.Warn("update heartbeat", "node", nodeName, "error", err)
+	}
+	if hb.Version != nil || hb.Hy2Version != nil || hb.XrayVersion != nil || hb.Runtime != nil {
+		trim := func(v *string) *string {
+			if v == nil {
+				return nil
+			}
+			s := strings.TrimSpace(*v)
+			return &s
+		}
+		if err := s.store.UpdateNodeVersions(ctx, nodeID, store.NodeVersionUpdate{
+			AgentVersion: trim(hb.Version), Hy2Version: trim(hb.Hy2Version),
+			XrayVersion: trim(hb.XrayVersion), Runtime: trim(hb.Runtime),
+		}); err != nil {
+			s.log.Warn("update node versions", "node", nodeName, "error", err)
+		}
 	}
 	metric := &model.NodeMetric{
 		NodeID: nodeID, TS: time.Now().UTC(), CPUPct: hb.CPUPct,

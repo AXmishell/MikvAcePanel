@@ -107,7 +107,7 @@ function adminBase() {
 }
 
 function finishLogin(res) {
-  setSession(res.token, res.admin, res.warning)
+  setSession(res.token, res.admin, res.warning, res.version)
   notify('登录成功')
   const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
   const target = redirect.startsWith('/admin') ? redirect : adminBase() + '/dashboard'

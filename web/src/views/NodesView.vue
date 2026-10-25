@@ -34,6 +34,7 @@
             <span class="badge badge-info">{{ coreLabel(n) }}</span>
             <span class="badge" :class="runtimeMode(n) === 'docker' ? 'badge-info' : 'badge-muted'">{{ runtimeLabel(runtimeMode(n)) }}</span>
             <span v-if="n.runtime && n.runtime !== runtimeMode(n)" class="badge badge-warn" :title="`Agent 实际运行方式为 ${n.runtime}，请重新安装以应用面板配置`">实际 {{ n.runtime }}</span>
+            <span v-if="agentNeedsUpgrade(n)" class="badge badge-warn" :title="`Agent ${n.agentVersion} 与面板 ${auth.version} 不一致，请升级节点 Agent`">需要升级</span>
             <StatusBadge :status="n.status" />
           </div>
         </div>
@@ -644,7 +645,7 @@ import {
   ChevronDown, Copy, Download, FileCode2, Pencil, Plus, RefreshCw, RotateCcw, ScrollText, Server, Square, Terminal, Trash2, X, Zap,
 } from 'lucide-vue-next'
 import { adminPath, api } from '../api'
-import { notify } from '../store'
+import { auth, notify } from '../store'
 import Modal from '../components/Modal.vue'
 import Select from '../components/Select.vue'
 import StatusBadge from '../components/StatusBadge.vue'
@@ -1246,9 +1247,16 @@ function runtimeLabel(mode) {
 function versionLabel(n) {
   const cores = (n.cores && n.cores.length ? n.cores : [n.type || 'hysteria'])
   const parts = []
+  if (n.agentVersion) parts.push('Agent ' + n.agentVersion)
   if (cores.includes('hysteria')) parts.push('Hysteria ' + (n.hy2Version || 'unknown'))
   if (cores.includes('xray')) parts.push('Xray ' + (n.xrayVersion || 'unknown'))
   return parts.join(' · ') || 'unknown'
+}
+function agentNeedsUpgrade(n) {
+  const agent = String(n?.agentVersion || '').trim()
+  const panel = String(auth.version || '').trim()
+  if (!agent || !panel) return false
+  return agent !== panel
 }
 watch(() => form.cores.slice(), () => {
   if (!form.cores.includes('hysteria') && (tab.value === 'advanced' || tab.value === 'hy2')) tab.value = 'tls'

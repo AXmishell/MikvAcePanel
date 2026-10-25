@@ -487,22 +487,7 @@ func (a *Agent) session(ctx context.Context) error {
 }
 
 func (a *Agent) sendHello() {
-	runtimes, cores := a.runtimesState()
-	hy2Version, xrayVersion, runtimeName := "unknown", "", "unknown"
-	for core, rt := range runtimes {
-		if v := rt.Version(); v != "" {
-			if core == "xray" {
-				xrayVersion = v
-			} else {
-				hy2Version = v
-			}
-		}
-	}
-	if len(cores) > 0 {
-		if rt := runtimes[cores[0]]; rt != nil {
-			runtimeName = rt.Name()
-		}
-	}
+	hy2Version, xrayVersion, runtimeName, cores := a.snapshotVersions(true)
 	a.configMu.Lock()
 	certFP := a.meta.CertFingerprint
 	certAfter := a.meta.CertNotAfter
@@ -522,6 +507,34 @@ func (a *Agent) sendHello() {
 			"notAfter":    certAfter,
 		},
 	})
+}
+
+// snapshotVersions returns the currently installed core versions. When refresh
+// is true each runtime may re-read its binary version, subject to its own
+// throttle. Core list is included so hello and heartbeat stay consistent.
+func (a *Agent) snapshotVersions(refresh bool) (hy2Version, xrayVersion, runtimeName string, cores []string) {
+	runtimes, cores := a.runtimesState()
+	if refresh {
+		for _, rt := range runtimes {
+			rt.RefreshVersion()
+		}
+	}
+	hy2Version, xrayVersion, runtimeName = "unknown", "", "unknown"
+	for core, rt := range runtimes {
+		if v := rt.Version(); v != "" {
+			if core == "xray" {
+				xrayVersion = v
+			} else {
+				hy2Version = v
+			}
+		}
+	}
+	if len(cores) > 0 {
+		if rt := runtimes[cores[0]]; rt != nil {
+			runtimeName = rt.Name()
+		}
+	}
+	return
 }
 
 func (a *Agent) onlineCount() int {
@@ -622,12 +635,17 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 					}
 				}
 			}
+			hy2Version, xrayVersion, runtimeName, _ := a.snapshotVersions(true)
 			a.write("heartbeat", map[string]any{
 				"cpuPct": sys.CPUPct, "memUsed": sys.MemUsed, "memTotal": sys.MemTotal,
 				"diskUsed": sys.DiskUsed, "diskTotal": sys.DiskTotal, "load1": sys.Load1,
 				"uptimeSec": sys.UptimeSec, "online": a.onlineCount(),
 				"trafficTx": tx, "trafficRx": rx, "hy2Running": hy2Running,
 				"coresRunning": running,
+				"version":      a.cfg.Version,
+				"hy2Version":   hy2Version,
+				"xrayVersion":  xrayVersion,
+				"runtime":      runtimeName,
 			})
 		}
 	}

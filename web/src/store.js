@@ -7,10 +7,11 @@ export const auth = reactive({
   version: '',
 })
 
-export function setSession(token, admin, warning = '') {
+export function setSession(token, admin, warning = '', version = '') {
   auth.token = token
   auth.admin = admin
   auth.warning = warning || ''
+  if (version) auth.version = version
   localStorage.setItem('mikvace_token', token)
   localStorage.setItem('mikvace_admin', JSON.stringify(admin || null))
 }

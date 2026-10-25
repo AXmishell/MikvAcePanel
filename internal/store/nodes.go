@@ -367,6 +367,40 @@ func (s *Store) UpdateNodeHeartbeat(ctx context.Context, id int64, online int, d
 	return err
 }
 
+// NodeVersionUpdate carries version fields reported by an agent heartbeat.
+// Nil fields were not reported by that agent version and must be left alone.
+type NodeVersionUpdate struct {
+	AgentVersion *string
+	Hy2Version   *string
+	XrayVersion  *string
+	Runtime      *string
+}
+
+// UpdateNodeVersions refreshes only the version fields present in a heartbeat.
+// Older agents do not send these fields, so a partial update is essential.
+func (s *Store) UpdateNodeVersions(ctx context.Context, id int64, v NodeVersionUpdate) error {
+	sets := []string{}
+	args := []any{}
+	add := func(column string, value *string) {
+		if value == nil {
+			return
+		}
+		sets = append(sets, column+" = ?")
+		args = append(args, strings.TrimSpace(*value))
+	}
+	add("agent_version", v.AgentVersion)
+	add("hy2_version", v.Hy2Version)
+	add("xray_version", v.XrayVersion)
+	add("runtime", v.Runtime)
+	if len(sets) == 0 {
+		return nil
+	}
+	sets = append(sets, "updated_at = ?")
+	args = append(args, ts(now()), id)
+	_, err := s.DB.ExecContext(ctx, `UPDATE nodes SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
+	return err
+}
+
 // SetNodeAppliedRevision records the result of a config push.
 func (s *Store) SetNodeAppliedRevision(ctx context.Context, id, revision int64, errMsg string) error {
 	status := "online"

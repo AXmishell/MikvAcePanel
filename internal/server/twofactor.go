@@ -17,6 +17,7 @@ import (
 	"github.com/axmishell/mikvacepanel/internal/model"
 	"github.com/axmishell/mikvacepanel/internal/store"
 	"github.com/axmishell/mikvacepanel/internal/totp"
+	"github.com/axmishell/mikvacepanel/internal/version"
 )
 
 const (
@@ -188,7 +189,7 @@ func (s *Server) handleLogin2FA(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": token, "expiresAt": sessionExpires,
 		"admin":   map[string]any{"id": admin.ID, "username": admin.Username, "twoFactorEnabled": true},
-		"warning": warning,
+		"warning": warning, "version": version.String(),
 	})
 }
 

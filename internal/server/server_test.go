@@ -245,6 +245,7 @@ func TestAgentWebsocket(t *testing.T) {
 	_ = conn.WriteJSON(map[string]any{"type": "heartbeat", "payload": map[string]any{
 		"cpuPct": 2.5, "memUsed": 100, "memTotal": 200, "online": 1,
 		"trafficTx": 1500, "trafficRx": 2600, "hy2Running": true,
+		"version": "sha-heartbeat", "hy2Version": "v2.14.0", "xrayVersion": "", "runtime": "process",
 	}})
 	_ = conn.WriteJSON(map[string]any{"type": "stats", "payload": map[string]any{
 		"batchId": "stats-1", "users": map[string]any{"bob": map[string]any{"tx": 10, "rx": 20}},
@@ -279,6 +280,19 @@ func TestAgentWebsocket(t *testing.T) {
 	n2, _ := env.store.GetNode(context.Background(), nodeID)
 	if n2.Status != "online" || n2.TrafficTx != 500 || n2.TrafficRx != 600 {
 		t.Fatalf("node = status=%s traffic=%d/%d", n2.Status, n2.TrafficTx, n2.TrafficRx)
+	}
+	// A heartbeat carrying version fields must refresh the node row without a
+	// reconnect. The initial hello reported "test".
+	versionDeadline := time.Now().Add(2 * time.Second)
+	for {
+		n2, _ = env.store.GetNode(context.Background(), nodeID)
+		if n2.AgentVersion == "sha-heartbeat" && n2.Hy2Version == "v2.14.0" {
+			break
+		}
+		if time.Now().After(versionDeadline) {
+			t.Fatalf("heartbeat versions not stored: %+v", n2)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

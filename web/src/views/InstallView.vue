@@ -387,7 +387,7 @@ async function submit() {
       panelName: form.panelName.trim(),
       publicUrl: form.publicUrl.trim(),
     })
-    setSession(res.token, res.admin, '')
+    setSession(res.token, res.admin, '', res.version)
     notify('面板初始化完成')
     router.replace('/admin/dashboard')
   } catch (e) {

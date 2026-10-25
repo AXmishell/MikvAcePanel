@@ -39,9 +39,17 @@ type Runtime interface {
 	Running() bool
 	Name() string
 	Version() string
+	// RefreshVersion re-reads the core version from the installed binary. It is
+	// throttled so heartbeats can call it without spawning a process every time.
+	RefreshVersion()
 	ConfigPath() string
 	Close()
 }
+
+// versionRefreshInterval bounds how often a core binary is queried for its
+// version. Heartbeats are much more frequent (10s by default), while a binary
+// upgrade is rare; 30s keeps the panel reasonably fresh without extra load.
+const versionRefreshInterval = 30 * time.Second
 
 func emit(sink func(LogLine), level, msg string) {
 	if sink == nil {
@@ -128,6 +136,8 @@ type processRuntime struct {
 	desired bool
 	closed  bool
 	version string
+	// versionCheckedAt is the last time detectVersion ran. Guarded by mu.
+	versionCheckedAt time.Time
 }
 
 func (p *processRuntime) Name() string       { return p.protocol }
@@ -136,6 +146,19 @@ func (p *processRuntime) Version() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.version
+}
+
+func (p *processRuntime) RefreshVersion() {
+	p.mu.Lock()
+	if !p.versionCheckedAt.IsZero() && time.Since(p.versionCheckedAt) < versionRefreshInterval {
+		p.mu.Unlock()
+		return
+	}
+	// Reserve the slot before running the binary so concurrent callers do not
+	// launch duplicate version probes.
+	p.versionCheckedAt = time.Now()
+	p.mu.Unlock()
+	p.detectVersion()
 }
 
 func (p *processRuntime) Start() error {
@@ -262,7 +285,12 @@ func (p *processRuntime) Close() {
 }
 
 func (p *processRuntime) detectVersion() {
-	out, err := exec.Command(p.bin, "version").CombinedOutput()
+	p.mu.Lock()
+	p.versionCheckedAt = time.Now()
+	p.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, p.bin, "version").CombinedOutput()
 	if err != nil {
 		return
 	}
@@ -323,6 +351,8 @@ type dockerRuntime struct {
 	logStop chan struct{}
 	version string
 	started bool
+	// versionCheckedAt is the last time detectVersion ran. Guarded by mu.
+	versionCheckedAt time.Time
 }
 
 func (d *dockerRuntime) Name() string       { return d.protocol }
@@ -332,6 +362,21 @@ func (d *dockerRuntime) Version() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.version
+}
+
+func (d *dockerRuntime) RefreshVersion() {
+	d.mu.Lock()
+	if !d.started {
+		d.mu.Unlock()
+		return
+	}
+	if !d.versionCheckedAt.IsZero() && time.Since(d.versionCheckedAt) < versionRefreshInterval {
+		d.mu.Unlock()
+		return
+	}
+	d.versionCheckedAt = time.Now()
+	d.mu.Unlock()
+	d.detectVersion()
 }
 
 func (d *dockerRuntime) Start() error {
@@ -460,11 +505,16 @@ func (d *dockerRuntime) Running() bool {
 func (d *dockerRuntime) Close() { _ = d.Stop() }
 
 func (d *dockerRuntime) detectVersion() {
+	d.mu.Lock()
+	d.versionCheckedAt = time.Now()
+	d.mu.Unlock()
 	bin := "hysteria"
 	if d.protocol == "xray" {
 		bin = "xray"
 	}
-	out, err := exec.Command("docker", "exec", d.container, bin, "version").CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "exec", d.container, bin, "version").CombinedOutput()
 	if err != nil {
 		d.mu.Lock()
 		d.version = "docker"
