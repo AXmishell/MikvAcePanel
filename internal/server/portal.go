@@ -258,8 +258,6 @@ func (s *Server) userNodeConnections(r *http.Request, user *model.User) []map[st
 	if err != nil {
 		nodes = nil
 	}
-	settings, _ := s.store.GetSettings(r.Context())
-	applySubscriptionHy2EndpointMode(nodes, settings)
 	subscription.SortNodes(nodes)
 	out := make([]map[string]any, 0, len(nodes))
 	for i := range nodes {

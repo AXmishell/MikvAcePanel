@@ -518,6 +518,8 @@ X-RateLimit-Remaining: 58
 
 可写设置项：`panel_name`、`public_url`、`logo_url`、`page_title`、`page_note`、`support_url`、`web_page_url`、`subscription_title`、`subscription_update_interval`、`subscription_buttons`、`subscription_hy2_endpoints`、`device_grace_minutes`、`log_retention_days`、`log_ingest_enabled`、`analysis_window_hours`、`alert_auth_fail_threshold`、`alert_error_burst_threshold`。
 
+`subscription_hy2_endpoints` 取值为 `both`、`tls` 或 `hopping`，仅作为新建节点时 `includeTls` / `includeHopping` 的初始值；已有节点的订阅输出始终以节点自身的开关为准。
+
 修改 `public_url` 后会自动重新生成并推送所有节点配置。
 
 ---

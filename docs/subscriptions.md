@@ -113,15 +113,18 @@ hysteria2://userId:password@node.example.com:443?sni=node.example.com&insecure=0
 
 ### 订阅入口选择
 
-面板「设置 → 订阅页面」中的 **Hysteria 2 订阅入口** 控制所有订阅下发哪些入口：
+每个 Hysteria 2 节点可以分别控制订阅中下发哪些入口：
 
-| 值 | 行为 |
+| 节点设置 | 订阅输出 |
 | --- | --- |
-| `both` | 按节点自身的 `includeTls` / `includeHopping` 设置下发，默认两条都发 |
-| `tls` | 只下发 TLS 入口，隐藏 Hopping |
-| `hopping` | 只下发 Hopping 入口，隐藏 TLS |
+| TLS 开启 / Hopping 开启 | 同时下发 TLS 与 Hopping 两条链接 |
+| TLS 开启 / Hopping 关闭 | 只下发 TLS 固定端口链接 |
+| TLS 关闭 / Hopping 开启 | 只下发 Hopping 端口跳跃链接，需配置端口范围 |
+| 两者都关闭 | 不允许保存，避免节点从订阅中消失 |
 
-这是**订阅输出过滤**，不会修改节点配置：节点的 TLS 监听、端口跳跃和 iptables 规则仍按原配置运行。全局选择 `tls` 或 `hopping` 时，如果某个节点自身关闭了对应入口，则不会强行重新开启它。
+这是**订阅输出过滤**，不会修改节点配置：节点的 TLS 监听、端口跳跃和 iptables 规则仍按原配置运行，已经拿到的旧链接也继续可用。
+
+面板「设置 → 订阅页面 → 新节点默认订阅入口」只用于新建节点时初始化上述两个开关；已有节点始终以节点设置里的开关为准，不会被该全局选项覆盖。
 
 ### Xray / v2rayN
 

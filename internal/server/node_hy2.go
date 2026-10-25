@@ -25,6 +25,33 @@ var (
 	versionPattern     = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
 )
 
+// applyHy2SubscriptionDefaults seeds the per-node subscription switches from
+// the panel-wide default when a create request omits them. The default only
+// applies while creating a node; existing nodes are always driven by their own
+// includeTls / includeHopping values.
+func applyHy2SubscriptionDefaults(h *model.Hy2Settings, mode string) {
+	if h == nil {
+		return
+	}
+	off, on := false, true
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "tls":
+		if h.IncludeTLS == nil {
+			h.IncludeTLS = &on
+		}
+		if h.IncludeHopping == nil {
+			h.IncludeHopping = &off
+		}
+	case "hopping":
+		if h.IncludeTLS == nil {
+			h.IncludeTLS = &off
+		}
+		if h.IncludeHopping == nil {
+			h.IncludeHopping = &on
+		}
+	}
+}
+
 // normalizeHy2 trims user input, preserves server-owned ECH material and
 // applies conservative defaults.
 func normalizeHy2(p *nodePayload, existing *model.Node) (model.Hy2Settings, error) {

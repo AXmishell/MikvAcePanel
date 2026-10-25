@@ -145,6 +145,8 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
+	settings, _ := s.store.GetSettings(r.Context())
+	applyHy2SubscriptionDefaults(&p.Hy2, settings["subscription_hy2_endpoints"])
 	n, err := s.nodeFromPayload(&p, nil)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

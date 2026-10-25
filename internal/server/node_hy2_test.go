@@ -84,6 +84,33 @@ func TestValidateHy2SubscriptionEndpoints(t *testing.T) {
 	}
 }
 
+func TestApplyHy2SubscriptionDefaults(t *testing.T) {
+	on, off := true, false
+	cases := []struct {
+		name        string
+		mode        string
+		in          model.Hy2Settings
+		wantTLS     bool
+		wantHopping bool
+	}{
+		{name: "both leaves defaults", mode: "both", in: model.Hy2Settings{}, wantTLS: true, wantHopping: true},
+		{name: "tls disables hopping", mode: "tls", in: model.Hy2Settings{}, wantTLS: true, wantHopping: false},
+		{name: "hopping disables tls", mode: "hopping", in: model.Hy2Settings{}, wantTLS: false, wantHopping: true},
+		{name: "explicit choices win", mode: "tls", in: model.Hy2Settings{IncludeTLS: &on, IncludeHopping: &on}, wantTLS: true, wantHopping: true},
+		{name: "explicit off is preserved", mode: "hopping", in: model.Hy2Settings{IncludeTLS: &off, IncludeHopping: &off}, wantTLS: false, wantHopping: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := tc.in
+			applyHy2SubscriptionDefaults(&h, tc.mode)
+			if h.PublishesTLS() != tc.wantTLS || h.PublishesHopping() != tc.wantHopping {
+				t.Fatalf("mode %q: tls=%v hopping=%v, want tls=%v hopping=%v",
+					tc.mode, h.PublishesTLS(), h.PublishesHopping(), tc.wantTLS, tc.wantHopping)
+			}
+		})
+	}
+}
+
 func TestValidateHy2Conflicts(t *testing.T) {
 	h := &model.Hy2Settings{
 		ListenPortRange: "20000-50000",

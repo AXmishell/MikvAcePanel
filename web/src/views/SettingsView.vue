@@ -172,9 +172,9 @@
               <span class="hint">用户没有分组标题时使用的备用标题。</span>
             </div>
             <div class="field full"><label>页面说明</label><input v-model="form.page_note" type="text" /></div>
-            <div class="field"><label>Hysteria 2 订阅入口</label>
+            <div class="field"><label>新节点默认订阅入口</label>
               <Select v-model="form.subscription_hy2_endpoints" :options="SUBSCRIPTION_HY2_OPTIONS" />
-              <span class="hint">只影响订阅下发；节点仍保持 TLS 和端口跳跃运行。选择单一入口不会修改节点配置。</span>
+              <span class="hint">仅用于新建节点时初始化订阅入口；已有节点始终以节点设置中的“订阅入口”开关为准，此设置不会覆盖它们。</span>
             </div>
             <div class="field"><label>Logo 地址</label><input v-model="form.logo_url" type="url" placeholder="https://…/logo.png" /></div>
             <div class="field"><label>更新间隔（小时）</label><input v-model="form.subscription_update_interval" type="number" min="1" /></div>
@@ -661,9 +661,9 @@ const HAPP_ROUTING_OPTIONS = [
   { value: 'custom', label: '自定义路由配置' },
 ]
 const SUBSCRIPTION_HY2_OPTIONS = [
-  { value: 'both', label: 'TLS 和 Hopping 都下发（按节点设置）' },
-  { value: 'tls', label: '仅下发 TLS 入口' },
-  { value: 'hopping', label: '仅下发 Hopping 入口' },
+  { value: 'both', label: 'TLS 和 Hopping 都开启' },
+  { value: 'tls', label: '仅开启 TLS 入口' },
+  { value: 'hopping', label: '仅开启 Hopping 入口' },
 ]
 const ACME_CA_OPTIONS = [
   { value: 'https://acme-v02.api.letsencrypt.org/directory', label: "Let's Encrypt" },

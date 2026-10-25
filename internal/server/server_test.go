@@ -156,8 +156,9 @@ func TestPanelEndToEnd(t *testing.T) {
 		t.Fatalf("headers = %v", resp.Header)
 	}
 
-	// Global subscription endpoint mode filters the generated links without
-	// changing the node. The node above keeps both TLS and Hopping enabled.
+	// The panel-wide mode is only the default for newly created nodes. Changing
+	// it must not alter an existing node's subscription; the node's own
+	// includeTls / includeHopping switches are authoritative.
 	setHy2Mode := func(mode string) {
 		resp := env.do(t, "PUT", "/api/settings", env.token, map[string]any{"subscription_hy2_endpoints": mode})
 		if resp.StatusCode != 200 {
@@ -177,21 +178,21 @@ func TestPanelEndToEnd(t *testing.T) {
 		b, _ := io.ReadAll(resp.Body)
 		return string(b)
 	}
-	setHy2Mode("tls")
 	sub := uriSub()
-	if strings.Count(sub, "hysteria2://") != 1 || strings.Contains(sub, "mport=") {
-		t.Fatalf("TLS-only subscription = %s", sub)
+	if strings.Count(sub, "hysteria2://") != 2 || !strings.Contains(sub, "mport=20000-50000") {
+		t.Fatalf("both endpoints subscription = %s", sub)
+	}
+	setHy2Mode("tls")
+	sub = uriSub()
+	if strings.Count(sub, "hysteria2://") != 2 || !strings.Contains(sub, "mport=20000-50000") {
+		t.Fatalf("global default must not filter an existing node: %s", sub)
 	}
 	setHy2Mode("hopping")
 	sub = uriSub()
-	if strings.Count(sub, "hysteria2://") != 1 || !strings.Contains(sub, "mport=20000-50000") {
-		t.Fatalf("Hopping-only subscription = %s", sub)
+	if strings.Count(sub, "hysteria2://") != 2 || !strings.Contains(sub, "mport=20000-50000") {
+		t.Fatalf("global default must not filter an existing node: %s", sub)
 	}
 	setHy2Mode("both")
-	sub = uriSub()
-	if strings.Count(sub, "hysteria2://") != 2 {
-		t.Fatalf("both subscription = %s", sub)
-	}
 	if bad := env.do(t, "PUT", "/api/settings", env.token, map[string]any{"subscription_hy2_endpoints": "invalid"}); bad.StatusCode != 400 {
 		bad.Body.Close()
 		t.Fatalf("invalid hy2 mode = %d", bad.StatusCode)
@@ -911,5 +912,59 @@ func TestSelectiveXrayProtocols(t *testing.T) {
 	defer bad.Body.Close()
 	if bad.StatusCode != http.StatusBadRequest {
 		t.Fatalf("all-disabled create status = %d", bad.StatusCode)
+	}
+}
+
+func TestCreateNodeUsesHy2SubscriptionDefault(t *testing.T) {
+	env := newTestEnv(t)
+	setDefault := func(mode string) {
+		resp := env.do(t, "PUT", "/api/settings", env.token, map[string]any{"subscription_hy2_endpoints": mode})
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("set default %q = %d: %s", mode, resp.StatusCode, b)
+		}
+	}
+	create := func(t *testing.T, extra map[string]any) model.Node {
+		t.Helper()
+		body := map[string]any{
+			"name": "Defaulted", "ip": "203.0.113.50", "port": 443,
+			"tlsMode": "selfsigned", "active": true,
+		}
+		for k, v := range extra {
+			body[k] = v
+		}
+		resp := env.do(t, "POST", "/api/nodes", env.token, body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("create node = %d: %s", resp.StatusCode, b)
+		}
+		var out struct {
+			Node model.Node `json:"node"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Node
+	}
+
+	setDefault("tls")
+	n := create(t, nil)
+	if !n.Hy2.PublishesTLS() || n.Hy2.PublishesHopping() {
+		t.Fatalf("tls default: tls=%v hopping=%v", n.Hy2.PublishesTLS(), n.Hy2.PublishesHopping())
+	}
+
+	setDefault("hopping")
+	n = create(t, map[string]any{"portRange": "20000-50000"})
+	if n.Hy2.PublishesTLS() || !n.Hy2.PublishesHopping() {
+		t.Fatalf("hopping default: tls=%v hopping=%v", n.Hy2.PublishesTLS(), n.Hy2.PublishesHopping())
+	}
+
+	// An explicit choice from the node form always wins over the default.
+	setDefault("tls")
+	n = create(t, map[string]any{"hy2": map[string]any{"includeTls": true, "includeHopping": true}})
+	if !n.Hy2.PublishesTLS() || !n.Hy2.PublishesHopping() {
+		t.Fatalf("explicit choice: tls=%v hopping=%v", n.Hy2.PublishesTLS(), n.Hy2.PublishesHopping())
 	}
 }

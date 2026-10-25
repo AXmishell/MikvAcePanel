@@ -117,6 +117,22 @@
         <div class="field full">
           <label class="checkbox"><input v-model="form.active" type="checkbox" /> 启用 — 加入订阅并允许 Agent 连接</label>
         </div>
+        <div v-if="hasHysteria" class="field full" style="border-top: 1px solid var(--border); padding-top: 12px">
+          <strong>订阅入口</strong>
+          <span class="hint">仅影响订阅链接生成，不修改节点的 TLS 监听、端口跳跃或 iptables 规则。至少开启一个；仅开启 Hopping 时必须配置端口跳跃范围。</span>
+          <label class="checkbox"><input v-model="form.hy2.includeTls" type="checkbox" /> 订阅输出 TLS 入口（固定端口）</label>
+          <label class="checkbox"><input v-model="form.hy2.includeHopping" type="checkbox" /> 订阅输出 Hopping 入口（端口跳跃）</label>
+          <span class="hint">
+            当前将输出：
+            <template v-if="form.hy2.includeTls">TLS</template>
+            <template v-if="form.hy2.includeTls && form.hy2.includeHopping"> + </template>
+            <template v-if="form.hy2.includeHopping">Hopping</template>
+            <template v-if="!form.hy2.includeTls && !form.hy2.includeHopping">无（请至少开启一个）</template>
+          </span>
+          <div v-if="form.hy2.includeHopping && !hasHy2PortRange" class="banner banner-warn" style="margin: 8px 0 0">
+            未配置端口跳跃范围或内置端口范围，Hopping 入口不会出现在订阅中。
+          </div>
+        </div>
         <div class="field full">
           <label>服务器组</label>
           <div class="chip-list">
@@ -253,12 +269,6 @@
         </div>
         <div class="field"><label>跳跃间隔</label><input v-model="form.hopInterval" type="text" placeholder="30s" />
           <span class="hint">仅端口跳跃模式生效，支持 <span class="mono">30s</span>、<span class="mono">1m</span> 等写法。</span>
-        </div>
-        <div class="field full"><strong>订阅入口</strong></div>
-        <div class="field full">
-          <label class="checkbox"><input v-model="form.hy2.includeTls" type="checkbox" /> 在订阅中显示 TLS 入口</label>
-          <label class="checkbox"><input v-model="form.hy2.includeHopping" type="checkbox" /> 在订阅中显示 Hopping 入口</label>
-          <span class="hint">同时开启会为同一节点生成两条 Hy2 配置；关闭其中一个可避免重复。至少保留一个；仅保留 Hopping 时必须配置端口跳跃范围。</span>
         </div>
 
         <div class="field full"><strong>混淆与带宽</strong></div>
@@ -685,11 +695,13 @@ const certPEMText = ref('')
 const certKeyText = ref('')
 const certUploadError = ref('')
 const certUploading = ref(false)
+const defaultHy2Endpoints = ref('both')
 let timer = null
 
 const onlineCount = computed(() => nodes.value.filter((n) => n.connected).length)
 const hasHysteria = computed(() => form.cores.includes('hysteria'))
 const hasXray = computed(() => form.cores.includes('xray'))
+const hasHy2PortRange = computed(() => Boolean(String(form.portRange || '').trim() || String(form.hy2.listenPortRange || '').trim()))
 const configCores = computed(() => {
   const info = configInfo.value
   if (!info) return []
@@ -1297,12 +1309,22 @@ async function loadGroups() {
     error.value = e.message
   }
 }
+async function loadSubscriptionDefaults() {
+  try {
+    const res = await api.settings()
+    defaultHy2Endpoints.value = res.settings?.subscription_hy2_endpoints || 'both'
+  } catch {
+    defaultHy2Endpoints.value = 'both'
+  }
+}
 
 function openCreate() {
   editing.value = null
   resetForm()
   resetInboundCards()
   applyHy2Template('balanced', true)
+  form.hy2.includeTls = defaultHy2Endpoints.value !== 'hopping'
+  form.hy2.includeHopping = defaultHy2Endpoints.value !== 'tls'
   tab.value = 'basic'
   hy2Section.value = 'basic'
   xraySection.value = 'basic'
@@ -1407,12 +1429,22 @@ async function uploadCert() {
 
 async function save() {
   formError.value = ''
-  saving.value = true
-  try {
-    if (form.cores.includes('xray') && enabledInboundCount() === 0) {
-      formError.value = '至少启用一个 Xray 入站'
+  if (form.cores.includes('xray') && enabledInboundCount() === 0) {
+    formError.value = '至少启用一个 Xray 入站'
+    return
+  }
+  if (hasHysteria.value && !String(form.hy2.realm.uri || '').trim() && !form.hy2.mimic.enabled) {
+    if (!form.hy2.includeTls && !form.hy2.includeHopping) {
+      formError.value = '至少开启一个订阅入口（TLS 或 Hopping）'
       return
     }
+    if (!form.hy2.includeTls && !hasHy2PortRange.value) {
+      formError.value = '仅开启 Hopping 时必须配置端口跳跃范围或内置端口范围'
+      return
+    }
+  }
+  saving.value = true
+  try {
     const hy2 = hy2Payload()
     const payload = {
       type: form.cores[0],
@@ -1606,6 +1638,7 @@ function downloadCompose() {
 
 onMounted(() => {
   loadGroups()
+  loadSubscriptionDefaults()
   load()
   timer = setInterval(load, 20000)
 })

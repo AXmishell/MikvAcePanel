@@ -188,6 +188,7 @@ var DefaultSettings = map[string]string{
 	"subscription_title":           "MikvAce",
 	"subscription_update_interval": "12",
 	"subscription_buttons":         "[]",
+	"subscription_hy2_endpoints":   "both",
 	"device_grace_minutes":         "15",
 	"log_retention_days":           "14",
 	"log_ingest_enabled":           "true",
