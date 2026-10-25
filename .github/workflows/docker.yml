@@ -4,7 +4,24 @@ on:
   push:
     branches: [main]
     tags: ['v*.*.*']
+    # Documentation-only changes cannot affect the images; skip the (slow)
+    # multi-arch build for them. Path filters are ignored for tag pushes, so
+    # releases still always build.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'site/**'
+      - 'mkdocs.yml'
+      - 'requirements-docs.txt'
+      - '.github/workflows/docs.yml'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'site/**'
+      - 'mkdocs.yml'
+      - 'requirements-docs.txt'
+      - '.github/workflows/docs.yml'
   workflow_dispatch:
 
 concurrency:
@@ -19,6 +36,7 @@ jobs:
   publish:
     name: Build ${{ matrix.image }} image
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -105,8 +123,11 @@ jobs:
             VERSION=${{ steps.prep.outputs.version }}
             COMMIT=${{ steps.prep.outputs.commit }}
             BUILD_DATE=${{ steps.prep.outputs.build_date }}
+          # Pull requests read the default branch cache but only write minimal
+          # cache entries, so transient PR builds cannot evict the useful
+          # `mode=max` cache populated from main.
           cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=${{ github.event_name == 'pull_request' && 'min' || 'max' }},scope=${{ matrix.image }}
 
       - name: Summary
         run: |
