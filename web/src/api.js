@@ -146,7 +146,9 @@ export const api = {
   install: (data) => installPanel(data),
   installDatabaseTest: (data) => testInstallDatabase(data),
   installDatabase: (data) => saveInstallDatabase(data),
-  login: (username, password) => request('/login', { method: 'POST', body: { username, password } }),
+  login: (username, password, captchaId, captchaAnswer) =>
+    request('/login', { method: 'POST', body: { username, password, captchaId, captchaAnswer } }),
+  loginCaptcha: () => request('/login/captcha'),
   login2FA: (challenge, code) => request('/login/2fa', { method: 'POST', body: { challenge, code } }),
   twoFactorStatus: () => request('/2fa'),
   setupTwoFactor: () => request('/2fa/setup', { method: 'POST' }),

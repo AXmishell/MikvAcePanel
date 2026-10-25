@@ -64,6 +64,20 @@
             <label>密码</label>
             <input v-model="password" type="password" autocomplete="current-password" placeholder="••••••••" :disabled="need2FA" />
           </div>
+          <div v-if="captcha && !need2FA" class="field">
+            <label>图形验证码</label>
+            <div class="captcha-row">
+              <input v-model="captchaAnswer" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="5" placeholder="输入图中字符" />
+              <img
+                class="captcha-img"
+                :src="captcha.image"
+                alt="图形验证码"
+                title="点击刷新验证码"
+                @click="refreshCaptcha"
+              />
+            </div>
+            <span class="hint">登录失败后需要验证码；点击图片可刷新。</span>
+          </div>
           <div v-if="need2FA" class="field">
             <label>动态验证码 / 恢复码</label>
             <input v-model="code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="6 位验证码" autofocus />
@@ -95,6 +109,8 @@ const username = ref('admin')
 const password = ref('')
 const code = ref('')
 const challenge = ref('')
+const captcha = ref(null)
+const captchaAnswer = ref('')
 const need2FA = ref(false)
 const loading = ref(false)
 const error = ref('')
@@ -107,6 +123,8 @@ function adminBase() {
 }
 
 function finishLogin(res) {
+  captcha.value = null
+  captchaAnswer.value = ''
   setSession(res.token, res.admin, res.warning, res.version)
   notify('登录成功')
   const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
@@ -121,6 +139,15 @@ function resetTwoFactor() {
   error.value = ''
 }
 
+async function refreshCaptcha() {
+  try {
+    captcha.value = await api.loginCaptcha()
+    captchaAnswer.value = ''
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
 async function submit() {
   error.value = ''
   loading.value = true
@@ -130,7 +157,12 @@ async function submit() {
       finishLogin(res)
       return
     }
-    const res = await api.login(username.value, password.value)
+    const res = await api.login(
+      username.value,
+      password.value,
+      captcha.value?.id || '',
+      captchaAnswer.value.trim(),
+    )
     if (res.twoFactorRequired) {
       need2FA.value = true
       challenge.value = res.challenge
@@ -139,6 +171,11 @@ async function submit() {
     }
     finishLogin(res)
   } catch (e) {
+    const data = e.data || {}
+    if (data.captchaRequired && data.captcha) {
+      captcha.value = data.captcha
+      captchaAnswer.value = ''
+    }
     error.value = e.status === 404 ? '安全入口无效或已变更，请使用最新的管理员入口地址。' : e.message
   } finally {
     loading.value = false
@@ -149,4 +186,16 @@ async function submit() {
 <style scoped>
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.captcha-row { display: flex; align-items: center; gap: 10px; }
+.captcha-row input { flex: 1; min-width: 0; }
+.captcha-img {
+  flex: none;
+  width: 168px;
+  height: 60px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #191917;
+  cursor: pointer;
+  object-fit: contain;
+}
 </style>

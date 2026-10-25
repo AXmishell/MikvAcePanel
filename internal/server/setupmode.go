@@ -25,6 +25,8 @@ func NewSetup(cfg Config, logger *slog.Logger) *Server {
 		apiKeyRate:     map[int64][]time.Time{},
 		twoFactorTries: map[string]int{},
 		challengeUsed:  map[string]time.Time{},
+		captchas:       map[string]captchaEntry{},
+		captchaGate:    map[string]time.Time{},
 		authLogWindow:  map[int64]authLogBucket{},
 		quotaBlocked:   map[string]bool{},
 		adminVer:       map[int64]adminVersionEntry{},

@@ -13,6 +13,21 @@ Content-Type: application/json
 {"username":"admin","password":"..."}
 ```
 
+首次登录不需要验证码。任意一次登录失败后，同一 IP 的后续登录都必须附带图形验证码：
+
+```json
+{"username":"admin","password":"...","captchaId":"...","captchaAnswer":"AB3DE"}
+```
+
+失败响应会返回 `captchaRequired` 和一个新的验证码（5 分钟有效、一次性）：
+
+```json
+{"error":"invalid username or password","captchaRequired":true,
+ "captcha":{"id":"...","image":"data:image/svg+xml;base64,...","expiresAt":"..."}}
+```
+
+`GET /api/login/captcha` 可主动刷新验证码，返回同样的 `id/image/expiresAt` 对象。验证码在登录成功后重置；验证失败不会清除 `captchaRequired`。
+
 未启用 2FA：
 
 ```json

@@ -184,6 +184,7 @@ func (s *Server) handleLogin2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.sessions.Add(r.Context(), token, sessionExpires)
+	s.clearLoginCaptcha(r.Context(), "admin", ip)
 	_ = s.store.TouchAdminLogin(r.Context(), admin.ID)
 	warning, _ := s.store.GetSetting(r.Context(), "bootstrap_warning")
 	writeJSON(w, http.StatusOK, map[string]any{

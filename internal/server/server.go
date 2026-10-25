@@ -58,6 +58,10 @@ type Server struct {
 	twoFactorTries map[string]int
 	challengeUsed  map[string]time.Time
 
+	captchaMu   sync.Mutex
+	captchas    map[string]captchaEntry
+	captchaGate map[string]time.Time
+
 	apiKeyMu   sync.Mutex
 	apiKeyRate map[int64][]time.Time
 
@@ -111,6 +115,8 @@ func New(cfg Config, st *store.Store, logger *slog.Logger) (*Server, error) {
 		apiKeyRate:     map[int64][]time.Time{},
 		twoFactorTries: map[string]int{},
 		challengeUsed:  map[string]time.Time{},
+		captchas:       map[string]captchaEntry{},
+		captchaGate:    map[string]time.Time{},
 		authLogWindow:  map[int64]authLogBucket{},
 		quotaBlocked:   map[string]bool{},
 		adminVer:       map[int64]adminVersionEntry{},
@@ -221,6 +227,7 @@ func (s *Server) routes() http.Handler {
 	r.With(noStore).Post("/api/install", s.handleInstall)
 	r.With(s.requireAdminEntry).Post("/api/login", s.handleLogin)
 	r.With(s.requireAdminEntry).Post("/api/login/2fa", s.handleLogin2FA)
+	r.With(noStore, s.requireAdminEntry).Get("/api/login/captcha", s.handleLoginCaptcha)
 	r.Post("/api/auth", s.handleHy2Auth)
 	r.Get("/api/files/info/{token}", s.handleSubInfo)
 	r.Get("/api/files/{token}", s.handleSubscription)
@@ -910,24 +917,39 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username      string `json:"username"`
+		Password      string `json:"password"`
+		CaptchaID     string `json:"captchaId"`
+		CaptchaAnswer string `json:"captchaAnswer"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
+	// The first attempt is password-only. Once a login fails, every further
+	// attempt from this client must also solve an image captcha.
+	if s.loginCaptchaRequired(r.Context(), "admin", ip) {
+		if !s.verifyLoginCaptcha(r.Context(), req.CaptchaID, req.CaptchaAnswer) {
+			s.recordLoginFailure(r.Context(), "admin", ip)
+			s.requireLoginCaptcha(r.Context(), "admin", ip)
+			s.writeCaptchaChallenge(w, r, http.StatusUnauthorized, "invalid captcha")
+			return
+		}
+	}
 	admin, err := s.store.GetAdminByUsername(r.Context(), strings.TrimSpace(req.Username))
 	if err != nil {
 		s.recordLoginFailure(r.Context(), "admin", ip)
-		writeError(w, http.StatusUnauthorized, "invalid username or password")
+		s.requireLoginCaptcha(r.Context(), "admin", ip)
+		s.writeCaptchaChallenge(w, r, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(admin.PasswordHash), []byte(req.Password)) != nil {
 		s.recordLoginFailure(r.Context(), "admin", ip)
-		writeError(w, http.StatusUnauthorized, "invalid username or password")
+		s.requireLoginCaptcha(r.Context(), "admin", ip)
+		s.writeCaptchaChallenge(w, r, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
+	s.clearLoginCaptcha(r.Context(), "admin", ip)
 	if admin.TOTPEnabled {
 		challenge, expires, err := s.issueTOTPChallenge(admin)
 		if err != nil {

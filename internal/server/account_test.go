@@ -57,12 +57,16 @@ func TestAdminUsernameUpdateRotatesSession(t *testing.T) {
 	if resp := env.do(t, "POST", "/api/login", "", map[string]any{
 		"username": "admin", "password": "testpass123",
 	}); resp.StatusCode != http.StatusUnauthorized {
+		resp.Body.Close()
 		t.Fatalf("old username login status = %d", resp.StatusCode)
+	} else {
+		resp.Body.Close()
 	}
-	if resp := env.do(t, "POST", "/api/login", "", map[string]any{
-		"username": "operator", "password": "testpass123",
-	}); resp.StatusCode != http.StatusOK {
+	if resp := env.loginWithCaptcha(t, "operator", "testpass123"); resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
 		t.Fatalf("new username login status = %d", resp.StatusCode)
+	} else {
+		resp.Body.Close()
 	}
 }
 
@@ -120,12 +124,16 @@ func TestAdminPasswordUpdateRotatesSession(t *testing.T) {
 	if resp := env.do(t, "POST", "/api/login", "", map[string]any{
 		"username": "admin", "password": "testpass123",
 	}); resp.StatusCode != http.StatusUnauthorized {
+		resp.Body.Close()
 		t.Fatalf("old password login status = %d", resp.StatusCode)
+	} else {
+		resp.Body.Close()
 	}
-	if resp := env.do(t, "POST", "/api/login", "", map[string]any{
-		"username": "admin", "password": "a-new-password-123",
-	}); resp.StatusCode != http.StatusOK {
+	if resp := env.loginWithCaptcha(t, "admin", "a-new-password-123"); resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
 		t.Fatalf("new password login status = %d", resp.StatusCode)
+	} else {
+		resp.Body.Close()
 	}
 }
 
