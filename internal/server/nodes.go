@@ -218,6 +218,41 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// handleReorderNodes applies a drag-and-drop ordering. Only ranking weights are
+// changed, so no agent push or config revision is required.
+func (s *Server) handleReorderNodes(w http.ResponseWriter, r *http.Request) {
+	var p struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := decodeJSON(r, &p); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if len(p.IDs) == 0 {
+		writeError(w, http.StatusBadRequest, "ids is required")
+		return
+	}
+	seen := make(map[int64]bool, len(p.IDs))
+	ids := make([]int64, 0, len(p.IDs))
+	for _, id := range p.IDs {
+		if id <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid node id")
+			return
+		}
+		if seen[id] {
+			writeError(w, http.StatusBadRequest, "duplicate node id")
+			return
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if err := s.store.ReorderNodes(r.Context(), ids); err != nil {
+		writeStoreError(w, err, "node")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err != nil {

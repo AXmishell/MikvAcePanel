@@ -253,6 +253,51 @@ func (s *Store) UpdateNode(ctx context.Context, n *model.Node, groupIDs []int64)
 	return s.GetNode(ctx, n.ID)
 }
 
+// ReorderNodes persists the operator's node order by assigning descending
+// ranking weights. Higher weights sort first in subscriptions, so the first id
+// in ids receives the highest weight. Existing weights are preserved as the
+// scale upper bound when possible, keeping manually tuned values meaningful.
+func (s *Store) ReorderNodes(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	var maxRanking float64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(ranking), 1) FROM nodes WHERE id IN (`+placeholders+`)`, args...,
+	).Scan(&maxRanking); err != nil {
+		return err
+	}
+	base := float64(len(ids))
+	if maxRanking > base {
+		base = maxRanking
+	}
+	stamp := ts(now())
+	for i, id := range ids {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE nodes SET ranking = ?, updated_at = ? WHERE id = ?`,
+			base-float64(i), stamp, id)
+		if err != nil {
+			return err
+		}
+		cnt, _ := res.RowsAffected()
+		if cnt == 0 {
+			return ErrNotFound
+		}
+	}
+	return tx.Commit()
+}
+
 // DeleteNode removes a node.
 func (s *Store) DeleteNode(ctx context.Context, id int64) error {
 	res, err := s.DB.ExecContext(ctx, `DELETE FROM nodes WHERE id = ?`, id)

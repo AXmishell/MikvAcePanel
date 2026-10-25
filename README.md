@@ -31,7 +31,7 @@ mkdocs build --strict # 输出 site/
 - **订阅分发**：Clash/Mihomo YAML、sing-box JSON、Shadowrocket Base64、原始 URI 列表、Xray JSON；支持 HAPP 路由头与 providerid。
 - **终端用户中心**：用户使用 ID + 登录密码进入 `/user`，查看订阅、流量、到期与设备；登录密码与连接密码相互独立，均可由用户或管理员修改；管理端可直接指定订阅 Token。管理员控制台位于 `/admin`，与用户入口完全分离。
 - **Hysteria 2 认证**：节点把客户端认证请求转发到 `POST /api/auth`，支持启用/禁用、到期、流量限额、设备数限制（按唯一 IP + 宽限期）；Agent 还会持久化用户认证快照，面板故障时 Hysteria 新连接仍可继续认证。
-- **节点管理**：面板生成 Hysteria / Xray 服务端配置，通过 WebSocket 实时下发；支持版本、运行状态、配置 revision、错误回报、启动/停止/重启。
+- **节点管理**：面板生成 Hysteria / Xray 服务端配置，通过 WebSocket 实时下发；支持版本、运行状态、配置 revision、错误回报、启动/停止/重启，以及卡片/列表视图和鼠标拖动调整订阅排序权重。
 - **证书统一签发**：面板通过 ACME DNS-01 申请证书，Agent 提交 CSR、安装证书链（私钥不出节点）；节点自签 ACME 只使用 TLS-ALPN，不再占用 80 端口。
 - **两步验证（2FA）**：管理员可使用标准 TOTP 应用登录，提供一次性恢复码；2FA 密钥加密存储，支持自助关闭与恢复码重置。
 - **节点端 Docker 镜像**：单容器内置 Hysteria 2 + Xray + Agent，开箱即用；也可在节点表单中为每个节点选择 Docker 运行时（`runtime.type: docker`），由 Agent 管理同机的代理容器。

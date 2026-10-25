@@ -338,6 +338,7 @@ Portal JWT 带有 `purpose=portal`，不能访问管理接口；管理员 JWT �
 | GET | `/api/nodes` | 列表（含 latest metrics、connected） |
 | GET | `/api/nodes/:id` | 详情 |
 | POST | `/api/nodes` | 创建，返回安装命令 |
+| POST | `/api/nodes/reorder` | `{ids:[...]}` 按数组顺序重写排序权重（拖动排序） |
 | PUT | `/api/nodes/:id` | 更新并尝试下发新配置 |
 | DELETE | `/api/nodes/:id` | 删除并断开 Agent |
 | POST | `/api/nodes/:id/token` | 重置 Agent Token |

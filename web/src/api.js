@@ -187,6 +187,7 @@ export const api = {
   nodes: () => request('/nodes'),
   node: (id) => request(`/nodes/${id}`),
   createNode: (data) => request('/nodes', { method: 'POST', body: data }),
+  reorderNodes: (ids) => request('/nodes/reorder', { method: 'POST', body: { ids } }),
   updateNode: (id, data) => request(`/nodes/${id}`, { method: 'PUT', body: data }),
   deleteNode: (id) => request(`/nodes/${id}`, { method: 'DELETE' }),
   resetNodeToken: (id) => request(`/nodes/${id}/token`, { method: 'POST' }),

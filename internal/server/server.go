@@ -288,6 +288,7 @@ func (s *Server) routes() http.Handler {
 
 		pr.Get("/api/nodes", s.handleListNodes)
 		pr.Post("/api/nodes", s.handleCreateNode)
+		pr.Post("/api/nodes/reorder", s.handleReorderNodes)
 		pr.Get("/api/nodes/{id}", s.handleGetNode)
 		pr.Put("/api/nodes/{id}", s.handleUpdateNode)
 		pr.Delete("/api/nodes/{id}", s.handleDeleteNode)

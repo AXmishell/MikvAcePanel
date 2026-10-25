@@ -3,9 +3,13 @@
     <div class="toolbar">
       <div>
         <div class="page-title">节点</div>
-        <div class="dim small">{{ onlineCount }}/{{ nodes.length }} 个 Agent 已连接 · 通过 WebSocket 下发配置</div>
+        <div class="dim small">{{ onlineCount }}/{{ nodes.length }} 个 Agent 已连接 · 通过 WebSocket 下发配置 · 拖动节点可调整订阅排序权重</div>
       </div>
       <div class="spacer"></div>
+      <div class="view-toggle" role="group" aria-label="节点视图">
+        <button v-tip="'卡片视图'" class="view-toggle-btn" :class="{ active: viewMode === 'card' }" @click="setViewMode('card')"><LayoutGrid :size="14" /></button>
+        <button v-tip="'列表视图'" class="view-toggle-btn" :class="{ active: viewMode === 'list' }" @click="setViewMode('list')"><ListIcon :size="14" /></button>
+      </div>
       <button class="btn btn-sm" :disabled="loading" @click="load"><RefreshCw :size="14" :class="{ spin: loading }" /> 刷新</button>
       <button class="btn btn-sm" :disabled="syncingAll || !nodes.length" @click="syncAll"><RefreshCw :size="14" :class="{ spin: syncingAll }" /> 全部同步</button>
       <button class="btn btn-primary btn-sm" @click="openCreate"><Plus :size="14" /> 添加节点</button>
@@ -22,15 +26,31 @@
       </div>
     </div>
 
-    <div class="node-grid">
-      <article v-for="n in nodes" :key="n.id" class="card node-card">
+    <div v-if="viewMode === 'card'" class="node-grid">
+      <article
+        v-for="(n, index) in sortedNodes"
+        :key="n.id"
+        class="card node-card"
+        :class="{ dragging: dragId === n.id, 'drag-over': dropId === n.id && dragId !== n.id }"
+        :data-node-id="n.id"
+        draggable="true"
+        @dragstart="onDragStart(n, $event)"
+        @dragend="onDragEnd"
+        @dragover.prevent="onDragOver(n)"
+        @dragleave="onDragLeave(n, $event)"
+        @drop.prevent="onDrop(n)"
+      >
         <div class="node-head">
+          <span class="drag-handle" :title="`排序权重 ${rankingLabel(n.ranking)} — 拖动调整`">
+            <GripVertical :size="16" />
+          </span>
           <div class="node-flag">{{ n.flag || '🌐' }}</div>
           <div style="min-width: 0; flex: 1">
             <div class="node-name truncate">{{ n.name }}</div>
             <div class="node-host truncate">{{ n.domain || n.ip || 'no address' }}:{{ n.port }}</div>
           </div>
           <div class="flex" style="gap: 6px">
+            <span class="badge badge-muted" :title="`排序权重 ${rankingLabel(n.ranking)}`">#{{ index + 1 }}</span>
             <span class="badge badge-info">{{ coreLabel(n) }}</span>
             <span class="badge" :class="runtimeMode(n) === 'docker' ? 'badge-info' : 'badge-muted'">{{ runtimeLabel(runtimeMode(n)) }}</span>
             <span v-if="n.runtime && n.runtime !== runtimeMode(n)" class="badge badge-warn" :title="`Agent 实际运行方式为 ${n.runtime}，请重新安装以应用面板配置`">实际 {{ n.runtime }}</span>
@@ -75,6 +95,95 @@
           <button v-tip="'删除节点'" class="icon-btn danger" @click="askDelete(n)"><Trash2 :size="15" /></button>
         </div>
       </article>
+    </div>
+
+    <div v-else class="card">
+      <div class="table-wrap">
+        <table class="node-list-table">
+          <thead>
+            <tr>
+              <th>排序</th>
+              <th>节点</th>
+              <th>地址</th>
+              <th>核心</th>
+              <th>状态</th>
+              <th>在线</th>
+              <th>流量</th>
+              <th>配置</th>
+              <th>资源</th>
+              <th>最后在线</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="(n, index) in sortedNodes"
+              :key="n.id"
+              :class="{ dragging: dragId === n.id, 'drag-over': dropId === n.id && dragId !== n.id }"
+              :data-node-id="n.id"
+              draggable="true"
+              @dragstart="onDragStart(n, $event)"
+              @dragend="onDragEnd"
+              @dragover.prevent="onDragOver(n)"
+              @dragleave="onDragLeave(n, $event)"
+              @drop.prevent="onDrop(n)"
+            >
+              <td>
+                <div class="rank-cell">
+                  <span class="drag-handle" :title="`排序权重 ${rankingLabel(n.ranking)} — 拖动调整`">
+                    <GripVertical :size="15" />
+                  </span>
+                  <div class="rank-text">
+                    <strong>#{{ index + 1 }}</strong>
+                    <span>{{ rankingLabel(n.ranking) }}</span>
+                  </div>
+                </div>
+              </td>
+              <td>
+                <div class="list-node">
+                  <span class="node-flag">{{ n.flag || '🌐' }}</span>
+                  <div style="min-width: 0">
+                    <div class="node-name truncate">{{ n.name }}</div>
+                    <div class="dim small truncate">{{ versionLabel(n) }}</div>
+                    <div v-if="n.groups?.length || n.configError" class="chip-list" style="margin-top: 4px">
+                      <span v-for="g in n.groups" :key="g.id" class="badge badge-muted">{{ g.name }}</span>
+                      <span v-if="n.configError" class="badge badge-danger" :title="n.configError">配置错误</span>
+                    </div>
+                  </div>
+                </div>
+              </td>
+              <td class="mono small">{{ n.domain || n.ip || 'no address' }}:{{ n.port }}</td>
+              <td>
+                <div class="chip-list">
+                  <span class="badge badge-info">{{ coreLabel(n) }}</span>
+                  <span class="badge" :class="runtimeMode(n) === 'docker' ? 'badge-info' : 'badge-muted'">{{ runtimeLabel(runtimeMode(n)) }}</span>
+                  <span v-if="n.runtime && n.runtime !== runtimeMode(n)" class="badge badge-warn" :title="`Agent 实际运行方式为 ${n.runtime}，请重新安装以应用面板配置`">实际 {{ n.runtime }}</span>
+                  <span v-if="agentNeedsUpgrade(n)" class="badge badge-warn" :title="`Agent ${n.agentVersion} 与面板 ${auth.version} 不一致，请升级节点 Agent`">需要升级</span>
+                </div>
+              </td>
+              <td><StatusBadge :status="n.status" /></td>
+              <td class="nowrap">{{ n.onlineUsers || 0 }}<span v-if="n.maxOnline" class="dim"> / {{ n.maxOnline }}</span></td>
+              <td class="nowrap">{{ fmtBytes((n.trafficTx || 0) + (n.trafficRx || 0)) }}</td>
+              <td class="nowrap">{{ n.appliedRevision || 0 }}<span class="dim"> / {{ n.configRevision || 0 }}</span></td>
+              <td class="nowrap small">
+                <template v-if="n.metrics">CPU {{ (n.metrics.cpuPct || 0).toFixed(0) }}%<span class="dim"> · </span>内存 {{ memPct(n) }}%<span class="dim"> · </span>磁盘 {{ diskPct(n) }}%</template>
+                <span v-else class="dim">—</span>
+              </td>
+              <td class="small dim nowrap">{{ n.lastSeenAt ? fmtRelative(n.lastSeenAt) : '从未连接' }}</td>
+              <td>
+                <div class="row-actions">
+                  <button v-tip="'安装'" class="icon-btn" @click="openInstall(n)"><Terminal :size="14" /></button>
+                  <router-link v-tip="'日志'" class="icon-btn" :to="adminPath('logs') + '?nodeId=' + n.id"><ScrollText :size="14" /></router-link>
+                  <button v-tip="'配置'" class="icon-btn" @click="openConfig(n)"><FileCode2 :size="14" /></button>
+                  <button v-tip="'同步'" class="icon-btn" @click="sync(n)"><RefreshCw :size="14" /></button>
+                  <button v-tip="'编辑'" class="icon-btn" @click="openEdit(n)"><Pencil :size="14" /></button>
+                  <button v-tip="'删除节点'" class="icon-btn danger" @click="askDelete(n)"><Trash2 :size="14" /></button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <Modal v-model="modalOpen" :title="editing ? '编辑节点' : '新建节点'" size="lg">
@@ -652,7 +761,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
-  ChevronDown, Copy, Download, FileCode2, Pencil, Plus, RefreshCw, RotateCcw, ScrollText, Server, Square, Terminal, Trash2, X, Zap,
+  ChevronDown, Copy, Download, FileCode2, GripVertical, LayoutGrid, List as ListIcon, Pencil, Plus, RefreshCw, RotateCcw, ScrollText, Server, Square, Terminal, Trash2, X, Zap,
 } from 'lucide-vue-next'
 import { adminPath, api } from '../api'
 import { auth, notify } from '../store'
@@ -661,11 +770,16 @@ import Select from '../components/Select.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import { copyText, fmtBytes, fmtDate, fmtRelative } from '../format'
 
+const NODE_VIEW_KEY = 'mikvace_nodes_view'
 const nodes = ref([])
 const groups = ref([])
 const loading = ref(false)
 const syncingAll = ref(false)
 const error = ref('')
+const viewMode = ref(localStorage.getItem(NODE_VIEW_KEY) === 'list' ? 'list' : 'card')
+const dragId = ref(null)
+const dropId = ref(null)
+const reordering = ref(false)
 
 const modalOpen = ref(false)
 const tab = ref('basic')
@@ -699,6 +813,10 @@ const defaultHy2Endpoints = ref('both')
 let timer = null
 
 const onlineCount = computed(() => nodes.value.filter((n) => n.connected).length)
+const sortedNodes = computed(() => [...nodes.value].sort((a, b) => {
+  const diff = (Number(b.ranking) || 0) - (Number(a.ranking) || 0)
+  return diff || a.id - b.id
+}))
 const hasHysteria = computed(() => form.cores.includes('hysteria'))
 const hasXray = computed(() => form.cores.includes('xray'))
 const hasHy2PortRange = computed(() => Boolean(String(form.portRange || '').trim() || String(form.hy2.listenPortRange || '').trim()))
@@ -1289,8 +1407,82 @@ function diskPct(n) {
   if (!m || !m.diskTotal) return 0
   return Math.min(100, Math.round((m.diskUsed / m.diskTotal) * 100))
 }
+function rankingLabel(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '1'
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)))
+}
+function setViewMode(mode) {
+  viewMode.value = mode
+  localStorage.setItem(NODE_VIEW_KEY, mode)
+}
+
+function onDragStart(n, ev) {
+  // The whole card/row is draggable, but buttons and links must keep their
+  // normal click behaviour instead of starting a drag.
+  const target = ev.target instanceof Element ? ev.target : null
+  if (target?.closest('button, a, input, select, textarea, label')) {
+    ev.preventDefault()
+    return
+  }
+  dragId.value = n.id
+  dropId.value = null
+  if (ev.dataTransfer) {
+    ev.dataTransfer.effectAllowed = 'move'
+    ev.dataTransfer.setData('text/plain', String(n.id))
+    const row = ev.currentTarget.closest('[data-node-id]')
+    if (row) ev.dataTransfer.setDragImage(row, 24, 24)
+  }
+}
+function onDragOver(n) {
+  if (dragId.value && dragId.value !== n.id) dropId.value = n.id
+}
+function onDragLeave(n, ev) {
+  if (ev.relatedTarget && ev.currentTarget.contains(ev.relatedTarget)) return
+  if (dropId.value === n.id) dropId.value = null
+}
+function onDragEnd() {
+  dragId.value = null
+  dropId.value = null
+}
+async function onDrop(n) {
+  const source = dragId.value
+  onDragEnd()
+  if (!source || source === n.id) return
+  await reorderNodes(source, n.id)
+}
+async function reorderNodes(sourceId, targetId) {
+  if (reordering.value) return
+  const list = [...sortedNodes.value]
+  const from = list.findIndex((n) => n.id === sourceId)
+  const to = list.findIndex((n) => n.id === targetId)
+  if (from < 0 || to < 0 || from === to) return
+  const [moved] = list.splice(from, 1)
+  list.splice(to, 0, moved)
+
+  // Assign fresh descending weights, keeping the current maximum as scale so
+  // operators who tuned decimal weights do not lose that range on a drag.
+  let base = list.length
+  for (const n of list) base = Math.max(base, Number(n.ranking) || 1)
+  list.forEach((n, i) => { n.ranking = base - i })
+  nodes.value = list
+
+  reordering.value = true
+  let failed = false
+  try {
+    await api.reorderNodes(list.map((n) => n.id))
+    notify('节点排序已保存')
+  } catch (e) {
+    failed = true
+    notify(e.message, 'error')
+  } finally {
+    reordering.value = false
+  }
+  if (failed) await load()
+}
 
 async function load() {
+  if (dragId.value || reordering.value) return
   loading.value = true
   error.value = ''
   try {
@@ -1655,4 +1847,49 @@ onBeforeUnmount(() => clearInterval(timer))
 .inbound-toggle svg.is-collapsed { transform: rotate(-90deg); }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.view-toggle {
+  display: inline-flex; gap: 2px; padding: 2px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel-2);
+}
+.view-toggle-btn {
+  width: 28px; height: 27px; display: grid; place-items: center;
+  border: 0; border-radius: 6px; background: transparent; color: var(--muted);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.view-toggle-btn:hover { background: var(--hover); color: var(--text); }
+.view-toggle-btn.active { background: var(--accent-soft); color: var(--accent); }
+
+.drag-handle {
+  display: inline-grid; place-items: center;
+  width: 22px; height: 26px; flex: none;
+  border-radius: 6px; color: var(--muted-2);
+  cursor: grab; user-select: none;
+  touch-action: none;
+}
+.drag-handle:hover { background: var(--accent-soft); color: var(--accent); }
+.drag-handle:active { cursor: grabbing; }
+
+.node-card.dragging,
+.node-list-table tr.dragging { opacity: 0.45; }
+.node-card.drag-over {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.node-list-table tr.drag-over td { background: var(--accent-soft); }
+
+.rank-cell { display: flex; align-items: center; gap: 4px; }
+.rank-text {
+  display: flex; flex-direction: column; line-height: 1.15;
+  font-family: var(--mono); font-size: 9.5px; color: var(--muted-2);
+}
+.rank-text strong { font-size: 11px; color: var(--text); }
+.list-node { display: flex; align-items: flex-start; gap: 9px; min-width: 0; }
+.list-node .node-flag { font-size: 18px; margin-top: 1px; }
+.node-list-table td { white-space: nowrap; }
+.node-list-table td:nth-child(2),
+.node-list-table td:nth-child(3) { white-space: normal; }
+.node-list-table .chip-list { gap: 3px; flex-wrap: wrap; }
+.node-list-table .row-actions { flex-wrap: nowrap; }
 </style>
