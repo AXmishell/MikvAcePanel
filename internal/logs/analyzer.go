@@ -44,7 +44,25 @@ func New(st *store.Store) *Analyzer { return &Analyzer{Store: st} }
 type Thresholds struct {
 	AuthFailPerIP   int64
 	ErrorBurstCount int64
+
+	// RestartBurstCount starts inside RestartBurstWindow indicate a crash
+	// loop even if the process recovered afterwards.
+	RestartBurstCount  int64
+	RestartBurstWindow time.Duration
+	// RestartRatePerHour flags nodes that keep restarting steadily for the
+	// whole selected window without a tight burst.
+	RestartRatePerHour float64
 }
+
+const (
+	defaultRestartBurstCount  = 3
+	defaultRestartBurstWindow = 10 * time.Minute
+	defaultRestartRatePerHour = 1.0
+	// restartShutdownGrace is how long before a start a shutdown log still
+	// marks that start as an intentional restart (config push, manual restart
+	// or certificate installation).
+	restartShutdownGrace = 2 * time.Minute
+)
 
 // Analyze builds a summary for the requested window. online is the number of
 // users currently connected according to the agent hub.
@@ -54,6 +72,15 @@ func (a *Analyzer) Analyze(ctx context.Context, opts model.LogStatsOptions, onli
 	}
 	if th.ErrorBurstCount <= 0 {
 		th.ErrorBurstCount = 20
+	}
+	if th.RestartBurstCount <= 0 {
+		th.RestartBurstCount = defaultRestartBurstCount
+	}
+	if th.RestartBurstWindow <= 0 {
+		th.RestartBurstWindow = defaultRestartBurstWindow
+	}
+	if th.RestartRatePerHour <= 0 {
+		th.RestartRatePerHour = defaultRestartRatePerHour
 	}
 	if opts.To.IsZero() {
 		opts.To = time.Now().UTC()
@@ -155,9 +182,7 @@ func (a *Analyzer) findings(ctx context.Context, opts model.LogStatsOptions, s *
 	if err != nil {
 		return nil, err
 	}
-	nodeName := map[int64]string{}
 	for _, n := range nodes {
-		nodeName[n.ID] = n.Name
 		if !n.Active {
 			continue
 		}
@@ -220,7 +245,7 @@ func (a *Analyzer) findings(ctx context.Context, opts model.LogStatsOptions, s *
 	}
 
 	// Error bursts per node.
-	bursts, err := a.Store.NodeEventCounts(ctx, "error", opts)
+	bursts, err := a.Store.NodeEventStats(ctx, "error", opts)
 	if err != nil {
 		return nil, err
 	}
@@ -232,24 +257,78 @@ func (a *Analyzer) findings(ctx context.Context, opts model.LogStatsOptions, s *
 			ID: fmt.Sprintf("error-burst-%d", b.NodeID), Severity: "warning", Count: b.Count,
 			Title: "错误爆发", NodeID: b.NodeID, NodeName: b.NodeName,
 			Description: fmt.Sprintf("该节点在所选窗口内记录了 %d 条错误日志。", b.Count),
-			LastSeen:    nowT, FirstSeen: nowT,
+			FirstSeen:   b.FirstSeen, LastSeen: b.LastSeen,
 		})
 	}
 
-	// Crash / restart loop.
-	starts, err := a.Store.NodeEventCounts(ctx, "start", opts)
+	// Crash / restart loop. Only starts that were not preceded by a shutdown
+	// count: config pushes, manual restarts and certificate installs are
+	// intentional and must not look like a crash loop.
+	startMarks, err := a.Store.NodeEventMarks(ctx, "start", opts)
 	if err != nil {
 		return nil, err
 	}
-	for _, b := range starts {
-		if b.Count < 3 {
+	shutdownOpts := opts
+	if !shutdownOpts.From.IsZero() {
+		// A shutdown just before the window still explains the first start.
+		shutdownOpts.From = shutdownOpts.From.Add(-restartShutdownGrace)
+	}
+	shutdownMarks, err := a.Store.NodeEventMarks(ctx, "shutdown", shutdownOpts)
+	if err != nil {
+		return nil, err
+	}
+	startsByNode := map[int64][]time.Time{}
+	startNames := map[int64]string{}
+	for _, m := range startMarks {
+		startsByNode[m.NodeID] = append(startsByNode[m.NodeID], m.Time)
+		if m.NodeName != "" {
+			startNames[m.NodeID] = m.NodeName
+		}
+	}
+	shutdownsByNode := map[int64][]time.Time{}
+	for _, m := range shutdownMarks {
+		shutdownsByNode[m.NodeID] = append(shutdownsByNode[m.NodeID], m.Time)
+	}
+	span := opts.To.Sub(opts.From)
+	for nodeID, starts := range startsByNode {
+		sort.Slice(starts, func(i, j int) bool { return starts[i].Before(starts[j]) })
+		shutdowns := shutdownsByNode[nodeID]
+		sort.Slice(shutdowns, func(i, j int) bool { return shutdowns[i].Before(shutdowns[j]) })
+		crashes, planned := unplannedStarts(starts, shutdowns)
+		if len(crashes) == 0 {
 			continue
 		}
+		burst := maxStartBurst(crashes, th.RestartBurstWindow)
+		rate := 0.0
+		if span > 0 {
+			rate = float64(len(crashes)) / span.Hours()
+		}
+		sustained := span > 0 && len(crashes) > int(th.RestartBurstCount) && rate >= th.RestartRatePerHour
+		if int64(burst) < th.RestartBurstCount && !sustained {
+			continue
+		}
+		windowText := windowLabel(th.RestartBurstWindow)
+		desc := fmt.Sprintf("窗口内非计划启动 %d 次，其中 %d 次集中在%s内。", len(crashes), burst, windowText)
+		if int64(burst) < th.RestartBurstCount {
+			desc = fmt.Sprintf("窗口内非计划启动 %d 次，平均每小时 %.1f 次。", len(crashes), rate)
+		}
+		if planned > 0 {
+			desc += fmt.Sprintf("另有 %d 次主动重启已排除。", planned)
+		}
+		details := []string{fmt.Sprintf("%s内最多连续非计划启动 %d 次", windowText, burst)}
+		if planned > 0 {
+			details = append(details, fmt.Sprintf("已排除 %d 次主动重启（启动前有正常关闭记录）", planned))
+		}
+		if span > 0 {
+			details = append(details, fmt.Sprintf("窗口内平均 %.1f 次/小时", rate))
+		}
 		out = append(out, model.Finding{
-			ID: fmt.Sprintf("restart-loop-%d", b.NodeID), Severity: "warning", Count: b.Count,
-			Title: "疑似重启循环", NodeID: b.NodeID, NodeName: b.NodeName,
-			Description: "代理进程在所选时间窗口内多次启动。",
-			LastSeen:    nowT, FirstSeen: nowT,
+			ID: fmt.Sprintf("restart-loop-%d", nodeID), Severity: "warning", Count: int64(len(crashes)),
+			CountLabel: fmt.Sprintf("窗口内启动 %d 次", len(crashes)),
+			Title:      "疑似重启循环", NodeID: nodeID, NodeName: startNames[nodeID],
+			Description: desc,
+			FirstSeen:   crashes[0], LastSeen: crashes[len(crashes)-1],
+			Details: details,
 		})
 	}
 
@@ -268,7 +347,7 @@ func (a *Analyzer) findings(ctx context.Context, opts model.LogStatsOptions, s *
 
 	// TLS / ACME problems.
 	for _, event := range []string{"tls", "acme"} {
-		counts, err := a.Store.NodeEventCounts(ctx, event, opts)
+		counts, err := a.Store.NodeEventStats(ctx, event, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -280,7 +359,7 @@ func (a *Analyzer) findings(ctx context.Context, opts model.LogStatsOptions, s *
 				ID: fmt.Sprintf("%s-errors-%d", event, c.NodeID), Severity: "info", Count: c.Count,
 				Title: strings.ToUpper(event) + " 事件", NodeID: c.NodeID, NodeName: c.NodeName,
 				Description: fmt.Sprintf("记录了 %d 条 %s 相关日志。", c.Count, event),
-				LastSeen:    nowT, FirstSeen: nowT,
+				FirstSeen:   c.FirstSeen, LastSeen: c.LastSeen,
 			})
 		}
 	}
@@ -308,8 +387,60 @@ func (a *Analyzer) findings(ctx context.Context, opts model.LogStatsOptions, s *
 	sort.SliceStable(out, func(i, j int) bool {
 		return severityRank(out[i].Severity) < severityRank(out[j].Severity)
 	})
-	_ = nodeName
 	return out, nil
+}
+
+// unplannedStarts drops starts that immediately follow a shutdown event: those
+// are manual or config-driven restarts, not crashes. Each shutdown excuses at
+// most one start, so a crash right after an intentional restart still counts.
+func unplannedStarts(starts, shutdowns []time.Time) ([]time.Time, int) {
+	out := make([]time.Time, 0, len(starts))
+	used := 0
+	for _, start := range starts {
+		if len(shutdowns) > 0 {
+			idx := sort.Search(len(shutdowns), func(i int) bool {
+				return shutdowns[i].After(start)
+			}) - 1
+			if idx >= used && start.Sub(shutdowns[idx]) <= restartShutdownGrace {
+				used = idx + 1
+				continue
+			}
+		}
+		out = append(out, start)
+	}
+	return out, len(starts) - len(out)
+}
+
+// maxStartBurst returns the largest number of starts inside one rolling window.
+func maxStartBurst(starts []time.Time, window time.Duration) int {
+	if len(starts) == 0 || window <= 0 {
+		return 0
+	}
+	best, end := 0, 0
+	for i := range starts {
+		if end < i+1 {
+			end = i + 1
+		}
+		limit := starts[i].Add(window)
+		for end < len(starts) && !starts[end].After(limit) {
+			end++
+		}
+		if n := end - i; n > best {
+			best = n
+		}
+	}
+	return best
+}
+
+func windowLabel(d time.Duration) string {
+	switch {
+	case d >= time.Hour && d%time.Hour == 0:
+		return fmt.Sprintf("%d 小时", int(d.Hours()))
+	case d%time.Minute == 0:
+		return fmt.Sprintf("%d 分钟", int(d.Minutes()))
+	default:
+		return d.String()
+	}
 }
 
 func severityRank(s string) int {

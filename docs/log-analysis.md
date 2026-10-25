@@ -44,7 +44,7 @@ POST 解析 → hy2_logs 表（按 node_id + batch_id 幂等）
 | `connect` | client connected |
 | `disconnect` | client disconnected |
 | `start` | server up and running / server started |
-| `shutdown` | shutting down / received signal / server stopped |
+| `shutdown` | shutting down / received signal / server stopped / stopping |
 | `stats` | traffic stats server |
 | `acme` | 包含 acme / certificate |
 | `tls` | 包含 tls / handshake / quic |
@@ -66,7 +66,7 @@ POST 解析 → hy2_logs 表（按 node_id + batch_id 幂等）
 | `bruteforce-<ip>` | warning / critical | 单 IP 认证失败 ≥ 阈值；≥3 倍阈值升级 critical |
 | `unknown-users` | warning | 认证失败里不存在的 userId 总数 ≥5 |
 | `error-burst-<node>` | warning | 单节点 error 事件 ≥ 阈值 |
-| `restart-loop-<node>` | warning | 单节点 start 事件 ≥3 |
+| `restart-loop-<node>` | warning | 单节点 10 分钟内非计划启动 ≥3 次，或窗口内平均重启 ≥1 次/小时；启动前 2 分钟内有 shutdown 记录视为主动重启并排除 |
 | `auth-failure-ratio` | warning | 认证失败率 ≥30%，且样本 ≥20 |
 | `tls-errors-<node>` | info | 单节点 TLS 事件 ≥5 |
 | `acme-errors-<node>` | info | 单节点 ACME 事件 ≥5 |

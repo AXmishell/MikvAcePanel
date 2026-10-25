@@ -55,7 +55,7 @@
               <div class="finding-title">{{ f.title }}<span v-if="f.nodeName" class="dim"> · {{ f.nodeName }}</span></div>
               <div class="finding-desc">{{ f.description }}</div>
               <div v-if="f.details?.length" class="finding-meta">{{ f.details.join(' · ') }}</div>
-              <div class="finding-meta">{{ f.count ? f.count + ' 条观察 · ' : '' }}{{ fmtRelative(f.lastSeen) }}</div>
+              <div class="finding-meta">{{ f.countLabel ? f.countLabel + ' · ' : (f.count ? f.count + ' 条观察 · ' : '') }}{{ fmtRelative(f.lastSeen) }}</div>
             </div>
           </div>
         </div>

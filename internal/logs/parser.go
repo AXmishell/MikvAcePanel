@@ -282,7 +282,8 @@ func finishClassification(e *model.LogEntry) {
 		event = "disconnect"
 	case strings.Contains(msg, "server up and running"), strings.Contains(msg, "server started"):
 		event = "start"
-	case strings.Contains(msg, "shutting down"), strings.Contains(msg, "received signal"), strings.Contains(msg, "server stopped"):
+	case strings.Contains(msg, "shutting down"), strings.Contains(msg, "received signal"),
+		strings.Contains(msg, "server stopped"), strings.Contains(msg, "stopping "):
 		event = "shutdown"
 	case strings.Contains(msg, "traffic stats server"):
 		event = "stats"

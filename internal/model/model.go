@@ -150,10 +150,10 @@ type XraySniffing struct {
 // fields are kept so that nodes created before multi-inbound support keep
 // working; Normalize folds them into Inbounds.
 type XraySettings struct {
-	LogLevel      string        `json:"logLevel,omitempty"`
-	RouteStrategy string        `json:"routeStrategy,omitempty"`
-	Sniffing      *XraySniffing `json:"sniffing,omitempty"`
-	Transport     string        `json:"transport"`
+	LogLevel          string        `json:"logLevel,omitempty"`
+	RouteStrategy     string        `json:"routeStrategy,omitempty"`
+	Sniffing          *XraySniffing `json:"sniffing,omitempty"`
+	Transport         string        `json:"transport"`
 	Security          string        `json:"security"`
 	Flow              string        `json:"flow"`
 	Fingerprint       string        `json:"fingerprint"`
@@ -411,16 +411,19 @@ type Event struct {
 
 // Finding is a rule based log-analysis result.
 type Finding struct {
-	ID          string    `json:"id"`
-	Severity    string    `json:"severity"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	NodeID      int64     `json:"nodeId,omitempty"`
-	NodeName    string    `json:"nodeName,omitempty"`
-	Count       int64     `json:"count"`
-	FirstSeen   time.Time `json:"firstSeen"`
-	LastSeen    time.Time `json:"lastSeen"`
-	Details     []string  `json:"details,omitempty"`
+	ID          string `json:"id"`
+	Severity    string `json:"severity"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	NodeID      int64  `json:"nodeId,omitempty"`
+	NodeName    string `json:"nodeName,omitempty"`
+	Count       int64  `json:"count"`
+	// CountLabel replaces the default "<count> 条观察" label when the counter
+	// means something other than raw log observations.
+	CountLabel string    `json:"countLabel,omitempty"`
+	FirstSeen  time.Time `json:"firstSeen"`
+	LastSeen   time.Time `json:"lastSeen"`
+	Details    []string  `json:"details,omitempty"`
 }
 
 // LogFilter controls log queries.

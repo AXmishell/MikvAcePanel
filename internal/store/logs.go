@@ -48,6 +48,23 @@ type NodeCount struct {
 	Count    int64  `json:"count"`
 }
 
+// NodeEventStat aggregates one classified event per node. FirstSeen and
+// LastSeen are the real log timestamps of the oldest and newest occurrence.
+type NodeEventStat struct {
+	NodeID    int64     `json:"nodeId"`
+	NodeName  string    `json:"nodeName"`
+	Count     int64     `json:"count"`
+	FirstSeen time.Time `json:"firstSeen"`
+	LastSeen  time.Time `json:"lastSeen"`
+}
+
+// NodeEventMark is one classified event occurrence.
+type NodeEventMark struct {
+	NodeID   int64
+	NodeName string
+	Time     time.Time
+}
+
 // NodeLogStat combines the main counters for one node.
 type NodeLogStat struct {
 	NodeID       int64  `json:"nodeId"`
@@ -475,10 +492,11 @@ func (s *Store) LogNodeStats(ctx context.Context, o model.LogStatsOptions) ([]No
 	return out, rows.Err()
 }
 
-// NodeEventCounts counts a classified event per node.
-func (s *Store) NodeEventCounts(ctx context.Context, event string, o model.LogStatsOptions) ([]NodeCount, error) {
+// NodeEventStats counts a classified event per node and keeps the oldest and
+// newest occurrence so findings can report real timestamps.
+func (s *Store) NodeEventStats(ctx context.Context, event string, o model.LogStatsOptions) ([]NodeEventStat, error) {
 	where, args := analysisWhere(o)
-	q := `SELECT l.node_id, COALESCE(MAX(n.name),''), COUNT(*) FROM hy2_logs l
+	q := `SELECT l.node_id, COALESCE(MAX(n.name),''), COUNT(*), MIN(l.ts), MAX(l.ts) FROM hy2_logs l
 		LEFT JOIN nodes n ON n.id = l.node_id
 		WHERE ` + strings.ReplaceAll(where, "node_id", "l.node_id") + ` AND l.event = ?
 		GROUP BY l.node_id ORDER BY COUNT(*) DESC`
@@ -488,13 +506,44 @@ func (s *Store) NodeEventCounts(ctx context.Context, event string, o model.LogSt
 		return nil, err
 	}
 	defer rows.Close()
-	out := []NodeCount{}
+	out := []NodeEventStat{}
 	for rows.Next() {
-		var c NodeCount
-		if err := rows.Scan(&c.NodeID, &c.NodeName, &c.Count); err != nil {
+		var c NodeEventStat
+		var first, last string
+		if err := rows.Scan(&c.NodeID, &c.NodeName, &c.Count, &first, &last); err != nil {
 			return nil, err
 		}
+		c.FirstSeen, c.LastSeen = parseTime(first), parseTime(last)
 		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// NodeEventMarks returns individual occurrences of a classified event, newest
+// first. The result is capped so a pathological restart loop cannot exhaust
+// memory; callers that need exact totals should use NodeEventStats.
+func (s *Store) NodeEventMarks(ctx context.Context, event string, o model.LogStatsOptions) ([]NodeEventMark, error) {
+	const maxMarks = 100000
+	where, args := analysisWhere(o)
+	q := `SELECT l.node_id, COALESCE(n.name,''), l.ts FROM hy2_logs l
+		LEFT JOIN nodes n ON n.id = l.node_id
+		WHERE ` + strings.ReplaceAll(where, "node_id", "l.node_id") + ` AND l.event = ?
+		ORDER BY l.ts DESC LIMIT ?`
+	args = append(args, event, maxMarks)
+	rows, err := s.DB.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []NodeEventMark{}
+	for rows.Next() {
+		var m NodeEventMark
+		var at string
+		if err := rows.Scan(&m.NodeID, &m.NodeName, &at); err != nil {
+			return nil, err
+		}
+		m.Time = parseTime(at)
+		out = append(out, m)
 	}
 	return out, rows.Err()
 }
