@@ -407,7 +407,7 @@ make server-api     # 使用 -tags noweb，不依赖 web/dist
 | 字段 | 说明 |
 | --- | --- |
 | `server.serve_web` | `false` 时只提供 API，不再返回内嵌前端（`/admin`、`/user` 等） |
-| `server.frontend_url` | 前端公网地址，API-only 模式下 `/` 与 `/panel` 跳转使用 |
+| `server.frontend_url` | 前端公网地址，API-only 模式下 `/` 跳转使用 |
 | `server.cors_origins` | 允许跨域的前端 Origin，必须精确匹配 |
 | `server.trusted_proxies` | API 反向代理地址，用于客户端 IP 和登录限流 |
 | `panel.public_url` | API 公网地址，用于订阅链接和节点认证 |

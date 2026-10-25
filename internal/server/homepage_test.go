@@ -62,14 +62,20 @@ func TestHomepageServesSPAInsteadOfRedirecting(t *testing.T) {
 		}
 	}
 
-	// The legacy /panel bookmark still redirects into the console.
-	r, err := client.Get(ts.URL + "/panel")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.Body.Close()
-	if r.StatusCode != http.StatusFound || r.Header.Get("Location") != "/admin/dashboard" {
-		t.Fatalf("/panel = %d %q", r.StatusCode, r.Header.Get("Location"))
+	// The retired /panel prefix no longer redirects into the console; it is
+	// hidden behind the same 404 view as any other unknown route.
+	for _, path := range []string{"/panel", "/panel/", "/panel/users"} {
+		r, err := client.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Body.Close()
+		if r.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s = %d, want 404", path, r.StatusCode)
+		}
+		if loc := r.Header.Get("Location"); loc != "" {
+			t.Fatalf("%s redirected to %q, want no redirect", path, loc)
+		}
 	}
 
 	// Enabling the security entrance hides /admin and requires the secret
@@ -99,5 +105,17 @@ func TestHomepageServesSPAInsteadOfRedirecting(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("%s with valid entrance = %d, want 200", path, resp.StatusCode)
 		}
+	}
+}
+
+func TestLegacyPanelPrefixReturnsNotFoundInAPIOnlyMode(t *testing.T) {
+	env := newTestEnv(t)
+	resp := env.do(t, "GET", "/panel", "", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("/panel = %d, want 404", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "" {
+		t.Fatalf("/panel redirected to %q, want no redirect", loc)
 	}
 }

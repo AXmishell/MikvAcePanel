@@ -104,7 +104,7 @@ docker compose up -d --build
 
 > **注意**：compose 使用 `./config:/config` 目录映射，配置放在 `./config/panel.yaml`。如果沿用旧版的单文件挂载 `./panel.yaml:/config/panel.yaml`，而宿主机上没有该文件，Docker / 1Panel 会把挂载点创建成目录，日志出现 `read /config/panel.yaml: is a directory`。新版面板会自动回退到 `/data/panel.yaml` 继续启动，详见[常见问题](docs/faq.md#启动日志反复出现-read-configpanelyaml-is-a-directory)。
 
-打开 `http://服务器IP:8080/` 查看公开首页。首次启动且 `admin.password_file` 为空时，访问 `/install`：向导第一步选择数据后端（SQLite / PostgreSQL / MySQL），第二步创建管理员账号。配置了密码文件的无人值守部署会在启动时自动创建。管理员控制台是 `/admin`（旧地址 `/panel` 会自动跳转到 `/admin/dashboard`），终端用户入口是 `/user`。
+打开 `http://服务器IP:8080/` 查看公开首页。首次启动且 `admin.password_file` 为空时，访问 `/install`：向导第一步选择数据后端（SQLite / PostgreSQL / MySQL），第二步创建管理员账号。配置了密码文件的无人值守部署会在启动时自动创建。管理员控制台是 `/admin`（旧地址 `/panel` 不再跳转，直接返回 404），终端用户入口是 `/user`。
 
 Docker 部署时应用配置**只从 `config/panel.yaml` 读取**，不读取环境变量，也不使用 `.env`。Compose 只负责端口、配置目录和数据目录映射。
 
@@ -236,7 +236,7 @@ VITE_BASE_PATH=/panel/
 VITE_API_BASE_URL=https://api.example.com/api
 ```
 
-> 面板默认使用根路径（`/admin/login`、`/admin/dashboard`、`/user` 等）。访问旧的 `/panel` 会被 302 到 `/admin/dashboard`，因此升级后无需修改已收藏的链接。
+> 面板默认使用根路径（`/admin/login`、`/admin/dashboard`、`/user` 等）。旧的 `/panel` 已停用，访问时会直接返回 404，请改用 `/admin/dashboard`。
 
 **2. 启动纯 API 服务（可选）**
 

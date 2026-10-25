@@ -331,23 +331,8 @@ func (s *Server) routes() http.Handler {
 	if s.cfg.ServeWeb {
 		// The SPA lives at the site root. The administrator console is under
 		// /admin and the user portal under /user; `/` is a public landing page.
-		// Keep the legacy /panel prefix working with a redirect that preserves
-		// deep links (for example /panel/users -> /admin/users).
-		redirectPanel := func(w http.ResponseWriter, r *http.Request) {
-			target := strings.TrimPrefix(r.URL.Path, "/panel")
-			if target == "" || target == "/" {
-				target = "/admin/dashboard"
-			} else {
-				target = "/admin" + target
-			}
-			if r.URL.RawQuery != "" {
-				target += "?" + r.URL.RawQuery
-			}
-			http.Redirect(w, r, target, http.StatusFound)
-		}
-		// `/` is a public landing page; `/panel` keeps redirecting into the
-		// administrator console for existing bookmarks. Uploaded homepage
-		// assets live under /homepage so they cannot shadow /admin or /api.
+		// Uploaded homepage assets live under /homepage so they cannot shadow
+		// /admin or /api.
 		r.Get("/", s.serveRoot)
 		r.Get("/homepage", s.handleHomepagePage)
 		r.Get("/homepage/*", s.handleHomepagePage)
@@ -355,8 +340,10 @@ func (s *Server) routes() http.Handler {
 		r.Get("/preview/homepage/{token}", s.handleHomepagePreviewPage)
 		r.Get("/preview/homepage/{token}/*", s.handleHomepagePreviewPage)
 		r.Get("/install", s.serveInstall)
-		r.Get("/panel", redirectPanel)
-		r.Get("/panel/*", redirectPanel)
+		// The legacy /panel prefix is intentionally hidden instead of
+		// redirecting to /admin, so it behaves like any other unknown route.
+		r.Get("/panel", s.serveNotFound)
+		r.Get("/panel/*", s.serveNotFound)
 		r.Get("/admin", s.serveAdminSPA)
 		r.Get("/admin/*", s.serveAdminSPA)
 		r.Get("/assets/*", s.serveSPA)
@@ -371,22 +358,6 @@ func (s *Server) routes() http.Handler {
 // registerAPIOnlyRoutes keeps the server usable as a pure API when the
 // frontend is deployed separately (for example behind a CDN).
 func (s *Server) registerAPIOnlyRoutes(r chi.Router) {
-	redirectToFrontend := func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.FrontendURL == "" {
-			writeError(w, http.StatusNotFound, "frontend is served separately")
-			return
-		}
-		target := strings.TrimPrefix(r.URL.Path, "/panel")
-		if target == "" || target == "/" {
-			target = "/admin/dashboard"
-		} else {
-			target = "/admin" + target
-		}
-		if r.URL.RawQuery != "" {
-			target += "?" + r.URL.RawQuery
-		}
-		http.Redirect(w, r, s.cfg.FrontendURL+target, http.StatusFound)
-	}
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.FrontendURL != "" {
 			http.Redirect(w, r, s.cfg.FrontendURL, http.StatusFound)
@@ -396,8 +367,6 @@ func (s *Server) registerAPIOnlyRoutes(r chi.Router) {
 			"ok": true, "service": "MikvAce Panel API", "frontend": "separate",
 		})
 	})
-	r.Get("/panel", redirectToFrontend)
-	r.Get("/panel/*", redirectToFrontend)
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})
@@ -575,6 +544,13 @@ func (s *Server) serveInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.serveSPA(w, r)
+}
+
+// serveNotFound returns the SPA shell with a 404 status so the client-side
+// NotFound view renders without advertising the endpoint. It is used for
+// retired routes such as the legacy /panel prefix.
+func (s *Server) serveNotFound(w http.ResponseWriter, _ *http.Request) {
+	s.writeIndex(w, http.StatusNotFound)
 }
 
 func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {

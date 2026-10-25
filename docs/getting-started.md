@@ -43,7 +43,7 @@ docker compose up -d --build
 docker compose logs -f panel
 ```
 
-打开 `http://服务器IP:8080/` 查看公开首页。首次启动且 `admin.password_file` 为空时，打开 `/install`：先选择 SQLite / PostgreSQL / MySQL，再创建第一个管理员；管理员控制台位于 `/admin`（旧地址 `/panel` 会自动跳转到 `/admin/dashboard`）。
+打开 `http://服务器IP:8080/` 查看公开首页。首次启动且 `admin.password_file` 为空时，打开 `/install`：先选择 SQLite / PostgreSQL / MySQL，再创建第一个管理员；管理员控制台位于 `/admin`（旧地址 `/panel` 不再跳转，直接返回 404）。
 
 ### 使用 GHCR 预构建镜像
 
