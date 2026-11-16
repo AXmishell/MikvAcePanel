@@ -62,7 +62,7 @@ docker run -d --name mikvace-panel --restart unless-stopped \
 
 > **注意**：请挂载 `./config` 目录，不要挂载单个 `./panel.yaml`。宿主机文件不存在时，Docker / 1Panel 会把单文件挂载点创建成目录，日志出现 `read /app/config/panel.yaml: is a directory`。新版面板检测到目录时会自动回退到 `/app/data/panel.yaml` 并继续启动安装器。
 
-镜像标签：`main`、`latest`（main 分支）与 `sha-<commit>`；发布 `v*.*.*` 标签时同时提供语义化版本，并更新 `latest`。`latest` 指向最后一次成功构建的镜像，需要固定版本请使用语义化版本标签。
+镜像只在**发布 GitHub Release** 时构建（推 `main` 或推 tag 都不会触发）。标签规则：稳定 Release 提供语义化版本、`<主>.<次>`、`latest` 与 `sha-<commit>`；预发行版只提供完整版本号与 `sha-<commit>`，不会移动 `latest`。需要固定版本请使用语义化版本标签。
 
 ## 2. 首次登录
 

@@ -2,22 +2,11 @@ name: Docker Images
 
 # Builds the panel and node images and pushes them to GHCR.
 #
-# Triggers are intentionally independent from tag pushes: `main` produces the
-# rolling `main` / `latest` / `sha-<commit>` tags, while versioned images are
-# built only after a GitHub Release is published (which is also when the
-# release archives are produced by release.yml).
+# Images are built only when a GitHub Release is published (same event that
+# makes release.yml upload the archives) or when run manually. Neither pushing
+# a tag nor pushing to `main` starts this workflow, so ordinary commits stay
+# free of multi-arch image builds.
 on:
-  push:
-    branches: [main]
-    # Documentation-only changes cannot affect the images; skip the (slow)
-    # multi-arch build for them.
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'site/**'
-      - 'mkdocs.yml'
-      - 'requirements-docs.txt'
-      - '.github/workflows/docs.yml'
   release:
     types: [published]
   workflow_dispatch:
@@ -87,15 +76,11 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ steps.prep.outputs.namespace }}/${{ env.IMAGE_NAME }}${{ matrix.suffix }}
           tags: |
-            type=ref,event=branch
             type=semver,pattern={{version}}
             # Pre-releases (`v1.2.3-rc.1`) must not move the stable `1.2` tag.
             type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
             type=sha,format=short
-            # `main` publishes `latest`; a stable (non-pre-release) GitHub
-            # Release publishes it as well, so the tag always points at the
-            # newest stable build.
-            type=raw,value=latest,enable={{is_default_branch}}
+            # Only a stable (non-pre-release) GitHub Release moves `latest`.
             type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
           flavor: |
             latest=false

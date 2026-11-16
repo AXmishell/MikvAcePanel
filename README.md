@@ -157,14 +157,14 @@ docker compose --profile redis up -d --build
 
 ### 预构建镜像（GHCR）
 
-推送到 `main` 或发布 GitHub Release 时，GitHub Actions 会自动构建并发布面板与节点镜像到 GHCR，支持 `linux/amd64` 和 `linux/arm64`（工作流见 `.github/workflows/images.yml`）。只推 tag 不会触发任何构建。面板镜像在构建时先编译 Vue 前端，再把 `web/dist` 嵌入 Go 二进制，因此默认只需要一个容器，不存在单独的 API 镜像。
+发布 GitHub Release 时，GitHub Actions 会自动构建并发布面板与节点镜像到 GHCR，支持 `linux/amd64` 和 `linux/arm64`（工作流见 `.github/workflows/images.yml`）。推送 `main` 或推送 tag 都不会触发镜像构建。面板镜像在构建时先编译 Vue 前端，再把 `web/dist` 嵌入 Go 二进制，因此默认只需要一个容器，不存在单独的 API 镜像。
 
 ```bash
 docker pull ghcr.io/axmishell/mikvacepanel:latest      # 面板（内嵌前端）
 docker pull ghcr.io/axmishell/mikvacepanel-node:latest   # 节点 Agent
 ```
 
-标签规则：`main` 分支发布 `main`、`latest`、`sha-<commit>`；Release 的 `v1.2.3` 标签发布 `1.2.3`、`1.2`、`latest`、`sha-<commit>`。`latest` 始终指向最后一次成功构建的镜像，因此后续的 `main` 构建会覆盖发布标签产生的 `latest`；需要稳定版本请使用语义化版本标签。
+标签规则：稳定 Release（例如 `v1.2.3`）发布 `1.2.3`、`1.2`、`latest`、`sha-<commit>`；预发行版（`v1.2.3-rc.1`）只发布 `1.2.3-rc.1` 与 `sha-<commit>`，不会移动 `1.2` 和 `latest`。`latest` 只由最近一次稳定 Release 更新，因此建议固定使用语义化版本标签。
 
 ### 预构建二进制（GitHub Releases）
 
