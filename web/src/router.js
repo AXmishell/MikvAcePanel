@@ -1,33 +1,15 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { auth, portalAuth } from './store'
+import { auth } from './store'
 import { fetchAdminConfig, fetchInstallStatus, setAdminEntry } from './api'
 
-// The administrator console lives under /admin and the self-service portal
-// under /user. `/` is a public landing page and must not link to /admin.
+// The administrator console is the only panel surface. `/` intentionally
+// renders the 404 view and must not link to /admin.
 const routes = [
   {
     path: '/install',
     name: 'install',
     component: () => import('./views/InstallView.vue'),
     meta: { public: true, title: '初始化面板' },
-  },
-  {
-    path: '/',
-    name: 'home',
-    component: () => import('./views/HomeView.vue'),
-    meta: { public: true, title: '首页' },
-  },
-  {
-    path: '/user/login',
-    name: 'portal-login',
-    component: () => import('./views/PortalLoginView.vue'),
-    meta: { public: true, portal: true, title: '用户登录' },
-  },
-  {
-    path: '/user',
-    name: 'portal',
-    component: () => import('./views/PortalView.vue'),
-    meta: { public: true, portal: true, title: '用户中心' },
   },
   {
     // The optional entry segment keeps /admin/login working when the security
@@ -55,10 +37,8 @@ const routes = [
     ],
   },
 
-  // Legacy URLs from before the admin/user split.
+  // Legacy URLs from before the administrator console moved under /admin.
   { path: '/login', redirect: (to) => ({ path: '/admin/login', query: to.query }) },
-  { path: '/portal/login', redirect: (to) => ({ path: '/user/login', query: to.query }) },
-  { path: '/portal', redirect: '/user' },
   { path: '/dashboard', redirect: '/admin/dashboard' },
   { path: '/users', redirect: '/admin/users' },
   { path: '/nodes', redirect: '/admin/nodes' },
@@ -66,7 +46,7 @@ const routes = [
   { path: '/logs', redirect: '/admin/logs' },
   { path: '/settings', redirect: '/admin/settings' },
 
-  { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('./views/NotFoundView.vue'), meta: { public: true } },
+  { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('./views/NotFoundView.vue'), meta: { public: true, title: '页面不存在' } },
 ]
 
 const router = createRouter({
@@ -141,16 +121,6 @@ router.beforeEach(async (to) => {
     }
     if (!auth.token) {
       return { name: 'admin-login', params: { entry: entry || undefined }, query: { redirect: to.fullPath } }
-    }
-    return true
-  }
-
-  if (to.meta.portal) {
-    if (to.name === 'portal-login') {
-      return portalAuth.token ? { name: 'portal' } : true
-    }
-    if (!portalAuth.token) {
-      return { name: 'portal-login', query: { redirect: to.fullPath } }
     }
     return true
   }

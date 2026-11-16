@@ -124,6 +124,14 @@ func logWhere(f model.LogFilter) (string, []any) {
 	if f.NodeID > 0 {
 		where = append(where, "l.node_id = ?")
 		args = append(args, f.NodeID)
+	} else if f.NodeIDs != nil {
+		if len(f.NodeIDs) == 0 {
+			where = append(where, "1=0")
+		} else {
+			marks, nargs := intMarks(f.NodeIDs)
+			where = append(where, "l.node_id IN ("+marks+")")
+			args = append(args, nargs...)
+		}
 	}
 	if f.Level != "" {
 		where = append(where, "l.level = ?")
@@ -241,6 +249,14 @@ func analysisWhere(o model.LogStatsOptions) (string, []any) {
 	if o.NodeID > 0 {
 		where = append(where, "node_id = ?")
 		args = append(args, o.NodeID)
+	} else if o.NodeIDs != nil {
+		if len(o.NodeIDs) == 0 {
+			where = append(where, "1=0")
+		} else {
+			marks, nargs := intMarks(o.NodeIDs)
+			where = append(where, "node_id IN ("+marks+")")
+			args = append(args, nargs...)
+		}
 	}
 	if !o.From.IsZero() {
 		where = append(where, "ts >= ?")

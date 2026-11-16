@@ -12,9 +12,9 @@ import (
 )
 
 // NewSetup creates the minimal first-run application used when panel.yaml
-// selects database.driver: setup. It never opens SQLite or any other database;
-// the wizard only serves the backend picker and writes the chosen config before
-// restarting into the full server.
+// selects database.driver: setup. It never opens SQLite; the wizard only serves
+// the SQLite path step and writes the chosen config before restarting into the
+// full server.
 func NewSetup(cfg Config, logger *slog.Logger) *Server {
 	s := &Server{
 		cfg:            cfg,

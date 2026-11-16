@@ -18,19 +18,8 @@ func TestOpenConfigSQLiteDefault(t *testing.T) {
 	if st.Dialect().Name() != dialect.SQLite {
 		t.Fatalf("dialect = %s", st.Dialect().Name())
 	}
-	if got := st.DB.Rebind("SELECT ?"); got != "SELECT ?" {
-		t.Fatalf("sqlite rebind = %q", got)
-	}
 	if err := st.DB.Heartbeat(context.Background()); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestOpenConfigRejectsRemoteBackendsForNow(t *testing.T) {
-	for _, driver := range []string{dialect.Postgres, dialect.MySQL} {
-		if _, err := OpenConfig(Config{Driver: driver, DSN: "unused://"}); err == nil {
-			t.Fatalf("%s should not open yet", driver)
-		}
 	}
 }
 

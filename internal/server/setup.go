@@ -13,11 +13,10 @@ import (
 
 // minInstallPasswordLength mirrors the administrator password policy used by
 // the account settings page.
-const minInstallPasswordLength = 12
+const minInstallPasswordLength = 8
 
-// installStatus is public. It exposes setup state and non-secret database
-// paths, which are already obvious from the /install page being reachable.
-// DSN contents are never included.
+// installStatus is public. It exposes setup state and non-secret SQLite paths,
+// which are already obvious from the /install page being reachable.
 type installStatus struct {
 	Installed  bool `json:"installed"`
 	NeedsSetup bool `json:"needsSetup"`
@@ -36,13 +35,10 @@ type installStatus struct {
 	StartedAt time.Time `json:"startedAt"`
 }
 
-// databaseStatus describes the on-disk database configuration. It never
-// contains the DSN itself; the installer only needs to know whether one exists.
+// databaseStatus describes the on-disk database configuration.
 type databaseStatus struct {
-	Driver        string `json:"driver"`
-	Path          string `json:"path,omitempty"`
-	DSNFile       string `json:"dsnFile,omitempty"`
-	DSNConfigured bool   `json:"dsnConfigured"`
+	Driver string `json:"driver"`
+	Path   string `json:"path,omitempty"`
 }
 
 func (s *Server) installStatus(r *http.Request) installStatus {
@@ -52,10 +48,8 @@ func (s *Server) installStatus(r *http.Request) installStatus {
 		PanelName:  s.cfg.PanelName,
 		PublicURL:  s.cfg.PublicURL,
 		DatabaseConfig: databaseStatus{
-			Driver:        s.cfg.DBDriver,
-			Path:          s.cfg.DBPath,
-			DSNFile:       s.cfg.DBDSNFile,
-			DSNConfigured: strings.TrimSpace(s.cfg.DBDSN) != "",
+			Driver: s.cfg.DBDriver,
+			Path:   s.cfg.DBPath,
 		},
 		Version:        version.String(),
 		ConfigPath:     s.cfg.ConfigPath,
@@ -134,7 +128,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Password) < minInstallPasswordLength {
 		s.recordLoginFailure(r.Context(), "install", ip)
-		writeError(w, http.StatusBadRequest, "password must be at least 12 characters")
+		writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}
 

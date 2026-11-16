@@ -49,25 +49,22 @@ func TestInstallDatabaseSQLite(t *testing.T) {
 	if !strings.Contains(string(raw), "driver: sqlite") {
 		t.Fatalf("config missing driver:\n%s", raw)
 	}
-	if !strings.Contains(string(raw), "dsn_file: \"\"") {
-		t.Fatalf("config should clear dsn_file:\n%s", raw)
-	}
 }
 
-func TestInstallDatabaseRejectsMismatchedDSN(t *testing.T) {
+func TestInstallDatabaseRejectsRemoteDriver(t *testing.T) {
 	env := newSetupEnv(t)
 	resp := env.do(t, "POST", "/api/install/database/test", "", map[string]any{
 		"driver": "postgres",
-		"dsn":    "mysql://user:pass@db:3306/mikvace",
+		"path":   filepath.Join(env.app.cfg.DataDir, "panel.db"),
 	})
 	if resp.StatusCode != http.StatusBadRequest {
 		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("mismatched dsn = %d: %s", resp.StatusCode, b)
+		t.Fatalf("remote driver = %d: %s", resp.StatusCode, b)
 	}
 	resp.Body.Close()
 }
 
-func TestInstallDatabaseRemoteWritesSecretAndRestarts(t *testing.T) {
+func TestInstallDatabaseChangeRestarts(t *testing.T) {
 	env := newSetupEnv(t)
 
 	originalTest := testDatabaseConnection
@@ -82,9 +79,9 @@ func TestInstallDatabaseRemoteWritesSecretAndRestarts(t *testing.T) {
 	restarted := make(chan struct{}, 1)
 	env.app.cfg.Restart = func() { restarted <- struct{}{} }
 
-	dsn := "postgres://user:supersecret@db:5432/mikvace?sslmode=disable"
+	chosen := filepath.Join(env.app.cfg.DataDir, "chosen.db")
 	resp := env.do(t, "POST", "/api/install/database", "", map[string]any{
-		"driver": "postgres", "dsn": dsn,
+		"driver": "sqlite", "path": chosen,
 	})
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
@@ -96,34 +93,15 @@ func TestInstallDatabaseRemoteWritesSecretAndRestarts(t *testing.T) {
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&saved)
 	resp.Body.Close()
-	if saved.Driver != "postgres" || !saved.RestartRequired {
+	if saved.Driver != "sqlite" || !saved.RestartRequired {
 		t.Fatalf("save = %+v", saved)
-	}
-
-	secretPath := filepath.Join(env.app.cfg.DataDir, "database.dsn")
-	secret, err := os.ReadFile(secretPath)
-	if err != nil {
-		t.Fatalf("read secret: %v", err)
-	}
-	if strings.TrimSpace(string(secret)) != dsn {
-		t.Fatalf("secret = %q", secret)
-	}
-	st, err := os.Stat(secretPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Mode().Perm() != 0o600 {
-		t.Fatalf("secret mode = %v", st.Mode().Perm())
 	}
 
 	raw, err := os.ReadFile(env.app.cfg.ConfigPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "supersecret") {
-		t.Fatalf("panel.yaml must not contain the DSN:\n%s", raw)
-	}
-	if !strings.Contains(string(raw), "driver: postgres") || !strings.Contains(string(raw), "database.dsn") {
+	if !strings.Contains(string(raw), "driver: sqlite") || !strings.Contains(string(raw), chosen) {
 		t.Fatalf("panel.yaml = \n%s", raw)
 	}
 
@@ -131,22 +109,6 @@ func TestInstallDatabaseRemoteWritesSecretAndRestarts(t *testing.T) {
 	case <-restarted:
 	case <-time.After(3 * time.Second):
 		t.Fatal("database change did not trigger a restart")
-	}
-}
-
-func TestInstallDatabaseStatusNeverLeaksDSN(t *testing.T) {
-	env := newSetupEnv(t)
-	env.app.cfg.DBDSN = "postgres://user:topsecret@db:5432/mikvace"
-	env.app.cfg.DBDSNFile = "/run/secrets/database_url"
-
-	resp := env.do(t, "GET", "/api/install/status", "", nil)
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if strings.Contains(string(body), "topsecret") {
-		t.Fatalf("status leaked the DSN: %s", body)
-	}
-	if !strings.Contains(string(body), "\"dsnConfigured\":true") {
-		t.Fatalf("status did not report the configured DSN: %s", body)
 	}
 }
 

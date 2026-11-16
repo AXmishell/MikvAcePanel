@@ -38,6 +38,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata wget
 COPY --from=go-build /out/mikvace-server /usr/local/bin/mikvace-server
+WORKDIR /app
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -qO- http://127.0.0.1:8080/api/health >/dev/null || exit 1

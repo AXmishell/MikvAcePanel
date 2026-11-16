@@ -3,7 +3,7 @@
     <div class="toolbar">
       <div>
         <div class="page-title">设置</div>
-        <div class="dim small">面板信息、公开首页、订阅页面、日志分析与安全设置。</div>
+        <div class="dim small">面板信息、订阅页面、日志分析与安全设置。</div>
       </div>
     </div>
 
@@ -12,9 +12,7 @@
 
     <div class="tabs">
       <button class="tab" :class="{ active: tab === 'general' }" @click="tab = 'general'">常规</button>
-      <button class="tab" :class="{ active: tab === 'homepage' }" @click="tab = 'homepage'; loadHomepage()">首页</button>
       <button class="tab" :class="{ active: tab === 'subscription' }" @click="tab = 'subscription'">订阅页面</button>
-      <button class="tab" :class="{ active: tab === 'portal' }" @click="tab = 'portal'">用户中心</button>
       <button class="tab" :class="{ active: tab === 'analysis' }" @click="tab = 'analysis'">日志分析</button>
       <button class="tab" :class="{ active: tab === 'security' }" @click="tab = 'security'">安全</button>
       <button class="tab" :class="{ active: tab === 'certs' }" @click="tab = 'certs'; loadCertSettings()">证书签发</button>
@@ -46,7 +44,7 @@
             <dt>数据目录</dt><dd class="mono">{{ meta.dataDir }}</dd>
           </dl>
         </div>
-        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
+        <div class="modal-footer" style="border-radius: 0">
           <button class="btn btn-primary" :disabled="saving" @click="save(['panel_name', 'public_url'])">保存常规设置</button>
         </div>
       </section>
@@ -75,91 +73,6 @@
               </span>
             </button>
           </div>
-        </div>
-      </section>
-
-      <section v-show="tab === 'homepage'" class="card">
-        <div class="card-header">
-          <div>
-            <div class="card-title">公开首页</div>
-            <div class="card-sub">/ 可以显示内置落地页，或上传自定义 HTML。自定义页面在沙箱 iframe 中运行，可以执行 JavaScript，但无法读取面板登录状态。</div>
-          </div>
-        </div>
-        <div class="card-body">
-          <div v-if="homepageError" class="banner banner-danger" style="margin-bottom: 12px">{{ homepageError }}</div>
-          <div class="form-grid">
-            <div class="field full">
-              <label>首页模式</label>
-              <div class="chip-list">
-                <button type="button" class="chip" :class="{ on: homepage.mode === 'builtin' }" @click="setHomepageMode('builtin')">内置落地页</button>
-                <button type="button" class="chip" :class="{ on: homepage.mode === 'upload' }" :disabled="!homepage.activeVersion" @click="setHomepageMode('upload')">自定义 HTML</button>
-              </div>
-              <span class="hint">自定义页面不支持搜索引擎收录，访问地址仍然是 /；面板后台 /admin 与 API 不受影响。</span>
-            </div>
-            <div class="field full">
-              <label>上传 HTML 或 ZIP</label>
-              <input
-                ref="homepageFileInput"
-                class="homepage-file-input"
-                type="file"
-                accept=".html,.htm,.zip,text/html,application/zip"
-                :disabled="homepageUploading"
-                @change="uploadHomepage"
-              />
-              <button
-                type="button"
-                class="homepage-dropzone"
-                :class="{ dragging: homepageDragging, busy: homepageUploading }"
-                :disabled="homepageUploading"
-                @click="pickHomepageFile"
-                @dragenter.prevent="homepageDragging = true"
-                @dragover.prevent="homepageDragging = true"
-                @dragleave.prevent="onHomepageDragLeave"
-                @drop.prevent="dropHomepageFile"
-              >
-                <span class="homepage-drop-icon">
-                  <Loader2 v-if="homepageUploading" :size="20" class="spin" />
-                  <UploadCloud v-else :size="20" />
-                </span>
-                <span class="homepage-drop-copy">
-                  <strong>{{ homepageUploading ? '正在上传并校验…' : '点击选择，或把文件拖到这里' }}</strong>
-                  <small>HTML ≤ 2 MB · ZIP ≤ 25 MB · 支持 CSS / JS / 图片 / 字体</small>
-                </span>
-                <span class="homepage-drop-action">{{ homepageUploading ? '请稍候' : '选择文件' }}</span>
-              </button>
-              <span class="hint">
-                ZIP 解压后上限 50 MB，需包含 index.html（或单一顶层目录内的 index.html）。上传只会暂存版本，确认预览后再启用。
-              </span>
-            </div>
-          </div>
-          <div class="divider"></div>
-          <div v-if="homepage.versions.length" class="table-wrap">
-            <table>
-              <thead><tr><th>版本</th><th>来源</th><th>文件</th><th>大小</th><th>上传时间</th><th></th></tr></thead>
-              <tbody>
-                <tr v-for="v in homepage.versions" :key="v.version">
-                  <td class="mono small">
-                    {{ v.version }}
-                    <span v-if="v.active" class="badge badge-ok">当前</span>
-                  </td>
-                  <td class="small">{{ v.source || '—' }}</td>
-                  <td class="small">{{ v.files || '—' }}</td>
-                  <td class="small">{{ v.size ? fmtBytes(v.size) : '—' }}</td>
-                  <td class="small">{{ v.uploadedAt ? fmtDate(v.uploadedAt) : '—' }}</td>
-                  <td style="text-align: right; white-space: nowrap">
-                    <button type="button" class="btn btn-sm" @click="previewHomepage(v.version)">预览</button>
-                    <button v-if="!v.active" type="button" class="btn btn-sm" :disabled="homepageBusy" @click="activateHomepage(v.version)">启用</button>
-                    <button v-if="!v.active" type="button" class="btn btn-sm btn-danger" :disabled="homepageBusy" @click="deleteHomepageVersion(v.version)">删除</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div v-else class="empty">尚未上传自定义首页。</div>
-        </div>
-        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
-          <button class="btn" :disabled="homepageBusy || homepageUploading" @click="loadHomepage">刷新</button>
-          <button class="btn btn-danger" :disabled="homepageBusy || homepage.mode !== 'upload'" @click="resetHomepage">恢复内置首页</button>
         </div>
       </section>
 
@@ -196,49 +109,8 @@
             <div class="field full"><label>HAPP 公告</label><input v-model="form.happ_announce" type="text" placeholder="可选公告" /></div>
           </div>
         </div>
-        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
+        <div class="modal-footer" style="border-radius: 0">
           <button class="btn btn-primary" :disabled="saving" @click="save(['page_title', 'subscription_title', 'page_note', 'logo_url', 'subscription_update_interval', 'support_url', 'web_page_url', 'subscription_buttons', 'subscription_hy2_endpoints', 'happ_provider_id', 'happ_routing_mode', 'happ_routing_profile', 'happ_announce'])">保存订阅设置</button>
-        </div>
-      </section>
-
-      <section v-show="tab === 'portal'" class="card">
-        <div class="card-header">
-          <div>
-            <div class="card-title">终端用户中心</div>
-            <div class="card-sub">用户使用用户 ID 与密码登录，查看订阅、流量、到期时间与设备。</div>
-          </div>
-        </div>
-        <div class="card-body">
-          <div class="form-grid">
-            <div class="field full">
-              <label class="checkbox">
-                <span class="switch"><input v-model="form.portal_enabled" type="checkbox" /></span>
-                启用用户中心
-              </label>
-              <span class="hint">关闭后 /user 登录会被拒绝，已有的订阅链接不受影响。</span>
-            </div>
-            <div class="field"><label>页面标题</label><input v-model="form.portal_title" type="text" placeholder="用户中心" /></div>
-            <div class="field"><label>登录有效期（小时）</label><input v-model.number="form.portal_session_hours" type="number" min="1" max="720" />
-              <span class="hint">默认 72 小时，最长 720 小时。</span>
-            </div>
-            <div class="field full"><label>页面说明</label><input v-model="form.portal_note" type="text" placeholder="留空则使用订阅页面的说明" /></div>
-            <div class="field full">
-              <label>入口地址</label>
-              <CopyField :value="portalPreview" prefix="入口" />
-              <span class="hint">用户可以把它加入书签，或由管理员随订阅信息一起发送。</span>
-            </div>
-            <div class="field full">
-              <label>用户可自助操作</label>
-              <div class="chip-list">
-                <label class="checkbox"><input v-model="form.portal_allow_password_change" type="checkbox" /> 修改密码</label>
-                <label class="checkbox"><input v-model="form.portal_allow_sub_reset" type="checkbox" /> 重置订阅链接</label>
-              </div>
-              <span class="hint">重置订阅链接会让旧链接立即失效，建议只在必要时开放。重置设备仅限管理员在用户列表中操作。</span>
-            </div>
-          </div>
-        </div>
-        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
-          <button class="btn btn-primary" :disabled="saving" @click="save(['portal_enabled', 'portal_title', 'portal_note', 'portal_session_hours', 'portal_allow_password_change', 'portal_allow_sub_reset'])">保存用户中心设置</button>
         </div>
       </section>
 
@@ -253,7 +125,6 @@
               </label>
               <span class="hint">关闭后 Agent 仍运行，但日志批次会被确认并丢弃。</span>
             </div>
-            <div class="field"><label>保留天数</label><input v-model="form.log_retention_days" type="number" min="1" /></div>
             <div class="field"><label>设备宽限期（分钟）</label><input v-model="form.device_grace_minutes" type="number" min="1" />
               <span class="hint">离线设备 IP 在认证限流中被遗忘前的等待时间。</span>
             </div>
@@ -261,8 +132,49 @@
             <div class="field"><label>错误爆发阈值（单节点错误数）</label><input v-model="form.alert_error_burst_threshold" type="number" min="1" /></div>
           </div>
         </div>
-        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
-          <button class="btn btn-primary" :disabled="saving" @click="save(['log_ingest_enabled', 'log_retention_days', 'device_grace_minutes', 'alert_auth_fail_threshold', 'alert_error_burst_threshold'])">保存分析设置</button>
+        <div class="modal-footer" style="border-radius: 0">
+          <button class="btn btn-primary" :disabled="saving" @click="save(['log_ingest_enabled', 'device_grace_minutes', 'alert_auth_fail_threshold', 'alert_error_burst_threshold'])">保存分析设置</button>
+        </div>
+      </section>
+
+      <section v-show="tab === 'analysis'" class="card section-gap">
+        <div class="card-header">
+          <div>
+            <div class="card-title">数据清理</div>
+            <div class="card-sub">自动删除超过保留天数的日志、审计事件和监控采样，控制数据库与备份体积。</div>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn btn-sm" :disabled="usageLoading" @click="loadUsage">{{ usageLoading ? '读取中…' : '刷新用量' }}</button>
+        </div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="field">
+              <label>日志保留天数</label>
+              <input v-model="form.log_retention_days" type="number" min="1" />
+              <span class="hint">代理日志、日志批次和审计事件。</span>
+            </div>
+            <div class="field">
+              <label>监控采样保留天数</label>
+              <input v-model="form.metric_retention_days" type="number" min="1" />
+              <span class="hint">节点心跳与流量曲线数据；越短备份越小。</span>
+            </div>
+          </div>
+          <div class="divider"></div>
+          <dl class="kv">
+            <dt>数据库大小</dt><dd>{{ fmtBytes(usage?.databaseBytes || 0) }}<span v-if="usage?.walBytes" class="dim"> · WAL {{ fmtBytes(usage.walBytes) }}</span></dd>
+            <dt>代理日志</dt><dd>{{ fmtRows(usage?.logs) }} 行</dd>
+            <dt>审计事件</dt><dd>{{ fmtRows(usage?.events) }} 行</dd>
+            <dt>监控采样</dt><dd>{{ fmtRows(usage?.nodeMetrics) }} 行</dd>
+            <dt>流量批次</dt><dd>{{ fmtRows(usage?.statsBatches) }} 行</dd>
+          </dl>
+          <label class="checkbox" style="margin-top: 12px">
+            <span class="switch"><input v-model="cleanupVacuum" type="checkbox" /><span></span></span>
+            清理后压缩数据库（VACUUM，可能短暂阻塞写入）
+          </label>
+        </div>
+        <div class="modal-footer" style="border-radius: 0">
+          <button class="btn btn-danger" :disabled="cleanupBusy" @click="runCleanup">{{ cleanupBusy ? '清理中…' : '立即清理' }}</button>
+          <button class="btn btn-primary" :disabled="saving" @click="save(['log_retention_days', 'metric_retention_days'])">保存清理策略</button>
         </div>
       </section>
 
@@ -293,7 +205,7 @@
             创建时间：{{ auth.admin?.createdAt ? fmtDate(auth.admin.createdAt) : '—' }}
           </div>
         </div>
-        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
+        <div class="modal-footer" style="border-radius: 0">
           <button class="btn btn-primary" :disabled="account.saving" @click="saveAccount">{{ account.saving ? '保存中…' : '保存账号信息' }}</button>
         </div>
       </section>
@@ -312,9 +224,9 @@
             </div>
           </div>
           <div class="divider"></div>
-          <div class="small dim">新密码至少 12 个字符。修改密码后其他会话会在数秒内失效，当前会话会自动续签。</div>
+          <div class="small dim">新密码至少 8 个字符。修改密码后其他会话会在数秒内失效，当前会话会自动续签。</div>
         </div>
-        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
+        <div class="modal-footer" style="border-radius: 0">
           <button class="btn btn-primary" :disabled="pwSaving" @click="changePassword">{{ pwSaving ? '更新中…' : '更新密码' }}</button>
         </div>
       </section>
@@ -354,7 +266,7 @@
             </div>
           </div>
         </div>
-        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
+        <div class="modal-footer" style="border-radius: 0">
           <button class="btn btn-primary" :disabled="saving" @click="save(['admin_security_enabled', 'admin_security_path'])">保存安全入口设置</button>
         </div>
       </section>
@@ -396,7 +308,7 @@
             </template>
             <template v-else>
               <div class="flex" style="gap: 20px; flex-wrap: wrap">
-                <img :src="twoFA.setup.qr" alt="2FA QR" style="width: 220px; height: 220px; border-radius: 12px; background: #fff; padding: 8px" />
+                <img :src="twoFA.setup.qr" alt="2FA QR" style="width: 220px; height: 220px; border-radius: 0; background: #fff; padding: 8px" />
                 <div style="flex: 1; min-width: 260px">
                   <div class="small dim">扫码，或手动输入密钥：</div>
                   <div class="mono" style="word-break: break-all; margin: 6px 0">{{ twoFA.setup.secret }}</div>
@@ -419,20 +331,39 @@
         <div class="card-header">
           <div>
             <div class="card-title">API 密钥</div>
-            <div class="card-sub">用于自动化与 REST API 的作用域凭据</div>
+            <div class="card-sub">按密钥细分 API 资源权限，并可限定可访问的节点与分组</div>
           </div>
           <div class="spacer"></div>
-          <button class="btn btn-primary btn-sm" @click="openKeyModal"><Plus :size="14" /> 新建密钥</button>
+          <button class="btn btn-primary btn-sm" @click="openKeyModal()"><Plus :size="14" /> 新建密钥</button>
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>名称</th><th>令牌</th><th>作用域</th><th>最后使用</th><th>状态</th><th></th></tr></thead>
+            <thead><tr><th>名称</th><th>令牌</th><th>权限</th><th>资源范围</th><th>使用</th><th>状态</th><th></th></tr></thead>
             <tbody>
               <tr v-for="k in apiKeys" :key="k.id">
-                <td style="font-weight: 600">{{ k.name }}<div class="dim small">{{ k.rateLimit || 60 }} req/min</div></td>
+                <td style="font-weight: 600">
+                  {{ k.name }}
+                  <div v-if="k.description" class="dim small">{{ k.description }}</div>
+                </td>
                 <td class="mono small">{{ k.prefix }}…</td>
-                <td><div class="chip-list"><span v-for="sc in k.scopes" :key="sc" class="badge badge-muted">{{ sc }}</span></div></td>
-                <td class="small dim">{{ k.lastUsedAt ? fmtRelative(k.lastUsedAt) : 'never' }}</td>
+                <td>
+                  <div class="chip-list key-scopes">
+                    <span v-for="sc in k.scopes" :key="sc" class="badge" :class="permissionSensitive(sc) ? 'badge-warn' : 'badge-muted'">{{ permissionLabel(sc) }}</span>
+                  </div>
+                </td>
+                <td class="small">
+                  <span v-if="!k.nodeIds?.length && !k.groupIds?.length" class="badge badge-muted">全部资源</span>
+                  <div v-else class="chip-list key-scopes">
+                    <span v-for="id in k.groupIds || []" :key="'g' + id" class="badge badge-info">分组 · {{ groupName(id) }}</span>
+                    <span v-for="id in k.nodeIds || []" :key="'n' + id" class="badge badge-info">节点 · {{ nodeName(id) }}</span>
+                  </div>
+                </td>
+                <td class="small dim">
+                  <div>{{ k.requestCount || 0 }} 次请求</div>
+                  <div>{{ k.rateLimit || 60 }} req/min</div>
+                  <div>{{ k.lastUsedAt ? '最后 ' + fmtRelative(k.lastUsedAt) : '从未使用' }}</div>
+                  <div v-if="k.lastUsedIp" class="mono" style="font-size: 10.5px">{{ k.lastUsedIp }}</div>
+                </td>
                 <td>
                   <span v-if="!k.enabled" class="badge badge-muted">已禁用</span>
                   <span v-else-if="k.expiresAt && new Date(k.expiresAt) < new Date()" class="badge badge-danger">已过期</span>
@@ -440,12 +371,14 @@
                 </td>
                 <td>
                   <div class="row-actions">
+                    <button v-tip="'编辑权限'" class="icon-btn" @click="openKeyModal(k)"><Pencil :size="15" /></button>
+                    <button v-tip="'轮换令牌'" class="icon-btn" @click="rotateKey(k)"><RefreshCw :size="15" /></button>
                     <button v-tip="k.enabled ? '禁用' : '启用'" class="icon-btn" @click="toggleKey(k)"><Power :size="15" /></button>
                     <button v-tip="'删除密钥'" class="icon-btn danger" @click="deleteKey(k)"><Trash2 :size="15" /></button>
                   </div>
                 </td>
               </tr>
-              <tr v-if="!apiKeys.length"><td colspan="6"><div class="empty">暂无 API 密钥。</div></td></tr>
+              <tr v-if="!apiKeys.length"><td colspan="7"><div class="empty">暂无 API 密钥。</div></td></tr>
             </tbody>
           </table>
         </div>
@@ -500,7 +433,7 @@
             </div>
           </div>
         </div>
-        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
+        <div class="modal-footer" style="border-radius: 0">
           <button class="btn" :disabled="certSaving" @click="clearCertCredentials">清除 DNS 凭据</button>
           <button v-if="certForm.eabConfigured && !isLiteSSL" class="btn" :disabled="certSaving" @click="clearEabCredentials">清除 EAB 凭据</button>
           <div class="spacer"></div>
@@ -549,47 +482,82 @@
             </tbody>
           </table>
         </div>
-        <div class="modal-footer" style="border-radius: 0 0 var(--radius) var(--radius)">
+        <div class="modal-footer" style="border-radius: 0">
           <button class="btn btn-primary" :disabled="saving" @click="save(['backup_enabled', 'backup_interval_hours', 'backup_keep'])">保存备份设置</button>
         </div>
       </section>
     </template>
 
-    <Modal v-model="homepagePreviewOpen" title="首页预览" size="lg">
-      <div class="banner banner-warn" style="margin-bottom: 12px">
-        预览页面在沙箱 iframe 中运行，与真实首页一致；预览链接约 10 分钟后失效。
-      </div>
-      <iframe
-        v-if="homepagePreviewUrl"
-        :src="homepagePreviewUrl"
-        class="homepage-preview"
-        referrerpolicy="no-referrer"
-        sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads allow-top-navigation-by-user-activation"
-      ></iframe>
-    </Modal>
-
-    <Modal v-model="keyModal" title="创建 API 密钥" size="sm">
+    <Modal v-model="keyModal" :title="editingKey ? '编辑 API 密钥' : '创建 API 密钥'" size="lg">
       <div v-if="keyError" class="banner banner-danger">{{ keyError }}</div>
-      <div class="field" style="margin-bottom: 13px">
-        <label>名称</label><input v-model="keyForm.name" type="text" placeholder="监控机器人" />
-      </div>
-      <div class="field" style="margin-bottom: 13px">
-        <label>作用域</label>
-        <div class="chip-list">
-          <button v-for="sc in scopes" :key="sc.value" type="button" class="chip" :class="{ on: keyForm.scopes.includes(sc.value) }" @click="toggleScope(sc.value)">{{ sc.value }}</button>
+      <div class="form-grid">
+        <div class="field">
+          <label>名称</label><input v-model="keyForm.name" type="text" placeholder="监控机器人" />
         </div>
-        <span class="hint">{{ scopes.find(s => keyForm.scopes.includes(s.value))?.label || '至少选择一个作用域' }}</span>
+        <div class="field">
+          <label>说明（可选）</label><input v-model="keyForm.description" type="text" placeholder="仅用于读取节点状态" />
+        </div>
       </div>
-      <div class="field" style="margin-bottom: 13px"><label>速率限制（请求 / 分钟）</label><input v-model.number="keyForm.rateLimit" type="number" min="1" /></div>
-      <div class="field"><label>到期时间（可选）</label><input v-model="keyForm.expiresAt" type="datetime-local" /></div>
+      <div class="field key-block">
+        <label>API 权限</label>
+        <div class="perm-groups">
+          <div v-for="(items, group) in permissionGroups" :key="group" class="perm-group">
+            <div class="perm-head">
+              <span>{{ group }}</span>
+              <button type="button" class="link-btn" @click="togglePermissionGroup(items)">
+                {{ groupFullySelected(items) ? '清空' : '全选' }}
+              </button>
+            </div>
+            <div class="chip-list">
+              <button
+                v-for="p in items"
+                :key="p.value"
+                type="button"
+                class="chip"
+                :class="{ on: keyForm.scopes.includes(p.value) }"
+                :title="p.description || p.value"
+                @click="toggleScope(p.value)"
+              >
+                {{ p.label }}
+                <span v-if="p.sensitive" class="badge badge-warn">敏感</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <span class="hint">{{ selectedScopesSummary }}</span>
+      </div>
+      <div class="field key-block">
+        <label>资源范围（留空表示全部）</label>
+        <div class="resource-picker">
+          <div>
+            <div class="mini-title">分组</div>
+            <div class="chip-list scroll-chips">
+              <button v-for="g in resources.groups" :key="g.id" type="button" class="chip" :class="{ on: keyForm.groupIds.includes(g.id) }" @click="toggleResource('groupIds', g.id)">{{ g.name }}</button>
+              <span v-if="!resources.groups.length" class="dim small">暂无分组</span>
+            </div>
+          </div>
+          <div>
+            <div class="mini-title">节点</div>
+            <div class="chip-list scroll-chips">
+              <button v-for="n in resources.nodes" :key="n.id" type="button" class="chip" :class="{ on: keyForm.nodeIds.includes(n.id) }" @click="toggleResource('nodeIds', n.id)">{{ n.name }}</button>
+              <span v-if="!resources.nodes.length" class="dim small">暂无节点</span>
+            </div>
+          </div>
+        </div>
+        <span class="hint">限定后，该密钥只能访问选中的分组、节点及其关联用户；仪表盘、设置、备份与全局同步等全局接口会被拒绝。</span>
+      </div>
+      <div class="form-grid">
+        <div class="field"><label>速率限制（请求 / 分钟）</label><input v-model.number="keyForm.rateLimit" type="number" min="1" max="6000" /></div>
+        <div class="field"><label>到期时间（可选）</label><input v-model="keyForm.expiresAt" type="datetime-local" /></div>
+      </div>
       <template #footer>
         <button class="btn" @click="keyModal = false">取消</button>
-        <button class="btn btn-primary" :disabled="keySaving" @click="createKey">{{ keySaving ? '创建中…' : '创建密钥' }}</button>
+        <button class="btn btn-primary" :disabled="keySaving" @click="saveKey">{{ keySaving ? '保存中…' : (editingKey ? '保存修改' : '创建密钥') }}</button>
       </template>
     </Modal>
 
-    <Modal v-model="tokenModal" title="API 密钥已创建" size="sm">
-      <div class="banner banner-warn">请立即复制该令牌，之后无法再次查看。</div>
+    <Modal v-model="tokenModal" title="API 密钥令牌" size="sm">
+      <div class="banner banner-warn">请立即复制该令牌，之后无法再次查看。旧令牌已失效。</div>
       <CopyField :value="newToken" prefix="Token" />
     </Modal>
   </div>
@@ -598,7 +566,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Download, Loader2, Plus, Power, Trash2, UploadCloud } from 'lucide-vue-next'
+import { Download, Pencil, Plus, Power, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { api, resetAdminConfig, setAdminEntry } from '../api'
 import { auth, notify, setSession } from '../store'
 import CopyField from '../components/CopyField.vue'
@@ -622,31 +590,28 @@ const account = reactive({ username: auth.admin?.username || '', password: '', c
 const accountError = ref('')
 
 const subscriptionPreview = ref('')
-const portalPreview = ref('')
 const adminEntryPreview = computed(() => {
   const pub = (form.public_url || '').replace(/\/+$/, '') || window.location.origin
   const p = String(form.admin_security_path || '').trim()
   return p ? `${pub}/admin/${p}` : `${pub}/admin`
 })
 const apiKeys = ref([])
-const scopes = ref([])
+const permissions = ref([])
+const resources = ref({ nodes: [], groups: [] })
 const keyModal = ref(false)
 const keySaving = ref(false)
 const keyError = ref('')
-const keyForm = reactive({ name: '', scopes: [], rateLimit: 60, expiresAt: '' })
+const editingKey = ref(null)
+const keyForm = reactive({ name: '', description: '', scopes: [], nodeIds: [], groupIds: [], rateLimit: 60, expiresAt: '' })
 const tokenModal = ref(false)
 const newToken = ref('')
 const backups = ref([])
 const backupBusy = ref(false)
 const restoreMessage = ref('')
-const homepage = reactive({ mode: 'builtin', activeVersion: '', versions: [] })
-const homepageError = ref('')
-const homepageBusy = ref(false)
-const homepageUploading = ref(false)
-const homepageDragging = ref(false)
-const homepageFileInput = ref(null)
-const homepagePreviewOpen = ref(false)
-const homepagePreviewUrl = ref('')
+const usage = ref(null)
+const usageLoading = ref(false)
+const cleanupBusy = ref(false)
+const cleanupVacuum = ref(false)
 const twoFA = reactive({ enabled: false, recoveryRemaining: 0, password: '', code: '', busy: false, setup: null, newCodes: null, error: '' })
 const certForm = reactive({
   ca: 'https://acme-v02.api.letsencrypt.org/directory', email: '', provider: 'manual',
@@ -690,20 +655,23 @@ const DNS_PROVIDER_OPTIONS = [
 // Settings are stored as strings, so checkbox-bound keys must be normalized
 // when loading and stringified when saving.
 const BOOL_KEYS = [
-  'log_ingest_enabled', 'portal_enabled', 'portal_allow_password_change',
-  'portal_allow_sub_reset', 'admin_security_enabled',
+  'log_ingest_enabled', 'admin_security_enabled',
 ]
 
 function applySettings(src) {
   Object.assign(form, src)
   if (!form.subscription_hy2_endpoints) form.subscription_hy2_endpoints = 'both'
+  if (!form.metric_retention_days) form.metric_retention_days = '30'
   for (const k of BOOL_KEYS) form[k] = form[k] === true || form[k] === 'true'
+}
+
+function fmtRows(n) {
+  return n === undefined || n === null ? '—' : Number(n).toLocaleString('zh-CN')
 }
 
 function syncPreview() {
   const pub = (form.public_url || '').replace(/\/+$/, '')
   subscriptionPreview.value = pub ? `${pub}/api/files/<token>` : '/api/files/<token>'
-  portalPreview.value = pub ? `${pub}/user` : '/user'
 }
 async function loadBackups() {
   try {
@@ -713,115 +681,35 @@ async function loadBackups() {
     error.value = e.message
   }
 }
-async function loadHomepage() {
-  homepageError.value = ''
+async function loadUsage() {
+  usageLoading.value = true
   try {
-    const res = await api.homepage()
-    homepage.mode = res.mode || 'builtin'
-    homepage.activeVersion = res.activeVersion || ''
-    homepage.versions = res.versions || []
+    usage.value = await api.maintenanceUsage()
   } catch (e) {
-    homepageError.value = e.message
-  }
-}
-function pickHomepageFile() {
-  if (!homepageUploading.value) homepageFileInput.value?.click()
-}
-function onHomepageDragLeave(ev) {
-  if (!ev.currentTarget.contains(ev.relatedTarget)) homepageDragging.value = false
-}
-function dropHomepageFile(ev) {
-  homepageDragging.value = false
-  if (homepageUploading.value) return
-  const file = ev.dataTransfer?.files?.[0]
-  if (file) uploadHomepageFile(file)
-}
-async function uploadHomepage(ev) {
-  const file = ev.target.files?.[0]
-  ev.target.value = ''
-  if (file) await uploadHomepageFile(file)
-}
-async function uploadHomepageFile(file) {
-  homepageError.value = ''
-  homepageUploading.value = true
-  try {
-    const res = await api.uploadHomepage(file)
-    notify(`已上传 ${res.version}，可在列表中预览或启用`)
-    await loadHomepage()
-  } catch (e) {
-    homepageError.value = e.message
     notify(e.message, 'error')
   } finally {
-    homepageUploading.value = false
+    usageLoading.value = false
   }
 }
-async function activateHomepage(version) {
-  homepageError.value = ''
-  homepageBusy.value = true
+async function runCleanup() {
+  if (!confirm('立即删除超过保留天数的日志和监控数据？此操作不可撤销。')) return
+  cleanupBusy.value = true
   try {
-    await api.activateHomepage(version)
-    notify('自定义首页已启用')
-    await loadHomepage()
+    const res = await api.cleanupData({
+      vacuum: cleanupVacuum.value,
+      logRetentionDays: Number(form.log_retention_days) || 0,
+      metricRetentionDays: Number(form.metric_retention_days) || 0,
+    })
+    const d = res.deleted || {}
+    let msg = `清理完成：日志 ${fmtRows(d.logs)}、事件 ${fmtRows(d.events)}、监控采样 ${fmtRows(d.nodeMetrics)}`
+    if (res.vacuumed) msg += '，数据库已压缩'
+    else if (res.vacuumError) msg += `；压缩失败：${res.vacuumError}`
+    notify(msg)
+    await loadUsage()
   } catch (e) {
-    homepageError.value = e.message
     notify(e.message, 'error')
   } finally {
-    homepageBusy.value = false
-  }
-}
-async function setHomepageMode(mode) {
-  homepageError.value = ''
-  homepageBusy.value = true
-  try {
-    await api.setHomepageMode(mode)
-    notify(mode === 'builtin' ? '已切换到内置首页' : '已启用自定义首页')
-    await loadHomepage()
-  } catch (e) {
-    homepageError.value = e.message
-    notify(e.message, 'error')
-  } finally {
-    homepageBusy.value = false
-  }
-}
-async function deleteHomepageVersion(version) {
-  if (!confirm(`删除首页版本 ${version}?`)) return
-  homepageError.value = ''
-  homepageBusy.value = true
-  try {
-    await api.deleteHomepageVersion(version)
-    notify('版本已删除')
-    await loadHomepage()
-  } catch (e) {
-    homepageError.value = e.message
-    notify(e.message, 'error')
-  } finally {
-    homepageBusy.value = false
-  }
-}
-async function previewHomepage(version) {
-  homepageError.value = ''
-  try {
-    const res = await api.previewHomepage(version)
-    homepagePreviewUrl.value = res.url
-    homepagePreviewOpen.value = true
-  } catch (e) {
-    homepageError.value = e.message
-    notify(e.message, 'error')
-  }
-}
-async function resetHomepage() {
-  if (!confirm('恢复内置首页？已上传的文件会保留，可随时重新启用。')) return
-  homepageError.value = ''
-  homepageBusy.value = true
-  try {
-    await api.resetHomepage()
-    notify('已恢复内置首页')
-    await loadHomepage()
-  } catch (e) {
-    homepageError.value = e.message
-    notify(e.message, 'error')
-  } finally {
-    homepageBusy.value = false
+    cleanupBusy.value = false
   }
 }
 async function createBackup() {
@@ -878,20 +766,72 @@ async function restoreBackup(ev) {
     notify(e.message, 'error')
   }
 }
+const permissionGroups = computed(() => {
+  const out = {}
+  for (const p of permissions.value) {
+    if (!out[p.group]) out[p.group] = []
+    out[p.group].push(p)
+  }
+  return out
+})
+const selectedScopesSummary = computed(() => {
+  if (!keyForm.scopes.length) return '尚未选择任何权限，该密钥将无法访问管理 API。'
+  return `已选择 ${keyForm.scopes.length} 项权限`
+})
+function permissionLabel(value) {
+  return permissions.value.find((p) => p.value === value)?.label || value
+}
+function permissionSensitive(value) {
+  return !!permissions.value.find((p) => p.value === value)?.sensitive
+}
+function nodeName(id) {
+  return resources.value.nodes.find((n) => n.id === id)?.name || `#${id}`
+}
+function groupName(id) {
+  return resources.value.groups.find((g) => g.id === id)?.name || `#${id}`
+}
+function groupFullySelected(items) {
+  return items.length > 0 && items.every((p) => keyForm.scopes.includes(p.value))
+}
+function togglePermissionGroup(items) {
+  if (groupFullySelected(items)) {
+    keyForm.scopes = keyForm.scopes.filter((v) => !items.some((p) => p.value === v))
+    return
+  }
+  for (const p of items) {
+    if (!keyForm.scopes.includes(p.value)) keyForm.scopes.push(p.value)
+  }
+}
+function toggleResource(field, id) {
+  const i = keyForm[field].indexOf(id)
+  if (i >= 0) keyForm[field].splice(i, 1)
+  else keyForm[field].push(id)
+}
+function toLocalInput(iso) {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 async function loadKeys() {
   try {
     const res = await api.apiKeys()
     apiKeys.value = res.items || []
-    scopes.value = res.scopes || []
+    permissions.value = res.permissions || res.scopes || []
+    resources.value = res.resources || { nodes: [], groups: [] }
   } catch (e) {
     error.value = e.message
   }
 }
-function openKeyModal() {
-  keyForm.name = ''
-  keyForm.scopes = ['stats:read']
-  keyForm.rateLimit = 60
-  keyForm.expiresAt = ''
+function openKeyModal(k = null) {
+  editingKey.value = k
+  keyForm.name = k?.name || ''
+  keyForm.description = k?.description || ''
+  keyForm.scopes = k ? [...(k.scopes || [])] : ['dashboard:read']
+  keyForm.nodeIds = k ? [...(k.nodeIds || [])] : []
+  keyForm.groupIds = k ? [...(k.groupIds || [])] : []
+  keyForm.rateLimit = k?.rateLimit || 60
+  keyForm.expiresAt = k?.expiresAt ? toLocalInput(k.expiresAt) : ''
   keyError.value = ''
   keyModal.value = true
 }
@@ -900,25 +840,47 @@ function toggleScope(v) {
   if (i >= 0) keyForm.scopes.splice(i, 1)
   else keyForm.scopes.push(v)
 }
-async function createKey() {
+async function saveKey() {
   keyError.value = ''
   keySaving.value = true
   try {
-    const res = await api.createAPIKey({
+    const payload = {
       name: keyForm.name,
+      description: keyForm.description,
       scopes: keyForm.scopes,
+      nodeIds: keyForm.nodeIds,
+      groupIds: keyForm.groupIds,
       rateLimit: keyForm.rateLimit,
       expiresAt: keyForm.expiresAt ? new Date(keyForm.expiresAt).toISOString() : null,
-    })
-    keyModal.value = false
-    newToken.value = res.token
-    tokenModal.value = true
-    notify('API 密钥已创建')
+    }
+    if (editingKey.value) {
+      await api.updateAPIKey(editingKey.value.id, payload)
+      keyModal.value = false
+      notify('API 密钥已更新')
+    } else {
+      const res = await api.createAPIKey(payload)
+      keyModal.value = false
+      newToken.value = res.token
+      tokenModal.value = true
+      notify('API 密钥已创建')
+    }
     loadKeys()
   } catch (e) {
     keyError.value = e.message
   } finally {
     keySaving.value = false
+  }
+}
+async function rotateKey(k) {
+  if (!confirm(`轮换 API 密钥 "${k.name}" 的令牌？旧令牌会立即失效。`)) return
+  try {
+    const res = await api.rotateAPIKey(k.id)
+    newToken.value = res.token
+    tokenModal.value = true
+    notify('令牌已轮换')
+    loadKeys()
+  } catch (e) {
+    notify(e.message, 'error')
   }
 }
 async function toggleKey(k) {
@@ -946,7 +908,7 @@ async function load2FA() {
     const r = await api.twoFactorStatus()
     twoFA.enabled = !!r.enabled
     twoFA.recoveryRemaining = r.recoveryRemaining || 0
-  } catch (e) {
+  } catch {
     // Ignore; the security tab shows the error when an action is attempted.
   }
 }
@@ -1195,7 +1157,7 @@ async function saveAccount() {
 }
 
 async function changePassword() {
-  if (pw.next.length < 12) return notify('新密码至少需要 12 个字符', 'error')
+  if (pw.next.length < 8) return notify('新密码至少需要 8 个字符', 'error')
   if (pw.next !== pw.confirm) return notify('两次输入的密码不一致', 'error')
   if (pw.next === pw.old) return notify('新密码不能与当前密码相同', 'error')
   if (twoFA.enabled && !pw.code.trim()) return notify('请输入动态验证码或恢复码', 'error')
@@ -1216,88 +1178,42 @@ async function changePassword() {
     pwSaving.value = false
   }
 }
-onMounted(() => { load(); loadKeys(); loadBackups() })
+onMounted(() => { load(); loadKeys(); loadBackups(); loadUsage() })
 </script>
 
 <style scoped>
-.homepage-file-input { display: none; }
-.homepage-dropzone {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  width: 100%;
-  padding: 16px 18px;
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--radius);
-  background: var(--panel-2);
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+.key-scopes { max-width: 330px; }
+.key-block { margin-top: 14px; }
+.perm-groups {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px; margin: 4px 0 8px;
 }
-.homepage-dropzone:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: var(--panel-3);
+.perm-group { border: 1px solid var(--line); padding: 10px 12px; background: var(--panel-2); }
+.perm-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px; font-size: 12px; font-weight: 600;
 }
-.homepage-dropzone.dragging {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+.link-btn {
+  border: 0; background: none; padding: 0; cursor: pointer;
+  color: var(--accent); font-size: 11px;
 }
-.homepage-dropzone.busy { cursor: default; opacity: 0.85; }
-.homepage-drop-icon {
-  display: grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  flex: none;
-  border-radius: 12px;
-  background: var(--accent-soft);
-  border: 1px solid var(--accent-line);
-  color: var(--accent);
+.resource-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 4px 0 8px; }
+.mini-title {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--muted-2); margin-bottom: 6px;
 }
-.homepage-drop-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
-.homepage-drop-copy strong { font-size: 12.5px; font-weight: 600; }
-.homepage-drop-copy small { font-size: 10.5px; color: var(--muted-2); }
-.homepage-drop-action {
-  flex: none;
-  padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-  color: var(--muted);
-  font-size: 11px;
-  transition: 0.16s ease;
-}
-.homepage-dropzone:hover:not(:disabled) .homepage-drop-action {
-  border-color: var(--accent-line);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-@media (max-width: 640px) {
-  .homepage-drop-action { display: none; }
-}
-.spin { animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+.scroll-chips { max-height: 132px; overflow-y: auto; padding-right: 4px; }
+@media (max-width: 760px) { .resource-picker { grid-template-columns: 1fr; } }
 
-.homepage-preview {
-  display: block;
-  width: 100%;
-  height: 65vh;
-  min-height: 360px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: #fff;
-}
 .theme-options { display: flex; gap: 12px; flex-wrap: wrap; }
 .theme-option {
   display: flex; align-items: center; gap: 12px; width: 236px; padding: 12px;
-  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 0; background: var(--panel-2);
   color: var(--text); text-align: left; transition: 0.16s ease;
 }
 .theme-option:hover { border-color: var(--line-strong); }
 .theme-option.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.theme-swatch { width: 44px; height: 34px; border-radius: 6px; border: 1px solid var(--line); flex: none; }
+.theme-swatch { width: 44px; height: 34px; border-radius: 0; border: 1px solid var(--line); flex: none; }
 .theme-swatch--dark { background: linear-gradient(135deg, #0d0d0c 55%, #ff6b3d 55%); }
 .theme-swatch--light { background: linear-gradient(135deg, #f3efe6 55%, #d9481f 55%); }
 .theme-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

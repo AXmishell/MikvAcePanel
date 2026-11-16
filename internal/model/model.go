@@ -27,16 +27,25 @@ type Admin struct {
 
 // APIKey is a scoped automation credential. The plaintext token is only
 // returned when it is created; only its SHA-256 hash is stored.
+//
+// NodeIDs and GroupIDs optionally restrict the key to a subset of panel
+// resources. An empty list means "all resources" for that dimension.
 type APIKey struct {
-	ID         int64      `json:"id"`
-	Name       string     `json:"name"`
-	Prefix     string     `json:"prefix"`
-	Scopes     []string   `json:"scopes"`
-	RateLimit  int        `json:"rateLimit"`
-	Enabled    bool       `json:"enabled"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
-	ExpiresAt  *time.Time `json:"expiresAt,omitempty"`
+	ID           int64      `json:"id"`
+	Name         string     `json:"name"`
+	Description  string     `json:"description,omitempty"`
+	Prefix       string     `json:"prefix"`
+	Scopes       []string   `json:"scopes"`
+	NodeIDs      []int64    `json:"nodeIds"`
+	GroupIDs     []int64    `json:"groupIds"`
+	RateLimit    int        `json:"rateLimit"`
+	Enabled      bool       `json:"enabled"`
+	RequestCount int64      `json:"requestCount"`
+	LastUsedIP   string     `json:"lastUsedIp,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	UpdatedAt    time.Time  `json:"updatedAt"`
+	LastUsedAt   *time.Time `json:"lastUsedAt,omitempty"`
+	ExpiresAt    *time.Time `json:"expiresAt,omitempty"`
 }
 
 // Group is a logical collection of nodes and users. A user receives the nodes
@@ -62,10 +71,7 @@ type User struct {
 	Username string `json:"username"`
 	// Password is the proxy connection credential. It stays readable because
 	// Hysteria authenticates against it and subscription URIs embed it.
-	Password string `json:"-"`
-	// LoginPasswordHash is the bcrypt hash used by the user portal. Legacy
-	// accounts with an empty hash fall back to Password on first login.
-	LoginPasswordHash string     `json:"-"`
+	Password          string     `json:"-"`
 	SubscriptionToken string     `json:"subscriptionToken"`
 	XrayUUID          string     `json:"xrayUuid"`
 	Enabled           bool       `json:"enabled"`
@@ -428,21 +434,23 @@ type Finding struct {
 
 // LogFilter controls log queries.
 type LogFilter struct {
-	NodeID int64
-	Level  string
-	Event  string
-	Query  string
-	From   time.Time
-	To     time.Time
-	Page   int
-	Size   int
+	NodeID  int64
+	NodeIDs []int64 // optional multi-node restriction used by scoped API keys
+	Level   string
+	Event   string
+	Query   string
+	From    time.Time
+	To      time.Time
+	Page    int
+	Size    int
 }
 
 // LogStatsOptions controls the analysis endpoint.
 type LogStatsOptions struct {
-	NodeID int64
-	From   time.Time
-	To     time.Time
+	NodeID  int64
+	NodeIDs []int64 // optional multi-node restriction used by scoped API keys
+	From    time.Time
+	To      time.Time
 }
 
 // Batch is a serialisable log batch sent over the agent websocket.

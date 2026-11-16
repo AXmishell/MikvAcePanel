@@ -8,7 +8,7 @@ LDFLAGS := -s -w \
 	-X github.com/axmishell/mikvacepanel/internal/version.Commit=$(COMMIT) \
 	-X github.com/axmishell/mikvacepanel/internal/version.BuildDate=$(BUILD_DATE)
 
-.PHONY: all web server server-api node client build test fmt vet clean docker docker-node release dev docs docs-serve smoke test-cert-e2e
+.PHONY: all web server server-api node client build test web-test web-lint fmt vet clean docker docker-node release dev dev-up dev-down dev-restart dev-status dev-logs docs docs-serve smoke test-cert-e2e check
 
 all: build
 
@@ -39,6 +39,15 @@ build: web server node client
 test:
 	go test ./...
 
+web-test:
+	cd web && npm run test
+
+web-lint:
+	cd web && npm run lint
+
+# Local pre-push gate matching CI.
+check: vet test web-lint web-test
+
 fmt:
 	gofmt -w cmd internal web/embed.go
 
@@ -53,8 +62,21 @@ smoke:
 test-cert-e2e:
 	./scripts/cert-e2e.sh
 
+# Foreground backend (previous workflow).
 dev:
 	go run ./cmd/server --config ./panel.yaml
+
+# Detached local stack: panel binary + Vite hot reload.
+dev-up:
+	./scripts/dev.sh start
+dev-down:
+	./scripts/dev.sh stop
+dev-restart:
+	./scripts/dev.sh restart
+dev-status:
+	./scripts/dev.sh status
+dev-logs:
+	./scripts/dev.sh logs
 
 docs:
 	mkdocs build --strict

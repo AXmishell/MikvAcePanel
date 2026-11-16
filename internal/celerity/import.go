@@ -681,6 +681,12 @@ func importAPIKeys(ctx context.Context, st *store.Store, file string, sum *Summa
 		"nodes:read": true, "nodes:write": true,
 		"stats:read": true, "sync:write": true,
 	}
+	// Preserve the capabilities the coarse CELERITY scopes used to grant.
+	expansions := map[string][]string{
+		"users:write": {"users:write", "users:delete"},
+		"nodes:write": {"nodes:write", "nodes:operate", "nodes:secrets"},
+		"stats:read":  {"dashboard:read", "logs:read", "groups:read"},
+	}
 	return decodeCollection(file, func(doc apiKeyDoc) error {
 		name := strings.TrimSpace(doc.Name)
 		hash := strings.TrimSpace(doc.KeyHash)
@@ -690,7 +696,12 @@ func importAPIKeys(ctx context.Context, st *store.Store, file string, sum *Summa
 		}
 		var scopes []string
 		for _, sc := range doc.Scopes {
-			if supported[sc] {
+			if !supported[sc] {
+				continue
+			}
+			if expanded, ok := expansions[sc]; ok {
+				scopes = append(scopes, expanded...)
+			} else {
 				scopes = append(scopes, sc)
 			}
 		}

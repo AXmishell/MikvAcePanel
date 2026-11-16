@@ -125,16 +125,16 @@ https://panel.example.com
 - 云负载均衡需要开启 WebSocket；
 - 检查面板日志与 `docker logs`。
 
-## 启动日志反复出现 `read /config/panel.yaml: is a directory`
+## 启动日志反复出现 `read /app/config/panel.yaml: is a directory`
 
-说明容器把 `/config/panel.yaml` 当成了目录。通常是使用了单文件挂载 `./panel.yaml:/config/panel.yaml`，而宿主机上还没有这个文件，Docker / 1Panel 就自动创建了同名目录。
+说明容器把 `/app/config/panel.yaml` 当成了目录。通常是使用了单文件挂载 `./panel.yaml:/app/config/panel.yaml`，而宿主机上还没有这个文件，Docker / 1Panel 就自动创建了同名目录。
 
 当前 `docker-compose.yml` 默认使用目录映射：
 
 ```yaml
 volumes:
-  - ./data:/data
-  - ./config:/config
+  - ./data:/app/data
+  - ./config:/app/config
 ```
 
 配置放在 `./config/panel.yaml`；目录不存在时 Docker 会自动创建，`/install` 直接写入文件，不会再出现该错误。
@@ -157,12 +157,12 @@ volumes:
    docker compose up -d --force-recreate
    ```
 
-新版面板检测到 `--config` 指向目录时会输出 `config path is a directory, using fallback`，并回退到 `/data/panel.yaml`，仍能打开 `/install`；修复挂载后把该文件复制回 `./config/panel.yaml` 再重建容器即可。
+新版面板检测到 `--config` 指向目录时会输出 `config path is a directory, using fallback`，并回退到 `/app/data/panel.yaml`，仍能打开 `/install`；修复挂载后把该文件复制回 `./config/panel.yaml` 再重建容器即可。
 
 排查时可进入容器确认挂载类型：
 
 ```bash
-docker exec mikvace-panel ls -ld /config/panel.yaml
+docker exec mikvace-panel ls -ld /app/config/panel.yaml
 ```
 
 `drwx...` 表示它是目录，需要按上面的方式修复；`-rw...` 才是正常文件。

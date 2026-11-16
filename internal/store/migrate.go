@@ -4,21 +4,14 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/axmishell/mikvacepanel/internal/store/dialect"
 	"github.com/axmishell/mikvacepanel/internal/store/schema"
 )
 
-// Migrate creates or upgrades the schema. It is idempotent, uses dialect
-// introspection instead of engine-specific IF NOT EXISTS clauses, and records
-// data migrations in schema_migrations.
+// Migrate creates or upgrades the schema. It is idempotent, inspects
+// sqlite_master/PRAGMA instead of blindly replaying DDL, and records data
+// migrations in schema_migrations.
 func (s *Store) Migrate(ctx context.Context) error {
 	d := s.Dialect()
-	release, err := d.AcquireMigrationLock(ctx, s.DB.DB)
-	if err != nil {
-		return fmt.Errorf("migration lock: %w", err)
-	}
-	defer release()
-
 	if err := s.migrateLegacyNames(ctx); err != nil {
 		return err
 	}
@@ -64,8 +57,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return s.runDataMigrations(ctx)
 }
 
-// migrateLegacyNames upgrades SQLite databases created before the
-// MySQL-compatible names were introduced.
+// migrateLegacyNames upgrades databases created by older panel releases.
 func (s *Store) migrateLegacyNames(ctx context.Context) error {
 	d := s.Dialect()
 	settings, err := d.HasTable(ctx, s.DB, "settings")
@@ -97,12 +89,7 @@ func (s *Store) migrateLegacyNames(ctx context.Context) error {
 		return err
 	}
 	if oldGroups && !newGroups {
-		var stmt string
-		if d.Name() == dialect.MySQL {
-			stmt = "RENAME TABLE " + d.Quote("groups") + " TO " + d.Quote("panel_groups")
-		} else {
-			stmt = "ALTER TABLE " + d.Quote("groups") + " RENAME TO " + d.Quote("panel_groups")
-		}
+		stmt := "ALTER TABLE " + d.Quote("groups") + " RENAME TO " + d.Quote("panel_groups")
 		if _, err := s.DB.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("rename groups table: %w", err)
 		}
@@ -111,22 +98,81 @@ func (s *Store) migrateLegacyNames(ctx context.Context) error {
 }
 
 func (s *Store) runDataMigrations(ctx context.Context) error {
-	const initialSchemaVersion = 1
-	applied, err := s.migrationApplied(ctx, initialSchemaVersion)
+	steps := []struct {
+		version int64
+		fn      func(context.Context) error
+	}{
+		{1, s.backfillXrayUUID},
+		{2, s.expandLegacyAPIKeyScopes},
+	}
+	for _, step := range steps {
+		applied, err := s.migrationApplied(ctx, step.version)
+		if err != nil {
+			return err
+		}
+		if applied {
+			continue
+		}
+		if err := step.fn(ctx); err != nil {
+			return fmt.Errorf("apply schema migration %d: %w", step.version, err)
+		}
+		if _, err := s.DB.ExecContext(ctx,
+			`INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`,
+			step.version, ts(now())); err != nil {
+			return fmt.Errorf("record schema version %d: %w", step.version, err)
+		}
+	}
+	return nil
+}
+
+// expandLegacyAPIKeyScopes rewrites the original coarse write scopes into the
+// fine-grained permissions they used to imply. Read scopes keep working via
+// legacyScopeAliases, but expanding them keeps the stored data predictable.
+func (s *Store) expandLegacyAPIKeyScopes(ctx context.Context) error {
+	expansions := map[string][]string{
+		"users:write": {"users:write", "users:delete"},
+		"nodes:write": {"nodes:write", "nodes:operate", "nodes:secrets"},
+		"stats:read":  {"dashboard:read", "logs:read", "groups:read"},
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, scopes FROM api_keys`)
 	if err != nil {
 		return err
 	}
-	if applied {
-		return nil
+	type update struct {
+		id     int64
+		scopes string
 	}
-	if err := s.backfillXrayUUID(ctx); err != nil {
+	updates := []update{}
+	for rows.Next() {
+		var id int64
+		var raw string
+		if err := rows.Scan(&id, &raw); err != nil {
+			rows.Close()
+			return err
+		}
+		scopes := splitScopes(raw)
+		out := make([]string, 0, len(scopes)+3)
+		for _, sc := range scopes {
+			if expanded, ok := expansions[sc]; ok {
+				out = append(out, expanded...)
+			} else {
+				out = append(out, sc)
+			}
+		}
+		next := JoinScopes(out)
+		if next != JoinScopes(scopes) {
+			updates = append(updates, update{id: id, scopes: next})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
 		return err
 	}
-	_, err = s.DB.ExecContext(ctx,
-		`INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`,
-		initialSchemaVersion, ts(now()))
-	if err != nil {
-		return fmt.Errorf("record schema version: %w", err)
+	rows.Close()
+	for _, u := range updates {
+		if _, err := s.DB.ExecContext(ctx, `UPDATE api_keys SET scopes = ? WHERE id = ?`, u.scopes, u.id); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -182,8 +182,15 @@ func (a *Analyzer) findings(ctx context.Context, opts model.LogStatsOptions, s *
 	if err != nil {
 		return nil, err
 	}
+	allowed := map[int64]bool{}
+	for _, id := range opts.NodeIDs {
+		allowed[id] = true
+	}
 	for _, n := range nodes {
 		if !n.Active {
+			continue
+		}
+		if opts.NodeIDs != nil && !allowed[n.ID] {
 			continue
 		}
 		if n.Status == "error" {

@@ -94,10 +94,14 @@ POST 解析 → hy2_logs 表（按 node_id + batch_id 幂等）
 
 ## 保留与清理
 
-- `log_retention_days` 默认 14 天；调度器每小时清理 `hy2_logs`、`log_batches`、`events`、`stats_batches`；
-- `node_metrics` 保留 60 天；
-- 管理 API `DELETE /api/logs?before=...` 可手动清理；
+- `log_retention_days` 默认 14 天；调度器每小时清理 `hy2_logs`、`log_batches`、`events`、`stats_batches`（`stats_batches` 至少保留 7 天，保证 Agent 重传幂等）；
+- `metric_retention_days` 默认 30 天，控制 `node_metrics` 心跳与流量采样；
+- 设置 → 日志分析 → 数据清理 可查看当前行数与数据库大小，并立即执行一次清理；勾选“压缩数据库”会执行 `VACUUM` 回收磁盘空间；
+- 管理 API `POST /api/maintenance/cleanup`（可传 `{"vacuum":true,"logRetentionDays":14,"metricRetentionDays":30}`）与 `GET /api/maintenance/usage` 提供同样的能力；
+- 管理 API `DELETE /api/logs?before=...` 可手动清空全部/部分代理日志；
 - 日志采集可在设置中关闭，关闭后 Agent 批次仍会被 ack 但不会落库。
+
+> 备份是完整的 SQLite 快照，日志和监控采样会一起进入 `tar.gz`。缩小备份体积最有效的方式是降低 `metric_retention_days`（采样数据通常占数据库的大部分），必要时再执行一次带 `VACUUM` 的清理。
 
 ## 性能考虑
 

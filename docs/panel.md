@@ -100,10 +100,6 @@ Agent 将代理核心 stdout/stderr 和 Xray access log 批量上报，面板解
 
 面板名称、公开地址、主题外观。`public_url` 会写入订阅链接和 Hysteria 认证 URL，修改后节点会在下一次配置同步时更新。
 
-### 首页
-
-在“内置落地页”和“自定义 HTML”之间切换。上传 `.html` 或 `.zip` 后可以预览、启用、回滚和删除版本；自定义页面在沙箱 iframe 中运行，可执行 JavaScript，但不能读取管理员登录态，也不参与搜索引擎收录。详见 [自定义首页](homepage.md)。
-
 ### 订阅页面
 
 订阅落地页标题、说明、Logo、更新间隔、按钮、HAPP provider / 路由 / 公告。
@@ -114,11 +110,11 @@ Agent 将代理核心 stdout/stderr 和 Xray access log 批量上报，面板解
 
 ### 安全
 
-- 修改管理员用户名与密码（密码至少 12 位，修改需当前密码；启用 2FA 时还需验证码）；
+- 修改管理员用户名与密码（密码至少 8 位，修改需当前密码；启用 2FA 时还需验证码）；
 - 修改密码或用户名后，其他管理员会话会在数秒内失效，当前会话自动续签；
 - 管理员安全入口（默认关闭）：开启后管理端登录地址变为 `/admin/<入口路径>/login`，普通 `/admin` 返回 404，管理 API 也会校验 `X-Admin-Entry`；
 - 两步验证（TOTP）：启用、关闭、重新生成恢复码；
-- API Key：创建、作用域、速率限制、过期时间、启停。
+- API Key：多密钥、细分权限、节点/分组资源范围、令牌轮换、速率限制、过期时间、启停与用量审计。
 
 详见 [两步验证](2fa.md)。
 
@@ -134,23 +130,29 @@ Agent 将代理核心 stdout/stderr 和 Xray access log 批量上报，面板解
 
 ### 备份
 
-立即备份、自动备份间隔、保留数量、下载、删除、上传恢复。SQLite 备份会包含当前启用的自定义首页；恢复操作需要重启面板后生效。
+立即备份、自动备份间隔、保留数量、下载、删除、上传恢复。恢复操作需要重启面板后生效。
 
 ## API Key
 
-API Key 用于自动化和 REST API：
+API Key 用于自动化和 REST API，支持多密钥、按密钥细分权限与资源范围：
 
-| 作用域 | 能力 |
+| 权限组 | 作用域 |
 | --- | --- |
-| `users:read` / `users:write` | 用户查询 / 修改 |
-| `nodes:read` / `nodes:write` | 节点查询 / 修改 |
-| `stats:read` | 仪表盘、日志、统计 |
-| `sync:write` | 同步节点配置 |
+| 用户 | `users:read`、`users:write`、`users:delete` |
+| 分组 | `groups:read`、`groups:write`、`groups:delete` |
+| 节点 | `nodes:read`、`nodes:write`、`nodes:operate`、`nodes:secrets`、`nodes:delete` |
+| 证书 | `certs:read`、`certs:write` |
+| 监控 | `dashboard:read`、`logs:read`、`logs:delete` |
+| 维护 | `maintenance:read`、`maintenance:write`、`backups:read`、`backups:write` |
+| 系统 | `settings:read`、`settings:write`、`sync:write` |
 
-- 每个 Key 独立限流，响应头包含 `X-RateLimit-*`；
-- 明文只在创建时返回一次；
-- API Key 不能访问 2FA 管理、修改密码等会话级接口；
-- 支持过期时间和启停。
+- **资源范围**：可将密钥限定到指定节点和/或分组；列表自动过滤，越权访问返回 `403`。留空表示全部资源。
+- 旧密钥的 `users:write`、`nodes:write` 会在升级时自动展开为细分权限，保留原有能力；`stats:read` 仍然兼容。
+- 每个 Key 独立限流，响应头包含 `X-RateLimit-*`；列表展示请求次数、最后使用时间与来源 IP。
+- 明文只在创建时返回一次；支持随时轮换令牌、编辑权限、修改限流与到期时间。
+- API Key 不能访问密钥管理、2FA、修改密码等会话级接口。
+
+完整权限与接口说明见 [API 文档](api.md#api-key)。
 
 ## 命令行客户端
 

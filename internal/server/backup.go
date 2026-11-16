@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,7 +16,6 @@ import (
 
 	"github.com/axmishell/mikvacepanel/internal/celerity"
 	"github.com/axmishell/mikvacepanel/internal/store"
-	"github.com/axmishell/mikvacepanel/internal/store/dialect"
 	"github.com/axmishell/mikvacepanel/internal/version"
 )
 
@@ -34,9 +32,6 @@ func (s *Server) backupDir() string { return filepath.Join(s.cfg.DataDir, "backu
 // snapshot uses VACUUM INTO, so the resulting file is consistent even while
 // the panel is serving requests.
 func (s *Server) CreateBackup(ctx context.Context) (*BackupInfo, error) {
-	if s.store.Dialect().Name() != dialect.SQLite {
-		return nil, fmt.Errorf("backup is not implemented for the %s backend yet", s.store.Dialect().Name())
-	}
 	s.backupMu.Lock()
 	defer s.backupMu.Unlock()
 	dir := s.backupDir()
@@ -96,11 +91,6 @@ func (s *Server) CreateBackup(ctx context.Context) (*BackupInfo, error) {
 			if writeErr == nil {
 				_, writeErr = tw.Write(b)
 			}
-		}
-	}
-	if writeErr == nil {
-		if version, ok := s.homepageSelected(ctx); ok {
-			writeErr = addHomepageToTar(tw, s.homepageVersionDir(version), "homepage/versions/"+version, nowT)
 		}
 	}
 	if err := tw.Close(); writeErr == nil {
@@ -180,10 +170,6 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
-	if s.store.Dialect().Name() != dialect.SQLite {
-		writeError(w, http.StatusNotImplemented, "backup is not implemented for the "+s.store.Dialect().Name()+" backend yet")
-		return
-	}
 	info, err := s.CreateBackup(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -234,10 +220,6 @@ func (s *Server) safeBackupPath(name string) (string, bool) {
 // is staged next to the live file and swapped in on the next panel start,
 // which avoids closing the SQLite connection underneath running requests.
 func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
-	if s.store.Dialect().Name() != dialect.SQLite {
-		writeError(w, http.StatusNotImplemented, "restore is not implemented for the "+s.store.Dialect().Name()+" backend yet")
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, 512<<20)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid upload: "+err.Error())
@@ -320,10 +302,6 @@ func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
 		// staged encryption key for the restored database
 	} else {
 		_ = os.Remove(filepath.Join(s.cfg.DataDir, "cert.key.restore"))
-	}
-	if err := extractHomepageFromArchive(tmpTar, s.cfg.DataDir); err != nil {
-		_ = os.RemoveAll(filepath.Join(s.cfg.DataDir, "homepage", ".restore"))
-		s.log.Warn("backup: stage homepage", "error", err)
 	}
 	s.store.AddEvent(r.Context(), "backup.restore_staged", 0, "warning", "已上传恢复文件，等待面板重启")
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -418,9 +396,6 @@ func extractNamedFile(tarPath, name, dest string, mode os.FileMode) error {
 
 // MaybeAutoBackup creates a backup when the configured interval has elapsed.
 func (s *Server) MaybeAutoBackup(ctx context.Context) {
-	if s.store.Dialect().Name() != dialect.SQLite {
-		return
-	}
 	settings, err := s.store.GetSettings(ctx)
 	if err != nil || !parseBoolSetting(settings["backup_enabled"], true) {
 		return
@@ -444,5 +419,3 @@ func (s *Server) MaybeAutoBackup(ctx context.Context) {
 		s.store.AddEvent(ctx, "backup.auto", 0, "info", "自动备份 "+list[0].Name+" 已创建")
 	}
 }
-
-var _ = sql.ErrNoRows

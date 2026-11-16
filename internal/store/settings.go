@@ -179,8 +179,6 @@ var DefaultSettings = map[string]string{
 	"panel_name":                   "MikvAce Panel",
 	"public_url":                   "",
 	"logo_url":                     "",
-	"homepage_mode":                "builtin",
-	"homepage_version":             "",
 	"page_title":                   "连接信息",
 	"page_note":                    "你的个人订阅",
 	"support_url":                  "",
@@ -191,6 +189,7 @@ var DefaultSettings = map[string]string{
 	"subscription_hy2_endpoints":   "both",
 	"device_grace_minutes":         "15",
 	"log_retention_days":           "14",
+	"metric_retention_days":        "30",
 	"log_ingest_enabled":           "true",
 	"analysis_window_hours":        "24",
 	"alert_auth_fail_threshold":    "10",
@@ -203,12 +202,6 @@ var DefaultSettings = map[string]string{
 	"backup_enabled":               "true",
 	"backup_interval_hours":        "24",
 	"backup_keep":                  "7",
-	"portal_enabled":               "true",
-	"portal_title":                 "用户中心",
-	"portal_note":                  "",
-	"portal_allow_password_change": "true",
-	"portal_allow_sub_reset":       "false",
-	"portal_session_hours":         "72",
 	"admin_security_enabled":       "false",
 	"admin_security_path":          "",
 }
@@ -325,31 +318,70 @@ func maxInt(a, b int) int {
 	return b
 }
 
+// PruneResult reports how many stale rows a cleanup pass removed.
+type PruneResult struct {
+	Logs         int64 `json:"logs"`
+	LogBatches   int64 `json:"logBatches"`
+	Events       int64 `json:"events"`
+	StatsBatches int64 `json:"statsBatches"`
+	NodeMetrics  int64 `json:"nodeMetrics"`
+}
+
+// Total returns the number of deleted rows across all tables.
+func (r PruneResult) Total() int64 {
+	return r.Logs + r.LogBatches + r.Events + r.StatsBatches + r.NodeMetrics
+}
+
 // Prune deletes old logs and metrics according to the retention policy.
-func (s *Store) Prune(ctx context.Context, logDays, metricDays int) error {
+// A retention value of zero disables cleanup for that group. Stats batch
+// receipts are kept for at least seven days so retransmitted Agent batches
+// stay idempotent.
+func (s *Store) Prune(ctx context.Context, logDays, metricDays int) (PruneResult, error) {
+	var res PruneResult
+	var err error
 	if logDays > 0 {
 		cutoff := ts(now().AddDate(0, 0, -logDays))
-		if _, err := s.DB.ExecContext(ctx, `DELETE FROM hy2_logs WHERE ts < ?`, cutoff); err != nil {
-			return err
+		if res.Logs, err = s.deleteBefore(ctx, "hy2_logs", "ts", cutoff); err != nil {
+			return res, err
 		}
-		if _, err := s.DB.ExecContext(ctx, `DELETE FROM log_batches WHERE received_at < ?`, cutoff); err != nil {
-			return err
+		if res.LogBatches, err = s.deleteBefore(ctx, "log_batches", "received_at", cutoff); err != nil {
+			return res, err
 		}
-		if _, err := s.DB.ExecContext(ctx, `DELETE FROM events WHERE created_at < ?`, cutoff); err != nil {
-			return err
+		if res.Events, err = s.deleteBefore(ctx, "events", "created_at", cutoff); err != nil {
+			return res, err
 		}
 		statsCutoff := ts(now().AddDate(0, 0, -maxInt(logDays, 7)))
-		if _, err := s.DB.ExecContext(ctx, `DELETE FROM stats_batches WHERE received_at < ?`, statsCutoff); err != nil {
-			return err
+		if res.StatsBatches, err = s.deleteBefore(ctx, "stats_batches", "received_at", statsCutoff); err != nil {
+			return res, err
 		}
 	}
 	if metricDays > 0 {
 		cutoff := ts(now().AddDate(0, 0, -metricDays))
-		if _, err := s.DB.ExecContext(ctx, `DELETE FROM node_metrics WHERE ts < ?`, cutoff); err != nil {
-			return err
+		if res.NodeMetrics, err = s.deleteBefore(ctx, "node_metrics", "ts", cutoff); err != nil {
+			return res, err
 		}
 	}
-	return nil
+	return res, nil
+}
+
+// deleteBefore removes rows older than cutoff. Table and column names are
+// fixed internal constants, never user input.
+func (s *Store) deleteBefore(ctx context.Context, table, column, cutoff string) (int64, error) {
+	res, err := s.DB.ExecContext(ctx, `DELETE FROM `+table+` WHERE `+column+` < ?`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// Compact checkpoints the WAL and rewrites the database file, reclaiming the
+// space left behind by pruned rows. It can briefly block other writers.
+func (s *Store) Compact(ctx context.Context) error {
+	if _, err := s.DB.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		return err
+	}
+	_, err := s.DB.ExecContext(ctx, `VACUUM`)
+	return err
 }
 
 // DBTime exposes the canonical timestamp format to other packages (tests).

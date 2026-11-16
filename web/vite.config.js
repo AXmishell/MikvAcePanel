@@ -11,6 +11,8 @@ export default defineConfig(({ mode }) => {
     base: process.env.VITE_BASE_PATH || env.VITE_BASE_PATH || '/',
     plugins: [vue()],
     server: {
+      // Bind all interfaces so LAN devices can use the dev server.
+      host: process.env.VITE_DEV_HOST || '0.0.0.0',
       port: 5173,
       proxy: {
         '/api': {

@@ -2,52 +2,30 @@ package store
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"strings"
-	"time"
 
+	"github.com/axmishell/mikvacepanel/internal/idgen"
 	"github.com/axmishell/mikvacepanel/internal/model"
 )
 
-const userSelect = `SELECT id, user_id, username, password, login_password_hash, subscription_token, xray_uuid, enabled,
+const userSelect = `SELECT id, user_id, username, password, subscription_token, xray_uuid, enabled,
 	traffic_tx, traffic_rx, traffic_limit, max_devices, expire_at, last_seen_at,
 	created_at, updated_at FROM users`
 
-// RandomToken returns a URL-safe random hex token.
 // RandomUUID returns a RFC 4122 version 4 UUID.
-func RandomUUID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return RandomToken(16)
-	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
+func RandomUUID() string { return idgen.UUID() }
 
-func RandomToken(bytes int) string {
-	if bytes <= 0 {
-		bytes = 16
-	}
-	b := make([]byte, bytes)
-	if _, err := rand.Read(b); err != nil {
-		// crypto/rand failing is fatal for security tokens; fall back to a
-		// time based value rather than producing an empty token.
-		return fmt.Sprintf("%x%x", time.Now().UnixNano(), b)
-	}
-	return hex.EncodeToString(b)
-}
+// RandomToken returns a URL-safe random hex token.
+func RandomToken(bytes int) string { return idgen.Token(bytes) }
 
 func scanUser(row interface{ Scan(...any) error }) (*model.User, error) {
 	var u model.User
 	var enabled int
 	var expire, last sql.NullString
 	var created, updated string
-	err := row.Scan(&u.ID, &u.UserID, &u.Username, &u.Password, &u.LoginPasswordHash, &u.SubscriptionToken, &u.XrayUUID, &enabled,
+	err := row.Scan(&u.ID, &u.UserID, &u.Username, &u.Password, &u.SubscriptionToken, &u.XrayUUID, &enabled,
 		&u.TrafficTx, &u.TrafficRx, &u.TrafficLimit, &u.MaxDevices, &expire, &last,
 		&created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -83,10 +61,10 @@ func (s *Store) CreateUser(ctx context.Context, u *model.User, groupIDs, nodeIDs
 	nowT := now()
 	u.CreatedAt, u.UpdatedAt = nowT, nowT
 	id, err := s.InsertID(ctx,
-		`INSERT INTO users (user_id, username, password, login_password_hash, subscription_token, xray_uuid, enabled,
+		`INSERT INTO users (user_id, username, password, subscription_token, xray_uuid, enabled,
 		 traffic_tx, traffic_rx, traffic_limit, max_devices, expire_at, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		u.UserID, u.Username, u.Password, u.LoginPasswordHash, u.SubscriptionToken, u.XrayUUID, boolInt(u.Enabled),
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.UserID, u.Username, u.Password, u.SubscriptionToken, u.XrayUUID, boolInt(u.Enabled),
 		u.TrafficTx, u.TrafficRx, u.TrafficLimit, u.MaxDevices, tsPtr(u.ExpireAt), ts(nowT), ts(nowT))
 	if err != nil {
 		return nil, attr(err, "create user")
@@ -281,22 +259,10 @@ func (s *Store) UpdateUser(ctx context.Context, u *model.User, groupIDs, nodeIDs
 		}
 		password = old
 	}
-	loginHash := u.LoginPasswordHash
-	if loginHash == "" {
-		var old string
-		err := s.DB.QueryRowContext(ctx, `SELECT login_password_hash FROM users WHERE id = ?`, u.ID).Scan(&old)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		if err != nil {
-			return nil, err
-		}
-		loginHash = old
-	}
 	res, err := s.DB.ExecContext(ctx,
-		`UPDATE users SET user_id = ?, username = ?, password = ?, login_password_hash = ?, xray_uuid = ?, enabled = ?, traffic_limit = ?,
+		`UPDATE users SET user_id = ?, username = ?, password = ?, xray_uuid = ?, enabled = ?, traffic_limit = ?,
 		 max_devices = ?, expire_at = ?, updated_at = ? WHERE id = ?`,
-		u.UserID, u.Username, password, loginHash, u.XrayUUID, boolInt(u.Enabled), u.TrafficLimit,
+		u.UserID, u.Username, password, u.XrayUUID, boolInt(u.Enabled), u.TrafficLimit,
 		u.MaxDevices, tsPtr(u.ExpireAt), ts(nowT), u.ID)
 	if err != nil {
 		return nil, attr(err, "update user")
@@ -371,19 +337,6 @@ func (s *Store) ResetUserPassword(ctx context.Context, id int64, password string
 	return nil
 }
 
-// SetUserLoginPasswordHash stores the bcrypt hash used by the user portal.
-func (s *Store) SetUserLoginPasswordHash(ctx context.Context, id int64, hash string) error {
-	res, err := s.DB.ExecContext(ctx, `UPDATE users SET login_password_hash = ?, updated_at = ? WHERE id = ?`, hash, ts(now()), id)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
 // SetUserSubscriptionToken replaces the subscription path token. The caller
 // is responsible for validating its shape.
 func (s *Store) SetUserSubscriptionToken(ctx context.Context, id int64, token string) error {
@@ -416,6 +369,17 @@ func (s *Store) TouchUserSeen(ctx context.Context, userID string) {
 
 // ListUsers returns a filtered, paginated user list.
 func (s *Store) ListUsers(ctx context.Context, query, status string, page, size int) ([]model.User, int, error) {
+	return s.listUsers(ctx, query, status, page, size, nil, nil)
+}
+
+// ListUsersScoped is ListUsers restricted to the given groups and nodes. A user
+// matches when one of their groups is listed or they have a direct assignment
+// to one of the nodes. Empty slices mean "no restriction".
+func (s *Store) ListUsersScoped(ctx context.Context, query, status string, page, size int, groupIDs, nodeIDs []int64) ([]model.User, int, error) {
+	return s.listUsers(ctx, query, status, page, size, groupIDs, nodeIDs)
+}
+
+func (s *Store) listUsers(ctx context.Context, query, status string, page, size int, groupIDs, nodeIDs []int64) ([]model.User, int, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -438,6 +402,20 @@ func (s *Store) ListUsers(ctx context.Context, query, status string, page, size 
 	case "expired":
 		where = append(where, "expire_at IS NOT NULL AND expire_at != '' AND expire_at <= ?")
 		args = append(args, ts(now()))
+	}
+	if len(groupIDs) > 0 || len(nodeIDs) > 0 {
+		scope := []string{}
+		if len(groupIDs) > 0 {
+			marks, gargs := intMarks(groupIDs)
+			scope = append(scope, "EXISTS (SELECT 1 FROM user_groups ug WHERE ug.user_id = users.id AND ug.group_id IN ("+marks+"))")
+			args = append(args, gargs...)
+		}
+		if len(nodeIDs) > 0 {
+			marks, nargs := intMarks(nodeIDs)
+			scope = append(scope, "EXISTS (SELECT 1 FROM user_nodes un WHERE un.user_id = users.id AND un.node_id IN ("+marks+"))")
+			args = append(args, nargs...)
+		}
+		where = append(where, "("+strings.Join(scope, " OR ")+")")
 	}
 	cond := strings.Join(where, " AND ")
 	var total int

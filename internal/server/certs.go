@@ -258,7 +258,15 @@ func (s *Server) handleListNodeCerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items := []map[string]any{}
+	allowedNodes, restricted := s.apiKeyAllowedNodes(r)
+	allowed := map[int64]bool{}
+	for _, id := range allowedNodes {
+		allowed[id] = true
+	}
 	for _, n := range nodes {
+		if restricted && !allowed[n.ID] {
+			continue
+		}
 		item := map[string]any{"nodeId": n.ID, "nodeName": n.Name, "domain": n.Domain, "tlsMode": n.TLSMode}
 		if nc, err := s.store.GetNodeCertificate(r.Context(), n.ID); err == nil {
 			item["status"] = nc.Status

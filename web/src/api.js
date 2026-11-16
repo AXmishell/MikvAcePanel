@@ -64,19 +64,12 @@ export function adminPath(subpath = '') {
 
 
 let unauthorizedHandler = null
-let portalUnauthorizedHandler = null
 export function setUnauthorizedHandler(fn) {
   unauthorizedHandler = fn
-}
-export function setPortalUnauthorizedHandler(fn) {
-  portalUnauthorizedHandler = fn
 }
 
 function token() {
   return localStorage.getItem('mikvace_token') || ''
-}
-function portalToken() {
-  return localStorage.getItem('mikvace_portal_token') || ''
 }
 
 async function send(path, options = {}, bearer = '', onUnauthorized = null, adminRequest = false) {
@@ -128,10 +121,6 @@ async function send(path, options = {}, bearer = '', onUnauthorized = null, admi
 
 function request(path, options = {}) {
   return send(path, options, token(), unauthorizedHandler, true)
-}
-
-function portalRequest(path, options = {}) {
-  return send(path, options, portalToken(), portalUnauthorizedHandler)
 }
 
 function adminHeaders(extra = {}) {
@@ -208,6 +197,8 @@ export const api = {
   logSummary: (query) => request('/logs/summary', { query }),
   logOptions: () => request('/logs/options'),
   clearLogs: (before) => request('/logs', { method: 'DELETE', query: { before } }),
+  maintenanceUsage: () => request('/maintenance/usage'),
+  cleanupData: (data) => request('/maintenance/cleanup', { method: 'POST', body: data }),
   async downloadLogs(query) {
     const params = new URLSearchParams()
     Object.entries(query || {}).forEach(([k, v]) => {
@@ -220,7 +211,7 @@ export const api = {
     if (!res.ok) {
       const text = await res.text().catch(() => '')
       let msg = text
-      try { msg = JSON.parse(text).error || text } catch {}
+      try { msg = JSON.parse(text).error || text } catch { /* non-JSON error body */ }
       throw new Error(msg || `Download failed (${res.status})`)
     }
     const blob = await res.blob()
@@ -259,43 +250,11 @@ export const api = {
     if (!res.ok) throw new Error(data.error || 'Restore failed')
     return data
   },
-  async uploadHomepage(file) {
-    const fd = new FormData()
-    fd.append('file', file)
-    const res = await fetch(`${BASE}/homepage/upload`, {
-      method: 'POST',
-      headers: adminHeaders({ Authorization: 'Bearer ' + token() }),
-      body: fd,
-    })
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(data.error || 'Upload failed')
-    return data
-  },
-  homepage: () => request('/homepage'),
-  activateHomepage: (version) => request('/homepage/activate', { method: 'POST', body: { version } }),
-  setHomepageMode: (mode) => request('/homepage/mode', { method: 'PUT', body: { mode } }),
-  deleteHomepageVersion: (version) => request(`/homepage/versions/${encodeURIComponent(version)}`, { method: 'DELETE' }),
-  previewHomepage: (version) => request('/homepage/preview', { method: 'POST', body: { version } }),
-  resetHomepage: () => request('/homepage', { method: 'DELETE' }),
-
   apiKeys: () => request('/api-keys'),
   createAPIKey: (data) => request('/api-keys', { method: 'POST', body: data }),
+  updateAPIKey: (id, data) => request(`/api-keys/${id}`, { method: 'PUT', body: data }),
+  rotateAPIKey: (id) => request(`/api-keys/${id}/rotate`, { method: 'POST' }),
   deleteAPIKey: (id) => request(`/api-keys/${id}`, { method: 'DELETE' }),
   enableAPIKey: (id) => request(`/api-keys/${id}/enable`, { method: 'POST' }),
   disableAPIKey: (id) => request(`/api-keys/${id}/disable`, { method: 'POST' }),
-}
-
-// User self-service portal. Uses its own token so an administrator session and
-// a portal session can coexist in the same browser.
-export const portalApi = {
-  config: () => portalRequest('/portal/config'),
-  login: (userId, password) =>
-    portalRequest('/portal/login', { method: 'POST', body: { userId, password } }),
-  logout: () => portalRequest('/portal/logout', { method: 'POST' }),
-  me: () => portalRequest('/portal/me'),
-  changePassword: (oldPassword, newPassword) =>
-    portalRequest('/portal/password', { method: 'POST', body: { oldPassword, newPassword } }),
-  changeConnectionPassword: (currentPassword, newPassword) =>
-    portalRequest('/portal/connection-password', { method: 'POST', body: { currentPassword, newPassword } }),
-  resetSubscription: () => portalRequest('/portal/subscription/reset', { method: 'POST' }),
 }

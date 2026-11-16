@@ -192,7 +192,7 @@ async function submit() {
   flex: none;
   width: 168px;
   height: 60px;
-  border-radius: 8px;
+  border-radius: 0;
   border: 1px solid var(--line);
   background: #191917;
   cursor: pointer;

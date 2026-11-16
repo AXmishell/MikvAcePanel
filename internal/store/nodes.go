@@ -118,6 +118,64 @@ func (s *Store) GetNodeGroupIDs(ctx context.Context, nodeID int64) ([]int64, err
 	return out, rows.Err()
 }
 
+// ListNodeIDsByGroups expands a set of group ids into node ids.
+func (s *Store) ListNodeIDsByGroups(ctx context.Context, groupIDs []int64) ([]int64, error) {
+	if len(groupIDs) == 0 {
+		return []int64{}, nil
+	}
+	args := make([]any, len(groupIDs))
+	marks := make([]string, len(groupIDs))
+	for i, id := range groupIDs {
+		args[i] = id
+		marks[i] = "?"
+	}
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT DISTINCT node_id FROM node_groups WHERE group_id IN (`+strings.Join(marks, ",")+`) ORDER BY node_id`,
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// ListGroupIDsByNodes returns the groups that contain any of the given nodes.
+func (s *Store) ListGroupIDsByNodes(ctx context.Context, nodeIDs []int64) ([]int64, error) {
+	if len(nodeIDs) == 0 {
+		return []int64{}, nil
+	}
+	args := make([]any, len(nodeIDs))
+	marks := make([]string, len(nodeIDs))
+	for i, id := range nodeIDs {
+		args[i] = id
+		marks[i] = "?"
+	}
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT DISTINCT group_id FROM node_groups WHERE node_id IN (`+strings.Join(marks, ",")+`) ORDER BY group_id`,
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // SetNodeGroups replaces node group assignments.
 func (s *Store) SetNodeGroups(ctx context.Context, nodeID int64, groupIDs []int64) error {
 	tx, err := s.DB.BeginTx(ctx, nil)

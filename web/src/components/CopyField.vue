@@ -61,7 +61,7 @@ onBeforeUnmount(() => clearTimeout(timer))
   min-width: 0;
   padding: 3px 3px 3px 11px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 0;
   background: var(--input-bg);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -113,7 +113,7 @@ onBeforeUnmount(() => clearTimeout(timer))
   height: 28px;
   padding: 0 9px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 0;
   background: var(--panel-3);
   color: var(--muted);
   font-size: 11.5px;

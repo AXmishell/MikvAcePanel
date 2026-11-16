@@ -24,6 +24,24 @@
 
 面板是唯一控制面，节点是数据面。代理核心不直接访问数据库，只通过 Agent 接收配置和上报数据。
 
+### 代码分层
+
+```text
+transport/httpapi + transport/agentws   HTTP / WebSocket 适配
+        │
+        ▼
+internal/app/{users,nodes,...}          用例编排、校验、事务边界
+        │  ports（仓储 / 通知 / 配置推送接口）
+        ▼
+internal/store (SQLite)                 持久化实现
+internal/domain (model)                 实体、值对象、领域错误
+```
+
+- handler 只负责请求解析、调用应用服务、映射响应；
+- `internal/app` 不依赖 HTTP 和具体数据库；
+- `internal/ports` 由消费方定义接口，`store` 隐式实现；
+- `internal/agent` 不依赖 store/server，只通过 WebSocket 协议与面板交互。
+
 ## 配置流
 
 ```text
@@ -51,7 +69,7 @@ Agent 断线重连时：
 
 | 消息 | 内容 |
 | --- | --- |
-| `hello` | 版本、OS、架构、代理版本、能力、证书指纹 |
+| `hello` | 版本、OS、架构、代理版本、能力、证书指纹、生命周期状态 |
 | `heartbeat` | CPU/内存/磁盘/load/uptime/在线数/累计流量 |
 | `logs` | 日志批次 + batch id |
 | `stats` | 用户流量增量 + batch id |
@@ -90,14 +108,14 @@ Agent 断线重连时：
 | `events` | 节点上下线、配置、证书、备份等事件 |
 | `hy2_logs` | 解析后的代理日志 |
 | `log_batches` / `stats_batches` | 幂等批次 |
-| `api_keys` | 作用域、限流、过期 |
+| `api_keys` | 细分权限、节点/分组资源范围、限流、用量、过期 |
 | `settings` | 面板设置、加密后的 DNS 凭据 |
 | `acme_accounts` | 持久化 ACME 账户密钥 |
 | `schema_migrations` | schema 与数据迁移版本 |
 
 SQLite 使用 WAL 模式；`VACUUM INTO` 生成一致性备份快照。
 
-存储层通过 `internal/store/dialect` 和 `store.DB` 包装层隔离方言：业务 SQL 继续使用 `?`，PostgreSQL 自动重写为 `$1`。SQLite 是安装向导的默认后端，PostgreSQL 18 和 MySQL 8.0 也可直接作为面板数据库使用；`database.driver: setup` 会先启动不打开数据库的安装器。DDL 由 `internal/store/schema` 元数据生成，`schema_migrations` 记录版本。远程库的备份/恢复尚未实现，仍会返回明确的未实现错误。
+存储层只使用 SQLite，业务 SQL 统一使用 `?` 占位符；`internal/store/dialect` 提供 SQLite DDL、内省和 DML 片段。`database.driver: setup` 会先启动不打开数据库的安装器。DDL 由 `internal/store/schema` 元数据生成，`schema_migrations` 记录版本。备份/恢复直接操作 SQLite 文件。
 
 ## 安全边界
 
@@ -106,9 +124,8 @@ SQLite 使用 WAL 模式；`VACUUM INTO` 生成一致性备份快照。
 - 管理员密码使用 bcrypt；
 - JWT HS256，密钥来自 `security.jwt_secret_file`，未配置时自动生成 `data_dir/jwt.secret`；
 - 登录失败按 IP 限流；失败一次后，30 分钟内同一 IP 的登录必须通过一次性图形验证码（5 分钟有效）；2FA challenge 一次性、5 分钟有效；
-- API Key 只存 SHA-256 哈希，带作用域与独立限流；
-- 敏感数据加密：证书私钥、DNS 凭据、TOTP 密钥使用 AES-256-GCM（`cert.key`）；
-- 自定义首页在无 `allow-same-origin` 的沙箱 iframe 中运行，响应同时带 `CSP: sandbox`，不能读取面板 `localStorage`、Cookie 或管理 API Token。
+- API Key 只存 SHA-256 哈希，带细分权限、节点/分组资源范围与独立限流；
+- 敏感数据加密：证书私钥、DNS 凭据、TOTP 密钥使用 AES-256-GCM（`cert.key`）。
 
 ### 节点
 

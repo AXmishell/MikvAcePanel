@@ -134,7 +134,7 @@ onMounted(load)
 .group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
 .group-card { padding: 17px; }
 .group-head { display: flex; align-items: center; gap: 11px; }
-.group-color { width: 12px; height: 34px; border-radius: 6px; flex: none; }
+.group-color { width: 12px; height: 34px; border-radius: 0; flex: none; }
 .group-name { font-weight: 700; font-size: 14px; }
 .group-desc { color: var(--muted); font-size: 12px; min-height: 36px; margin: 12px 0; }
 .group-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; border-top: 1px solid var(--line-soft); padding-top: 12px; }

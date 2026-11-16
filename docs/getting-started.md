@@ -30,7 +30,7 @@ cp panel.example.yaml config/panel.yaml
 panel:
   public_url: "https://panel.example.com"
 server:
-  data_dir: "/data"
+  data_dir: "/app/data"
 admin:
   username: "admin"
   password_file: ""      # 留空则使用 /install
@@ -43,7 +43,7 @@ docker compose up -d --build
 docker compose logs -f panel
 ```
 
-打开 `http://服务器IP:8080/` 查看公开首页。首次启动且 `admin.password_file` 为空时，打开 `/install`：先选择 SQLite / PostgreSQL / MySQL，再创建第一个管理员；管理员控制台位于 `/admin`（旧地址 `/panel` 不再跳转，直接返回 404）。
+打开 `http://服务器IP:8080/install` 初始化面板。首次启动且 `admin.password_file` 为空时，打开 `/install`：先确认 SQLite 数据文件，再创建第一个管理员；管理员控制台位于 `/admin`（旧地址 `/panel` 不再跳转，直接返回 404）。站点根路径 `/` 不提供公开首页，初始化完成后直接返回 404；尚未创建管理员时会跳转到 `/install`。
 
 ### 使用 GHCR 预构建镜像
 
@@ -53,31 +53,31 @@ cp panel.example.yaml config/panel.yaml
 # 编辑 config/panel.yaml 后：
 docker run -d --name mikvace-panel --restart unless-stopped \
   -p 8080:8080 \
-  -v "$PWD/config:/config" \
-  -v "$PWD/data:/data" \
-  ghcr.io/axmishell/mikvacepanel:latest --config /config/panel.yaml
+  -v "$PWD/config:/app/config" \
+  -v "$PWD/data:/app/data" \
+  ghcr.io/axmishell/mikvacepanel:latest --config /app/config/panel.yaml
 ```
 
-使用目录映射而非命名卷：配置写入 `./config/panel.yaml`，数据写入 `./data`，直接打包这两个目录即可完成备份。`/install` 会把面板名称、公共地址、管理员用户名和数据库配置写回 `config/panel.yaml`；远程数据库的 DSN 单独写入 `./data/database.dsn`，不会进入 YAML。
+使用目录映射而非命名卷：配置写入 `./config/panel.yaml`，数据写入 `./data`，直接打包这两个目录即可完成备份。`/install` 会把面板名称、公共地址、管理员用户名和 SQLite 路径写回 `config/panel.yaml`。
 
-> **注意**：请挂载 `./config` 目录，不要挂载单个 `./panel.yaml`。宿主机文件不存在时，Docker / 1Panel 会把单文件挂载点创建成目录，日志出现 `read /config/panel.yaml: is a directory`。新版面板检测到目录时会自动回退到 `/data/panel.yaml` 并继续启动安装器。
+> **注意**：请挂载 `./config` 目录，不要挂载单个 `./panel.yaml`。宿主机文件不存在时，Docker / 1Panel 会把单文件挂载点创建成目录，日志出现 `read /app/config/panel.yaml: is a directory`。新版面板检测到目录时会自动回退到 `/app/data/panel.yaml` 并继续启动安装器。
 
 镜像标签：`main`、`latest`（main 分支）与 `sha-<commit>`；发布 `v*.*.*` 标签时同时提供语义化版本，并更新 `latest`。`latest` 指向最后一次成功构建的镜像，需要固定版本请使用语义化版本标签。
 
 ## 2. 首次登录
 
-应用配置只从 YAML 读取（Docker 部署为 `config/panel.yaml`），不读取环境变量，也不使用 `.env`。`panel.example.yaml` 默认 `database.driver: setup`：首次启动进入**安装器模式**，只提供 `/install` 和数据库配置接口，**不会打开或创建 SQLite 文件**；保存后端后进程重启，才进入完整面板。
+应用配置只从 YAML 读取（Docker 部署为 `config/panel.yaml`），不读取环境变量，也不使用 `.env`。`panel.example.yaml` 默认 `database.driver: setup`：首次启动进入**安装器模式**，只提供 `/install` 和数据库配置接口，**不会打开或创建 SQLite 文件**；保存 SQLite 路径后进程重启，才进入完整面板。
 
 首次启动有两种初始化方式：
 
-- **`admin.password_file` 为空**：访问 `http://服务器IP:8080/install`。第一步选择数据后端：SQLite 保存后才创建 `data/panel.db`；PostgreSQL / MySQL 需要填写 DSN，向导会先测试连接，再写入配置并自动重启面板。第二步设置管理员用户名、密码、面板名称和公共访问地址。提交后会自动登录，并把非敏感字段写回 `panel.yaml`。
+- **`admin.password_file` 为空**：访问 `http://服务器IP:8080/install`。第一步确认 SQLite 数据文件路径，保存后才创建 `data/panel.db`；向导会先测试路径，再写入配置并自动重启面板。第二步设置管理员用户名、密码、面板名称和公共访问地址。提交后会自动登录，并把非敏感字段写回 `panel.yaml`。
 - **配置了 `admin.password_file`**：启动时读取密钥文件并自动创建 `admin.username` 对应的管理员，直接打开 `/admin` 登录即可。文件内容只保存密码，权限保持 0600。
 
 !!! note "数据库配置的写入位置"
 
-    `panel.yaml` 只保存 `database.driver`、SQLite 的 `database.path` 和 `database.dsn_file` 路径。PostgreSQL / MySQL 的 DSN 写入 `server.data_dir/database.dsn`（权限 0600），与配置文件分离。切换后端不会迁移旧库数据；初始化向导只在创建第一个管理员之前可用，完成后不能再通过 `/install` 改数据库。
+    `panel.yaml` 保存 `database.driver` 和 SQLite 的 `database.path`。初始化向导只在创建第一个管理员之前可用，完成后不能再通过 `/install` 改数据库路径。
 
-    如果希望跳过安装器模式、直接用 SQLite，把 `database.driver` 改为 `sqlite` 后启动即可；已有配置文件缺少 `database` 段时也按 SQLite 处理。
+    如果希望跳过安装器模式，把 `database.driver` 改为 `sqlite` 后启动即可；已有配置文件缺少 `database` 段时也按 SQLite 处理。
 
 !!! note "安装入口只在首次运行开放"
 

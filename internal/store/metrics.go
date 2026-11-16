@@ -75,8 +75,7 @@ type TrafficPoint struct {
 }
 
 // TrafficSeries aggregates heartbeat deltas per hour (or per minute for short
-// ranges). substr() works identically on the portable timestamp text format
-// used by all three backends.
+// ranges). substr() works on the RFC3339 timestamp text stored in SQLite.
 func (s *Store) TrafficSeries(ctx context.Context, since time.Time, nodeID int64, minute bool) ([]TrafficPoint, error) {
 	bucket := `substr(ts,1,13)||':00'`
 	format := "2006-01-02T15:00"

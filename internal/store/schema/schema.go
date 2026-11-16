@@ -190,7 +190,6 @@ func usersTable() Table {
 			unique(str("user_id", 191)),
 			strDef("username", 191, ""),
 			str("password", 255),
-			strDef("login_password_hash", 255, ""),
 			unique(str("subscription_token", 191)),
 			strDef("xray_uuid", 64, ""),
 			boolean("enabled", false),
@@ -447,6 +446,9 @@ func nodeMetricsTable() Table {
 		},
 		Indexes: []Index{
 			{Name: "idx_metrics_node_ts", Columns: []string{"node_id", "ts"}},
+			// Global queries (dashboard traffic series, retention pruning) filter
+			// on ts without a node id, so they need a ts-first index.
+			{Name: "idx_metrics_ts", Columns: []string{"ts"}},
 		},
 	}
 }
@@ -540,12 +542,18 @@ func apiKeysTable() Table {
 		Columns: []Column{
 			id(),
 			str("name", 191),
+			textDef("description", ""),
 			str("prefix", 32),
 			unique(str("token_hash", 64)),
 			textDef("scopes", ""),
+			textDef("node_ids", ""),
+			textDef("group_ids", ""),
 			integer("rate_limit", 60),
+			bigint("request_count", 0),
+			strDef("last_used_ip", 64, ""),
 			boolean("enabled", true),
 			timeCol("created_at"),
+			optTime("updated_at"),
 			optTime("last_used_at"),
 			optTime("expires_at"),
 		},

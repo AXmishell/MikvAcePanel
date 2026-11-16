@@ -328,7 +328,7 @@ onBeforeUnmount(() => {
   width: 100%; min-height: 37px;
   padding: 9px 11px;
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: var(--input-bg);
   color: var(--text);
   font-size: 13px;
@@ -345,7 +345,7 @@ onBeforeUnmount(() => {
 .ms-chevron { flex: none; color: var(--muted-2); transition: transform 0.16s ease, color 0.16s ease; }
 .ms-select.is-open .ms-chevron { transform: rotate(180deg); color: var(--accent); }
 
-.ms-select--sm .ms-trigger { min-height: 31px; padding: 6px 9px; font-size: 11.5px; border-radius: 7px; }
+.ms-select--sm .ms-trigger { min-height: 31px; padding: 6px 9px; font-size: 11.5px; border-radius: 0; }
 .ms-select--sm .ms-chevron { width: 13px; height: 13px; }
 
 .ms-popup {
@@ -353,7 +353,7 @@ onBeforeUnmount(() => {
   display: flex; flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 0;
   background: var(--panel);
   box-shadow: var(--shadow);
 }
@@ -368,7 +368,7 @@ onBeforeUnmount(() => {
 .ms-option {
   display: flex; align-items: center; gap: 8px;
   width: 100%; padding: 7px 9px;
-  border: 0; border-radius: 6px;
+  border: 0; border-radius: 0;
   background: transparent; color: var(--muted);
   font-size: 12.5px; text-align: left;
   cursor: pointer;

@@ -1,6 +1,6 @@
 export function fmtBytes(n, decimals = 1) {
   n = Number(n || 0)
-  if (n <= 0) return '0 B'
+  if (!Number.isFinite(n) || n <= 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
   let i = 0
   while (n >= 1024 && i < units.length - 1) {

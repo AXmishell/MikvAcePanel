@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -327,6 +328,14 @@ func (h *Hub) Monitor(ctx context.Context) {
 	}
 }
 
+// deviceRetentionFallback mirrors the auth path default when the panel setting
+// is missing or invalid.
+const deviceRetentionFallback = 15 * time.Minute
+
+// touchedRetention bounds the throttle map that avoids writing a "last seen"
+// update to the database more than once per minute per user.
+const touchedRetention = time.Hour
+
 func (h *Hub) monitorOnce(ctx context.Context) {
 	cutoff := time.Now().UTC().Add(-45 * time.Second)
 	stale, err := h.store.MarkStaleNodesOffline(ctx, cutoff)
@@ -346,11 +355,56 @@ func (h *Hub) monitorOnce(ctx context.Context) {
 			delete(h.authOnline, uid)
 		}
 	}
-	for uid := range h.devices {
-		// Devices are cleaned lazily in CheckDeviceLimit.
-		_ = uid
-	}
 	h.mu.Unlock()
+
+	// CheckDeviceLimit prunes devices lazily while a user keeps connecting.
+	// Idle users need this sweep, otherwise their addresses stay for the whole
+	// process lifetime.
+	h.pruneDevices(nowT, h.deviceGrace(ctx))
+	h.pruneTouched(nowT)
+}
+
+// deviceGrace returns the configured device grace period. Entries older than
+// this are no longer counted by CheckDeviceLimit, so the monitor can drop them
+// without changing enforcement.
+func (h *Hub) deviceGrace(ctx context.Context) time.Duration {
+	if h.store == nil {
+		return deviceRetentionFallback
+	}
+	settings, err := h.store.GetSettings(ctx)
+	if err != nil {
+		return deviceRetentionFallback
+	}
+	minutes, err := strconv.Atoi(settings["device_grace_minutes"])
+	if err != nil || minutes <= 0 {
+		return deviceRetentionFallback
+	}
+	return time.Duration(minutes) * time.Minute
+}
+
+func (h *Hub) pruneDevices(now time.Time, grace time.Duration) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for userID, devices := range h.devices {
+		for ip, last := range devices {
+			if now.Sub(last) > grace {
+				delete(devices, ip)
+			}
+		}
+		if len(devices) == 0 {
+			delete(h.devices, userID)
+		}
+	}
+}
+
+func (h *Hub) pruneTouched(now time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for userID, last := range h.touched {
+		if now.Sub(last) > touchedRetention {
+			delete(h.touched, userID)
+		}
+	}
 }
 
 // NodeAgentInfo is bookkeeping info used by the dashboard.

@@ -177,7 +177,7 @@ onBeforeUnmount(() => {
   position: relative; overflow: hidden;
   width: min(452px, 100%);
   border: 1px solid var(--line-strong);
-  border-radius: 18px;
+  border-radius: 0;
   background:
     radial-gradient(120% 90% at 50% 0%, var(--accent-soft), transparent 58%),
     var(--panel);
@@ -209,7 +209,7 @@ onBeforeUnmount(() => {
   width: 43px; height: 43px;
   display: grid; place-items: center;
   border: 1px solid var(--accent-line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--accent-soft);
   color: var(--accent);
   box-shadow: 0 10px 28px -16px var(--accent);
@@ -250,7 +250,7 @@ onBeforeUnmount(() => {
   display: flex; align-items: center; gap: 9px;
   margin-top: 15px; padding: 10px 12px;
   border: 1px solid var(--accent-line);
-  border-radius: 10px;
+  border-radius: 0;
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 11.5px;
@@ -271,7 +271,7 @@ onBeforeUnmount(() => {
   width: 15px; height: 15px;
   border: 2px solid currentColor;
   border-right-color: transparent;
-  border-radius: 50%;
+  border-radius: 0;
   opacity: 0.9;
   animation: confirmSpin 0.75s linear infinite;
 }

@@ -12,8 +12,8 @@ panel:
 server:
   # Container listens on all interfaces; the compose file publishes 8080.
   addr: ":8080"
-  # Docker: /data. Running the binary directly: ./data
-  data_dir: "/data"
+  # Docker: /app/data. Running the binary directly: ./data
+  data_dir: "/app/data"
   serve_web: true
   frontend_url: ""
   cors_origins: []
@@ -36,20 +36,17 @@ security:
   cert_key_file: ""
 
 database:
-  # setup starts the first-run wizard without opening any database. Choosing
-  # PostgreSQL / MySQL writes data_dir/database.dsn (0600); every change
-  # restarts the panel once. Use sqlite/postgres/mysql to skip the wizard.
-  driver: "setup"           # setup | sqlite | postgres | mysql
-  path: "/data/panel.db"    # sqlite only
-  # PostgreSQL / MySQL: set driver above and point dsn_file at a file
-  # containing the DSN, e.g. /run/secrets/database_url.
-  dsn_file: ""
+  # setup starts the first-run wizard without opening the database. The wizard
+  # saves the SQLite path and restarts the panel once. Use sqlite to skip that
+  # step, or setup to choose a different data file.
+  driver: "setup"           # setup | sqlite
+  path: "/app/data/panel.db"    # sqlite data file
   max_open: 8
   max_idle: 4
   conn_max_lifetime: "1h"
 
 redis:
-  # Optional. The URL is read from this file, e.g. /config/redis.url.
+  # Optional. The URL is read from this file, e.g. /app/config/redis.url.
   url_file: ""
   prefix: "mikvace:"
   required: false

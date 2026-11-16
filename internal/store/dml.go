@@ -2,6 +2,29 @@ package store
 
 import "context"
 
+// intMarks builds a "?,?,?" placeholder list and its arguments for an IN
+// clause over int64 ids.
+func intMarks(ids []int64) (string, []any) {
+	marks := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		marks[i] = "?"
+		args[i] = id
+	}
+	return joinStrings(marks, ","), args
+}
+
+func joinStrings(parts []string, sep string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	out := parts[0]
+	for _, p := range parts[1:] {
+		out += sep + p
+	}
+	return out
+}
+
 // InsertIgnore inserts a row and silently ignores duplicate keys.
 func (s *Store) InsertIgnore(ctx context.Context, table string, cols, conflict []string, args ...any) (bool, error) {
 	return s.insertIgnore(ctx, s.DB, table, cols, conflict, args...)

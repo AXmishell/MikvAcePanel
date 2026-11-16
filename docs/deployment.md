@@ -14,16 +14,16 @@
 
 ## 配置文件
 
-面板配置**只从 YAML 读取**，不读取任何环境变量，也不使用 `.env`。面板模板为 `panel.example.yaml`，复制为 `panel.yaml` 后按需修改。Docker Compose 使用目录映射，宿主机路径为 `config/panel.yaml`，容器内为 `/config/panel.yaml`。节点 Agent 不同：它优先读取环境变量（`PANEL_URL`、`NODE_TOKEN`、`HY2_RUNTIME` 等），容器部署不再需要 `node.yaml`；二进制 / systemd 仍可使用 `node.example.yaml`。
+面板配置**只从 YAML 读取**，不读取任何环境变量，也不使用 `.env`。面板模板为 `panel.example.yaml`，复制为 `panel.yaml` 后按需修改。Docker Compose 使用目录映射，宿主机路径为 `config/panel.yaml`，容器内为 `/app/config/panel.yaml`。节点 Agent 不同：它优先读取环境变量（`PANEL_URL`、`NODE_TOKEN`、`HY2_RUNTIME` 等），容器部署不再需要 `node.yaml`；二进制 / systemd 仍可使用 `node.example.yaml`。
 
-查找顺序：`--config` 参数 → `panel.yaml` → `config/panel.yaml` → `/config/panel.yaml` → `/data/panel.yaml`。
+查找顺序：`--config` 参数 → `panel.yaml` → `config/panel.yaml` → `/app/config/panel.yaml` → `/app/data/panel.yaml` → `/config/panel.yaml` → `/data/panel.yaml`。
 
 面板主要字段：
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
 | `server.addr` | `:8080` | 面板监听地址 |
-| `server.data_dir` | `./data` | 数据目录，Docker 镜像内为 `/data` |
+| `server.data_dir` | `./data` | 数据目录，Docker 镜像内为 `/app/data` |
 | `server.serve_web` | `true` | 是否由面板提供内嵌前端 |
 | `server.frontend_url` | 空 | 前后端分离时的前端地址 |
 | `server.cors_origins` | 空 | 允许跨域的前端 Origin |
@@ -36,16 +36,15 @@
 | `session.ttl` | `24h` | 管理员会话有效期 |
 | `security.jwt_secret_file` | 空 | JWT/恢复码签名密钥文件；留空自动生成 `data_dir/jwt.secret` |
 | `security.cert_key_file` | 空 | 证书/DNS/2FA 加密密钥文件；留空自动生成 `data_dir/cert.key` |
-| `database.driver` | `sqlite` | `sqlite` / `postgres` / `mysql` |
-| `database.path` | `<data_dir>/panel.db` | SQLite 路径 |
-| `database.dsn_file` | 空 | 远程数据库 DSN 文件 |
+| `database.driver` | `sqlite` | `setup` / `sqlite` |
+| `database.path` | `<data_dir>/panel.db` | SQLite 数据文件路径 |
 | `database.max_open` / `max_idle` | 后端默认 | 连接池大小 |
 | `database.conn_max_lifetime` | `1h` | 连接最长复用时间 |
 | `redis.url_file` | 空 | Redis URL 文件；为空则使用进程内存 |
 | `redis.prefix` | `mikvace:` | Redis key 前缀 |
 | `redis.required` | `false` | Redis 不可用时是否拒绝启动 |
 
-**密钥只能用 `*_file` 引用**，配置文件中不出现明文密码、Token、JWT secret、DSN 或证书加密密钥。最小示例：
+**密钥只能用 `*_file` 引用**，配置文件中不出现明文密码、Token、JWT secret 或证书加密密钥。最小示例：
 
 ```bash
 sudo install -d -m 700 /etc/mikvace
@@ -60,7 +59,7 @@ admin:
   password_file: "/etc/mikvace/admin.password"
 ```
 
-Docker 部署时把密钥文件放到 `./config/`。compose 已把整个目录映射到容器的 `/config`，无需再单独挂载：
+Docker 部署时把密钥文件放到 `./config/`。compose 已把整个目录映射到容器的 `/app/config`，无需再单独挂载：
 
 ```bash
 sudo install -d -m 700 ./config
@@ -72,7 +71,7 @@ printf '%s' '请替换为强密码' | sudo tee ./config/admin.password >/dev/nul
 
 ```yaml
 admin:
-  password_file: "/config/admin.password"
+  password_file: "/app/config/admin.password"
 ```
 
 `jwt_secret_file` 与 `cert_key_file` 一旦使用后不要随意更换：
@@ -103,7 +102,6 @@ admin:
 | `REDIS_PREFIX` | `redis.prefix` |
 | `REDIS_REQUIRED` | `redis.required` |
 | `DB_DRIVER` | `database.driver` |
-| `DATABASE_URL` | `database.dsn_file`（先写入文件） |
 | `DB_PATH` | `database.path` |
 | `DB_MAX_OPEN` / `DB_MAX_IDLE` | `database.max_open` / `max_idle` |
 | `DB_CONN_LIFETIME` | `database.conn_max_lifetime` |
@@ -120,37 +118,37 @@ services:
     image: ghcr.io/axmishell/mikvacepanel:latest
     container_name: mikvace-panel
     restart: unless-stopped
-    command: ["--config", "/config/panel.yaml"]
+    command: ["--config", "/app/config/panel.yaml"]
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - ./data:/data
-      - ./config:/config
+      - ./data:/app/data
+      - ./config:/app/config
 ```
 
 - 只监听 `127.0.0.1:8080`，由反向代理对外提供 HTTPS；
 - 需要修改宿主机端口时，直接改 compose 的 `ports`，或用 `compose.override.yaml` 覆盖；不再使用 `.env` 插值；
 - 如果面板直接暴露，改为 `8080:8080` 并配置防火墙；
 - 数据使用当前目录映射（`./data`），不使用 Docker 命名卷。`./data` 必须持久化，否则重启后用户、节点、证书全部丢失。
-- 配置目录使用 `./config` 映射到容器 `/config`。`./config/panel.yaml` 需要可写，`/install` 会把面板名称、公共地址、管理员用户名和数据库配置写回；也可以预先配置 `admin.password_file` 进行无人值守初始化。
-- 通过 `/install` 选择 PostgreSQL / MySQL 时，DSN 会写到 `/data/database.dsn`，请确保 `./data` 持久化。
+- 配置目录使用 `./config` 映射到容器 `/app/config`。`./config/panel.yaml` 需要可写，`/install` 会把面板名称、公共地址、管理员用户名和数据库配置写回；也可以预先配置 `admin.password_file` 进行无人值守初始化。
+- 容器内数据目录为 `/app/data`（镜像 `WORKDIR /app`）。升级旧部署时，请把 `config/panel.yaml` 中的 `server.data_dir` 和 `database.path` 从 `/data/...` 改为 `/app/data/...`，否则数据会写进容器内未挂载的 `/data`，重建容器后丢失。
 - 使用反向代理时在 `server.trusted_proxies` 中填写代理地址，否则面板会忽略 `X-Forwarded-For`，把所有客户端当成代理 IP，登录限流和审计日志将不准确。
 
 !!! note "为什么挂载 ./config 目录而不是单个 panel.yaml"
 
-    Docker 在宿主机文件不存在时，会把单文件挂载点创建成**目录**。旧版做法 `./panel.yaml:/config/panel.yaml` 如果在启动前没有创建 `panel.yaml`，日志就会反复出现：
+    Docker 在宿主机文件不存在时，会把单文件挂载点创建成**目录**。旧版做法 `./panel.yaml:/app/config/panel.yaml` 如果在启动前没有创建 `panel.yaml`，日志就会反复出现：
 
     ```text
-    ERROR load config error="read /config/panel.yaml: is a directory" path=/config/panel.yaml
+    ERROR load config error="read /app/config/panel.yaml: is a directory" path=/app/config/panel.yaml
     ```
 
-    目录映射则没有这个问题：`./config` 不存在时 Docker 会自动创建，`/install` 直接写入 `/config/panel.yaml`。如果已经遇到该错误，请改成上面的目录映射，然后在 1Panel / Compose 中**重建容器**（`restart` 不会改变挂载类型）：
+    目录映射则没有这个问题：`./config` 不存在时 Docker 会自动创建，`/install` 直接写入 `/app/config/panel.yaml`。如果已经遇到该错误，请改成上面的目录映射，然后在 1Panel / Compose 中**重建容器**（`restart` 不会改变挂载类型）：
 
     ```bash
     docker compose up -d --force-recreate
     ```
 
-    目录映射后，把配置放到 `./config/panel.yaml` 即可；面板检测到 `--config` 指向目录时也会记录 warning 并回退到 `/data/panel.yaml`，不会 crash-loop。
+    目录映射后，把配置放到 `./config/panel.yaml` 即可；面板检测到 `--config` 指向目录时也会记录 warning 并回退到 `/app/data/panel.yaml`，不会 crash-loop。
 
     从旧版单文件挂载升级时，先移动配置再重建容器：
 
@@ -176,95 +174,31 @@ services:
 
     卷名取决于 Compose 项目名（默认是目录名 + `_panel-data`），可用 `docker volume ls` 确认。复制完成后建议保留旧卷一段时间，确认面板和备份都正常后再删除。
 
-### 数据库后端
+### 数据库
 
-SQLite 是零配置后端，PostgreSQL 18 和 MySQL 8.0 也已可直接使用。`panel.example.yaml` 默认 `database.driver: setup`：首次启动只运行安装器，**不会创建 SQLite 文件**；打开 `/install` 选择后端后才打开数据库：
+面板只使用 SQLite（`modernc.org/sqlite`，纯 Go，无需 CGO）。`panel.example.yaml` 默认 `database.driver: setup`：首次启动只运行安装器，**不会创建 SQLite 文件**；打开 `/install` 确认数据文件路径后才打开数据库：
 
-- 选择 SQLite 后创建 `server.data_dir/panel.db`；
-- 选择 PostgreSQL / MySQL 时，向导先测试连接并执行一次幂等迁移，再写入配置；
-- `panel.yaml` 写入 `database.driver` 与 `database.dsn_file`；
-- DSN 写入 `server.data_dir/database.dsn`（权限 0600），不进入 YAML；
+- 保存路径后创建 `server.data_dir/panel.db`；
+- `panel.yaml` 写入 `database.driver: sqlite` 与 `database.path`；
 - 保存后面板自动重启一次，随后继续创建管理员。
 
-安装完成后 `/install` 关闭，数据库连接只能通过修改 `panel.yaml` 后重启来调整。以下为手工配置示例：
+安装完成后 `/install` 关闭，数据库路径只能通过修改 `panel.yaml` 后重启来调整。手工配置示例：
 
 ```yaml
-# SQLite
 database:
   driver: sqlite
-  path: /data/panel.db
-
-# PostgreSQL 18
-database:
-  driver: postgres
-  dsn_file: /run/secrets/database_url
-  max_open: 20
-  max_idle: 10
-  conn_max_lifetime: "30m"
-
-# MySQL 8.0（建议 8.0.13+）
-database:
-  driver: mysql
-  dsn_file: /run/secrets/database_url
-  max_open: 10
-  max_idle: 5
-  conn_max_lifetime: "30m"
-```
-
-`dsn_file` 内容示例：
-
-```text
-# PostgreSQL
-postgres://user:pass@postgres:5432/mikvace?sslmode=require
-
-# MySQL
-user:pass@tcp(mysql:3306)/mikvace?charset=utf8mb4&collation=utf8mb4_bin&parseTime=false&loc=UTC
+  path: /app/data/panel.db
+  max_open: 8
+  max_idle: 4
+  conn_max_lifetime: "1h"
 ```
 
 注意事项：
 
-- 面板启动时自动创建表、索引和 `schema_migrations`，并通过 advisory lock 防止多实例同时迁移；
-- PostgreSQL 使用 `pgx` 驱动，DSN 中的 `sslmode` 按实际环境设置；
-- MySQL 表使用 `utf8mb4_bin` 排序规则，Token、哈希等字段区分大小写；建议使用上面的 DSN 参数；
-- MySQL 8.0.13+ 才支持 `TEXT` 列的表达式默认值，低版本请先升级；
-- 远程库的 SQLite 备份/恢复接口会返回“未实现”，请使用数据库自身的备份工具；
-- 切换后端不会复制现有数据，跨库迁移工具将在后续提供；
-- 不要把数据库密码写进 `panel.yaml`，只通过 `dsn_file` 引用。
-
-Docker Compose 可选的 PostgreSQL 示例：
-
-```yaml
-services:
-  postgres:
-    image: postgres:18
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: mikvace
-      POSTGRES_USER: mikvace
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
-    volumes:
-      - ./data/postgres:/var/lib/postgresql/data
-    secrets:
-      - postgres_password
-
-secrets:
-  postgres_password:
-    file: ./config/postgres_password
-```
-
-MySQL 对应使用 `mysql:8.0` 和 `./data/mysql:/var/lib/mysql`，并在启动参数中指定 `--character-set-server=utf8mb4 --collation-server=utf8mb4_bin`。
-
-## 自定义首页
-
-管理员可以在 **设置 → 首页** 上传 `.html` 或 `.zip`（可含 CSS/JS/图片）。页面通过沙箱 iframe 在 `/` 展示，可以执行 JavaScript，但不能读取管理员登录态，也不参与搜索引擎收录。
-
-- 单 HTML 最大 2 MB；ZIP 最大 25 MB，解压后 50 MB
-- 文件保存在 `server.data_dir/homepage/`，仅保留最近 5 个版本
-- SQLite 备份会包含当前启用的首页；恢复后下次启动生效
-- 反向代理不需要额外配置 `/homepage/*`
-- 多实例部署必须共享 `server.data_dir/homepage/`，否则各实例可能显示不同页面
-
-细节见 [自定义首页](homepage.md)。
+- 面板启动时自动创建表、索引和 `schema_migrations`；
+- SQLite 使用 WAL 模式；`./data` 或 `server.data_dir` 必须持久化，并保留 `panel.db`、`panel.db-wal`、`panel.db-shm`；
+- 备份/恢复面板只操作 SQLite 文件；
+- `database.driver` 只接受 `setup` 或 `sqlite`，其他值会让启动直接失败。
 
 ## HTTPS 反向代理
 
@@ -341,7 +275,7 @@ sudo cp panel.example.yaml /etc/mikvace/panel.yaml
 # 编辑 /etc/mikvace/panel.yaml：server.data_dir、panel.public_url、admin.password_file 等
 ```
 
-`panel.example.yaml` 默认 `database.driver: setup`：首次启动只运行安装器，**不会创建 SQLite 文件**。打开 `/install` 选择 SQLite / PostgreSQL / MySQL 并保存后，进程自动重启并打开所选数据库。确定使用 SQLite 时也可以直接把 `driver` 改成 `sqlite`，跳过向导第一步。
+`panel.example.yaml` 默认 `database.driver: setup`：首次启动只运行安装器，**不会创建 SQLite 文件**。打开 `/install` 确认 SQLite 路径并保存后，进程自动重启并打开数据库。也可以直接把 `driver` 改成 `sqlite`，跳过向导第一步。
 
 `/etc/systemd/system/mikvace-panel.service`：
 
@@ -406,7 +340,7 @@ make server-api     # 使用 -tags noweb，不依赖 web/dist
 
 | 字段 | 说明 |
 | --- | --- |
-| `server.serve_web` | `false` 时只提供 API，不再返回内嵌前端（`/admin`、`/user` 等） |
+| `server.serve_web` | `false` 时只提供 API，不再返回内嵌前端（`/admin` 等） |
 | `server.frontend_url` | 前端公网地址，API-only 模式下 `/` 跳转使用 |
 | `server.cors_origins` | 允许跨域的前端 Origin，必须精确匹配 |
 | `server.trusted_proxies` | API 反向代理地址，用于客户端 IP 和登录限流 |
@@ -424,7 +358,7 @@ Redis 用于：
 
 ```yaml
 redis:
-  url_file: "/config/redis.url"   # 文件内容：redis://127.0.0.1:6379/0
+  url_file: "/app/config/redis.url"   # 文件内容：redis://127.0.0.1:6379/0
   prefix: "mikvace:"
   required: false
 ```
@@ -472,19 +406,13 @@ docker pull ghcr.io/axmishell/mikvacepanel-node:latest
 
 ## 备份与恢复
 
-面板 **设置 → 备份** 目前只支持 SQLite：
+面板 **设置 → 备份** 使用 SQLite 文件快照：
 
 - 立即备份生成 `data/backups/mikvace-*.tar.gz`，包含 SQLite 一致性快照、`meta.json` 和 `cert.key`；
 - 自动备份默认 24 小时一次，保留 7 份；
+- 备份包含完整数据库，日志与监控采样会显著影响体积；可在 **设置 → 日志分析 → 数据清理** 降低 `metric_retention_days` / `log_retention_days`，并执行一次带 `VACUUM` 的清理；
 - 上传恢复后需要 **重启面板** 才会替换数据库；
 - 原数据库会保留为 `panel.db.pre-restore-<时间>`。
-
-PostgreSQL / MySQL 后端：
-
-- 面板内的备份/恢复接口返回 **501 Not Implemented**；
-- 自动备份会跳过，不会每小时写失败日志；
-- 请使用 `pg_dump` / `mysqldump` 等数据库原生工具，并同时备份 `server.data_dir/cert.key` 与 `jwt.secret`；
-- 可移植 NDJSON 备份/导入工具会在后续版本提供。
 
 手动恢复 SQLite 前请停止面板，避免 WAL 写入：
 

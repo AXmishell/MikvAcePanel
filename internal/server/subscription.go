@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
@@ -21,7 +20,13 @@ import (
 	"github.com/axmishell/mikvacepanel/internal/subscription"
 )
 
-var qrCache sync.Map
+// qrCache keeps rendered QR data URIs in a bounded LRU. Each entry is a few
+// kilobytes, so a hard capacity keeps the process footprint predictable even
+// when many distinct subscription URLs are requested. Redis, when enabled, is
+// the longer lived shared cache.
+const qrCacheCapacity = 256
+
+var qrCache = newStringLRU(qrCacheCapacity)
 
 // handleSubscription implements GET /api/files/:token with the CELERITY
 // compatible format detection and response headers.
@@ -253,7 +258,8 @@ func (s *Server) renderSubPage(w http.ResponseWriter, r *http.Request, user *mod
 }
 
 // nodeConfigEntries renders every shareable endpoint of one node for a user.
-// It is shared by the subscription landing page and the user portal.
+// It is shared by the subscription landing page and the administrator's user
+// connection viewer.
 func nodeConfigEntries(user *model.User, n *model.Node) []subConfig {
 	out := []subConfig{}
 	if subscription.IsXray(*n) {
@@ -362,14 +368,14 @@ func publicBaseURL(r *http.Request, configured string) string {
 }
 
 func (s *Server) qrDataURI(ctx context.Context, content string) string {
-	if v, ok := qrCache.Load(content); ok {
-		return v.(string)
+	if v, ok := qrCache.Get(content); ok {
+		return v
 	}
 	sum := sha256.Sum256([]byte(content))
 	cacheKey := "qr:" + hex.EncodeToString(sum[:])
 	if s.redis != nil {
 		if v, ok, err := s.redis.Get(ctx, cacheKey); err == nil && ok {
-			qrCache.Store(content, v)
+			qrCache.Put(content, v)
 			return v
 		}
 	}
@@ -378,7 +384,7 @@ func (s *Server) qrDataURI(ctx context.Context, content string) string {
 		return ""
 	}
 	uri := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
-	qrCache.Store(content, uri)
+	qrCache.Put(content, uri)
 	if s.redis != nil {
 		if err := s.redis.Set(ctx, cacheKey, uri, 24*time.Hour); err != nil && s.log != nil {
 			s.log.Debug("could not cache qr code in redis", "error", err)

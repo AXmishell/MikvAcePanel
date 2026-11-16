@@ -86,7 +86,6 @@ func SecretBytes(path string) ([]byte, error) {
 }
 
 // WriteSecret writes a secret file with mode 0600, replacing it atomically.
-// /install uses it for database DSNs so credentials never land in panel.yaml.
 func WriteSecret(path string, data []byte) error {
 	path = strings.TrimSpace(path)
 	if path == "" {

@@ -30,6 +30,26 @@ jobs:
             exit 1
           fi
 
+      # Reserve the tag as a draft release *before* running any build tooling.
+      # If the tag cannot be published the run stops here instead of spending
+      # time on the full cross-platform build; on later failures the draft stays
+      # behind (invisible to users) and a re-run reuses it.
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -Eeuo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; reusing it"
+            exit 0
+          fi
+          args=(--draft --verify-tag --generate-notes --title "$TAG")
+          if [[ "$TAG" == *-* ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$TAG" "${args[@]}"
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
@@ -56,7 +76,7 @@ jobs:
           COMMIT: ${{ github.sha }}
         run: ./scripts/release.sh
 
-      - name: Publish GitHub release
+      - name: Upload assets and publish
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -66,14 +86,8 @@ jobs:
           if [[ "$TAG" == *-* ]]; then
             pre=true
           fi
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; replacing assets"
-            gh release upload "$TAG" dist/* --clobber
-            gh release edit "$TAG" --title "$TAG" --draft=false --prerelease="$pre"
-          else
-            gh release create "$TAG" dist/* \
-              --verify-tag --generate-notes --title "$TAG" --prerelease="$pre"
-          fi
+          gh release upload "$TAG" dist/* --clobber
+          gh release edit "$TAG" --title "$TAG" --draft=false --prerelease="$pre"
           {
             echo "### Released $TAG"
             echo ""
@@ -90,3 +104,13 @@ jobs:
           path: dist/
           if-no-files-found: ignore
           retention-days: 7
+
+  # Reusable workflows are resolved from the same commit as this file, so the
+  # tag must be cut after this change lands on the default branch.
+  docker:
+    name: Build release images
+    needs: release
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker.yml

@@ -21,6 +21,19 @@ func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if sc := apiKeyScopeFrom(r); sc != nil && sc.restricted {
+		allowed := map[int64]bool{}
+		for _, id := range sc.allowedGroupIDs() {
+			allowed[id] = true
+		}
+		filtered := groups[:0]
+		for _, g := range groups {
+			if allowed[g.ID] {
+				filtered = append(filtered, g)
+			}
+		}
+		groups = filtered
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": groups})
 }
 

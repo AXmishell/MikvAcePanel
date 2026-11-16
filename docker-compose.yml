@@ -6,7 +6,7 @@ services:
     image: ghcr.io/axmishell/mikvacepanel:latest
     container_name: mikvace-panel
     restart: unless-stopped
-    command: ["--config", "/config/panel.yaml"]
+    command: ["--config", "/app/config/panel.yaml"]
     logging:
       driver: json-file
       options:
@@ -14,12 +14,13 @@ services:
         max-file: "3"
     ports:
       - "8080:8080"
-    # Mount the whole /config directory: Docker creates it automatically and
-    # /install can persist panel.yaml there. A single-file bind mount of a
+    # Mount the whole /app/config directory: Docker creates it automatically
+    # and /install can persist panel.yaml there. A single-file bind mount of a
     # missing host file would be created as a directory by Docker/1Panel.
+    # The image uses /app as its working directory, so both paths live under it.
     volumes:
-      - ./data:/data
-      - ./config:/config
+      - ./data:/app/data
+      - ./config:/app/config
 
   redis:
     image: redis:7-alpine

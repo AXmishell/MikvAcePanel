@@ -128,11 +128,11 @@ watch(() => route.path, () => (mobileOpen.value = false))
 .user-chip {
   display: flex; align-items: center; gap: 9px;
   padding: 3px 3px 3px 5px;
-  border: 1px solid var(--line); border-radius: 9px;
+  border: 1px solid var(--line); border-radius: 0;
   background: var(--panel-2);
 }
 .avatar {
-  width: 27px; height: 27px; border-radius: 6px;
+  width: 27px; height: 27px; border-radius: 0;
   display: grid; place-items: center;
   font-family: var(--mono); font-size: 11px; font-weight: 700;
   color: var(--on-accent); background: var(--accent);

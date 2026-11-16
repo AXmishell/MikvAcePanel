@@ -54,7 +54,7 @@
             <span class="badge badge-info">{{ coreLabel(n) }}</span>
             <span class="badge" :class="runtimeMode(n) === 'docker' ? 'badge-info' : 'badge-muted'">{{ runtimeLabel(runtimeMode(n)) }}</span>
             <span v-if="n.runtime && n.runtime !== runtimeMode(n)" class="badge badge-warn" :title="`Agent 实际运行方式为 ${n.runtime}，请重新安装以应用面板配置`">实际 {{ n.runtime }}</span>
-            <span v-if="agentNeedsUpgrade(n)" class="badge badge-warn" :title="`Agent ${n.agentVersion} 与面板 ${auth.version} 不一致，请升级节点 Agent`">需要升级</span>
+            <span v-if="agentNeedsUpgrade(n, auth.version)" class="badge badge-warn" :title="`Agent ${n.agentVersion} 与面板 ${auth.version} 不一致，请升级节点 Agent`">需要升级</span>
             <StatusBadge :status="n.status" />
           </div>
         </div>
@@ -158,7 +158,7 @@
                   <span class="badge badge-info">{{ coreLabel(n) }}</span>
                   <span class="badge" :class="runtimeMode(n) === 'docker' ? 'badge-info' : 'badge-muted'">{{ runtimeLabel(runtimeMode(n)) }}</span>
                   <span v-if="n.runtime && n.runtime !== runtimeMode(n)" class="badge badge-warn" :title="`Agent 实际运行方式为 ${n.runtime}，请重新安装以应用面板配置`">实际 {{ n.runtime }}</span>
-                  <span v-if="agentNeedsUpgrade(n)" class="badge badge-warn" :title="`Agent ${n.agentVersion} 与面板 ${auth.version} 不一致，请升级节点 Agent`">需要升级</span>
+                  <span v-if="agentNeedsUpgrade(n, auth.version)" class="badge badge-warn" :title="`Agent ${n.agentVersion} 与面板 ${auth.version} 不一致，请升级节点 Agent`">需要升级</span>
                 </div>
               </td>
               <td><StatusBadge :status="n.status" /></td>
@@ -769,6 +769,7 @@ import Modal from '../components/Modal.vue'
 import Select from '../components/Select.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import { copyText, fmtBytes, fmtDate, fmtRelative } from '../format'
+import { agentNeedsUpgrade, coreLabel, diskPct, memPct, rankingLabel, runtimeLabel, runtimeMode, versionLabel } from '../nodeFormat'
 
 const NODE_VIEW_KEY = 'mikvace_nodes_view'
 const nodes = ref([])
@@ -1364,30 +1365,6 @@ function normalizeInbound(ib) {
   if (ib.protocol !== 'vless') ib.flow = ''
   if (ib.security === 'none') ib.flow = ''
 }
-function coreLabel(n) {
-  const cores = (n.cores && n.cores.length ? n.cores : [n.type || 'hysteria'])
-  return cores.map((c) => (c === 'xray' ? 'Xray' : 'Hy2')).join(' + ')
-}
-function runtimeMode(n) {
-  return n?.runtimeMode === 'docker' ? 'docker' : 'process'
-}
-function runtimeLabel(mode) {
-  return mode === 'docker' ? 'Docker 模式' : '进程模式'
-}
-function versionLabel(n) {
-  const cores = (n.cores && n.cores.length ? n.cores : [n.type || 'hysteria'])
-  const parts = []
-  if (n.agentVersion) parts.push('Agent ' + n.agentVersion)
-  if (cores.includes('hysteria')) parts.push('Hysteria ' + (n.hy2Version || 'unknown'))
-  if (cores.includes('xray')) parts.push('Xray ' + (n.xrayVersion || 'unknown'))
-  return parts.join(' · ') || 'unknown'
-}
-function agentNeedsUpgrade(n) {
-  const agent = String(n?.agentVersion || '').trim()
-  const panel = String(auth.version || '').trim()
-  if (!agent || !panel) return false
-  return agent !== panel
-}
 watch(() => form.cores.slice(), () => {
   if (!form.cores.includes('hysteria') && (tab.value === 'advanced' || tab.value === 'hy2')) tab.value = 'tls'
   if (!form.cores.includes('xray') && tab.value === 'xray') tab.value = 'tls'
@@ -1396,21 +1373,6 @@ function toggleId(list, id) {
   const i = list.indexOf(id)
   if (i >= 0) list.splice(i, 1)
   else list.push(id)
-}
-function memPct(n) {
-  const m = n.metrics
-  if (!m || !m.memTotal) return 0
-  return Math.min(100, Math.round((m.memUsed / m.memTotal) * 100))
-}
-function diskPct(n) {
-  const m = n.metrics
-  if (!m || !m.diskTotal) return 0
-  return Math.min(100, Math.round((m.diskUsed / m.diskTotal) * 100))
-}
-function rankingLabel(value) {
-  const n = Number(value)
-  if (!Number.isFinite(n)) return '1'
-  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)))
 }
 function setViewMode(mode) {
   viewMode.value = mode
@@ -1850,12 +1812,12 @@ onBeforeUnmount(() => clearInterval(timer))
 
 .view-toggle {
   display: inline-flex; gap: 2px; padding: 2px;
-  border: 1px solid var(--line); border-radius: 8px;
+  border: 1px solid var(--line); border-radius: 0;
   background: var(--panel-2);
 }
 .view-toggle-btn {
   width: 28px; height: 27px; display: grid; place-items: center;
-  border: 0; border-radius: 6px; background: transparent; color: var(--muted);
+  border: 0; border-radius: 0; background: transparent; color: var(--muted);
   transition: background 0.15s ease, color 0.15s ease;
 }
 .view-toggle-btn:hover { background: var(--hover); color: var(--text); }
@@ -1864,7 +1826,7 @@ onBeforeUnmount(() => clearInterval(timer))
 .drag-handle {
   display: inline-grid; place-items: center;
   width: 22px; height: 26px; flex: none;
-  border-radius: 6px; color: var(--muted-2);
+  border-radius: 0; color: var(--muted-2);
   cursor: grab; user-select: none;
   touch-action: none;
 }

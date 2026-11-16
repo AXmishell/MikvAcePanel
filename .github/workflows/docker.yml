@@ -2,11 +2,13 @@ name: Docker
 
 on:
   push:
+    # Images are built from the default branch only. Tag pushes (`v*.*.*`) are
+    # not a trigger here: the Release workflow publishes the GitHub release and
+    # then calls this workflow (workflow_call), so versioned images are built
+    # only after the release succeeded and never race it.
     branches: [main]
-    tags: ['v*.*.*']
     # Documentation-only changes cannot affect the images; skip the (slow)
-    # multi-arch build for them. Path filters are ignored for tag pushes, so
-    # releases still always build.
+    # multi-arch build for them.
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -23,6 +25,9 @@ on:
       - 'requirements-docs.txt'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
+  # Called by the Release workflow after the GitHub release has been published,
+  # so `v*.*.*` tags produce versioned images without a separate tag trigger.
+  workflow_call:
 
 concurrency:
   group: docker-${{ github.ref }}
@@ -97,9 +102,9 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ steps.prep.outputs.namespace }}/${{ env.IMAGE_NAME }}${{ matrix.suffix }}
           tags: |
             type=ref,event=branch
-            type=ref,event=pr
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            # Pre-releases (`v1.2.3-rc.1`) must not move the stable `1.2` tag.
+            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
             type=sha,format=short
             # Publish the default branch as `latest` as well.
             type=raw,value=latest,enable={{is_default_branch}}

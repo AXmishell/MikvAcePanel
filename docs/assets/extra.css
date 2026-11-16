@@ -17,7 +17,7 @@
   margin: 1.2rem 0 2rem;
   padding: 2.2rem 1.6rem;
   border: 1px solid var(--md-default-fg-color--lightest);
-  border-radius: 1rem;
+  border-radius: 0;
   background:
     radial-gradient(60rem 20rem at 10% -30%, color-mix(in srgb, var(--md-primary-fg-color) 18%, transparent), transparent),
     var(--md-code-bg-color);
@@ -43,7 +43,7 @@
 }
 
 .md-typeset .badge-row code {
-  border-radius: 99rem;
+  border-radius: 0;
   padding: .2rem .7rem;
   font-size: .72rem;
 }

@@ -29,7 +29,7 @@ mkdocs build --strict # 输出 site/
 - **双核心节点**：同一节点可同时运行 Hysteria 2（QUIC/UDP）与 Xray（TCP），也可只运行其中一个。
 - **Xray 多协议入站**：VLESS / VMess / Trojan / Shadowsocks；TCP / WebSocket / gRPC / XHTTP / mKCP；REALITY / TLS / 无加密；管理员可在新建节点时按协议开关启用，一个节点可配置多个入站。
 - **订阅分发**：Clash/Mihomo YAML、sing-box JSON、Shadowrocket Base64、原始 URI 列表、Xray JSON；支持 HAPP 路由头与 providerid。
-- **终端用户中心**：用户使用 ID + 登录密码进入 `/user`，查看订阅、流量、到期与设备；登录密码与连接密码相互独立，均可由用户或管理员修改；管理端可直接指定订阅 Token。管理员控制台位于 `/admin`，与用户入口完全分离。
+- **管理员控制台**：面板仅提供 `/admin` 管理员后台，用户、节点、分组、订阅与设置均在控制台内管理；旧的 `/user` 用户中心入口已移除并返回 404。
 - **Hysteria 2 认证**：节点把客户端认证请求转发到 `POST /api/auth`，支持启用/禁用、到期、流量限额、设备数限制（按唯一 IP + 宽限期）；Agent 还会持久化用户认证快照，面板故障时 Hysteria 新连接仍可继续认证。
 - **节点管理**：面板生成 Hysteria / Xray 服务端配置，通过 WebSocket 实时下发；支持版本、运行状态、配置 revision、错误回报、启动/停止/重启，以及卡片/列表视图和鼠标拖动调整订阅排序权重。
 - **证书统一签发**：面板通过 ACME DNS-01 申请证书，Agent 提交 CSR、安装证书链（私钥不出节点）；节点自签 ACME 只使用 TLS-ALPN，不再占用 80 端口。
@@ -37,14 +37,15 @@ mkdocs build --strict # 输出 site/
 - **节点端 Docker 镜像**：单容器内置 Hysteria 2 + Xray + Agent，开箱即用；也可在节点表单中为每个节点选择 Docker 运行时（`runtime.type: docker`），由 Agent 管理同机的代理容器。
 - **SSH 自动安装**：保存 SSH 凭据后可一键远程安装/重启节点容器（可选自动安装 Docker）。
 - **备份恢复**：本地 tar.gz 备份、自动备份保留策略、上传恢复（重启生效）。
-- **API Key 限流**：每个密钥独立速率限制与 `X-RateLimit-*` 响应头。
+- **数据清理**：可配置日志与监控采样保留天数，支持立即清理及 `VACUUM` 压缩数据库，控制数据库和备份体积。
+- **API Key 限流**：每个密钥独立速率限制与 `X-RateLimit-*` 响应头，并记录请求次数、最后使用时间与来源 IP。
 - **端口跳跃**：Agent 自动维护 iptables UDP REDIRECT 规则；也可改用 Hysteria 2.8+ 内置端口范围监听。
 - **Hysteria 2 深度调优**：QUIC 窗口、BBR/Reno 与 BBR 预设、带宽补偿、UDP 开关、DNS 解析器、协议嗅探、三种伪装模式、GeoIP/GeoSite ACL、直连绑定、Gecko 分片、mTLS 客户端 CA、ECH、Realms、mimic，以及受保留键保护的额外 YAML 覆盖；内置“官方默认 / 推荐均衡 / 高性能 / 抗审查 / 弱网优化”模板，新建节点默认应用推荐模板。
 - **日志上报与分析**：采集 Hysteria/Xray 的 stdout/stderr 与 Xray access log，按批可靠上报；服务端解析时间、级别、事件、用户、客户端 IP、错误等字段，支持搜索、时间线、Top IP/用户、规则告警（暴力破解、未知用户、错误爆发、重启循环、TLS/ACME/REALITY 异常、配额耗尽等），并可按当前筛选条件导出 `.log` / `.csv` / `.jsonl` 文件（最多 10 万行）。
 - **流量统计**：Agent 轮询 Hysteria `trafficStats` 与 Xray `StatsService`，按用户增量上报；服务端按 batch id 幂等入库，支持管理员重置用户流量。双核心节点的流量自动合并。
-- **API Key**：带 `users:read/write`、`nodes:read/write`、`stats:read`、`sync:write` 作用域的自动化凭据，支持过期时间和启停。
+- **API Key**：多密钥、细分权限（用户 / 分组 / 节点 / 证书 / 日志 / 维护 / 系统）、可按节点与分组限定资源范围，支持编辑权限、轮换令牌、过期时间、启停、独立限流与用量审计。
 - **单二进制部署**：Vue 构建产物通过 `go:embed` 嵌入服务端。
-- **SQLite**：无需额外数据库，WAL 模式，数据默认位于 `/data`。
+- **SQLite**：无需额外数据库，WAL 模式，数据默认位于 `/app/data`。
 
 ---
 
@@ -81,7 +82,9 @@ mkdocs build --strict # 输出 site/
 cmd/server          面板服务端入口
 cmd/node            节点 Agent 入口
 cmd/client          命令行客户端（订阅 / 诊断 / 启动本地代理）
-internal/server     HTTP 路由、认证、订阅、Agent Hub
+internal/server     HTTP 路由、认证、订阅、Agent Hub（适配层）
+internal/app        用户/节点等应用服务（用例编排）
+internal/ports      仓储与集成接口
 internal/store      SQLite 数据层
 internal/subscription  Clash / sing-box / URI / Xray 生成
 internal/hy2config  Hysteria 服务端 YAML 生成
@@ -89,7 +92,7 @@ internal/logs       日志解析与规则分析
 internal/agent      Agent、运行时、证书、指标、流量轮询
 internal/certmanager 面板侧 ACME 签发、CSR 校验与证书下发
 web/                Vue 3 + Vite 前端
-docs/               API、用户中心、节点、证书签发、2FA、日志分析文档
+docs/               API、节点、证书签发、2FA、日志分析文档
 ```
 
 ---
@@ -102,9 +105,9 @@ cp panel.example.yaml config/panel.yaml  # 修改 panel.public_url、server.data
 docker compose up -d --build
 ```
 
-> **注意**：compose 使用 `./config:/config` 目录映射，配置放在 `./config/panel.yaml`。如果沿用旧版的单文件挂载 `./panel.yaml:/config/panel.yaml`，而宿主机上没有该文件，Docker / 1Panel 会把挂载点创建成目录，日志出现 `read /config/panel.yaml: is a directory`。新版面板会自动回退到 `/data/panel.yaml` 继续启动，详见[常见问题](docs/faq.md#启动日志反复出现-read-configpanelyaml-is-a-directory)。
+> **注意**：compose 使用 `./config:/app/config` 目录映射，配置放在 `./config/panel.yaml`。如果沿用旧版的单文件挂载 `./panel.yaml:/app/config/panel.yaml`，而宿主机上没有该文件，Docker / 1Panel 会把挂载点创建成目录，日志出现 `read /app/config/panel.yaml: is a directory`。新版面板会自动回退到 `/app/data/panel.yaml` 继续启动，详见[常见问题](docs/faq.md#启动日志反复出现-read-appconfigpanelyaml-is-a-directory)。
 
-打开 `http://服务器IP:8080/` 查看公开首页。首次启动且 `admin.password_file` 为空时，访问 `/install`：向导第一步选择数据后端（SQLite / PostgreSQL / MySQL），第二步创建管理员账号。配置了密码文件的无人值守部署会在启动时自动创建。管理员控制台是 `/admin`（旧地址 `/panel` 不再跳转，直接返回 404），终端用户入口是 `/user`。
+访问 `http://服务器IP:8080/install` 初始化面板。首次启动且 `admin.password_file` 为空时，向导第一步确认 SQLite 数据文件，第二步创建管理员账号。配置了密码文件的无人值守部署会在启动时自动创建。管理员控制台是 `/admin`（旧地址 `/panel` 与用户中心 `/user` 均已停用并直接返回 404）。站点根路径 `/` 不提供公开首页，初始化完成后直接返回 404；尚未创建管理员时会跳转到 `/install`。
 
 Docker 部署时应用配置**只从 `config/panel.yaml` 读取**，不读取环境变量，也不使用 `.env`。Compose 只负责端口、配置目录和数据目录映射。
 
@@ -113,11 +116,9 @@ Docker 部署时应用配置**只从 `config/panel.yaml` 读取**，不读取环
 - 用户名：`admin.username`，初始化向导会更新该字段；
 - 密码：`admin.password_file` 指向的密钥文件；留空则由 `/install` 创建管理员（密码只以 bcrypt 存入数据库，不写入 YAML）。
 
-数据库也可以在 `/install` 第一步选择。`panel.example.yaml` 默认使用 `database.driver: setup`：**首次启动只运行安装向导，不会创建 SQLite 文件**；选择并保存后端后才真正打开数据库。SQLite 使用 `database.path`；选择 PostgreSQL / MySQL 时，向导会先测试连接，再把 DSN 写入 `data_dir/database.dsn`（权限 0600），并更新 `config/panel.yaml` 的 `database.driver` / `database.dsn_file`。**保存后面板会自动重启一次**，管理员创建页面会在重启完成后继续。DSN 不会写进 `panel.yaml`。
+面板只使用 SQLite。`panel.example.yaml` 默认使用 `database.driver: setup`：**首次启动只运行安装向导，不会创建 SQLite 文件**；在 `/install` 确认 `database.path` 并保存后才真正打开数据库，同时把 `database.driver` / `database.path` 写回 `config/panel.yaml`。**首次保存路径后面板会自动重启一次**，管理员创建页面会在重启完成后继续。
 
 首次登录后请到 **Settings → Security** 修改密码。初始化完成后 `/install` 会按 404 处理，不再暴露安装入口。同一页面还可以开启 **管理员安全入口**（默认关闭）：开启后 `/admin` 不再可用，必须使用 `/admin/<入口路径>/login` 访问，管理 API 也会校验该入口。
-
-公开首页可以在 **Settings → 首页** 上传自定义 HTML 或 ZIP（含 CSS/JS/图片），页面在沙箱 iframe 中运行，可执行 JavaScript，但无法读取管理员登录态；该模式不参与搜索引擎收录。详见 [自定义首页](docs/homepage.md)。
 
 生产环境建议：
 
@@ -132,7 +133,7 @@ Docker 部署时应用配置**只从 `config/panel.yaml` 读取**，不读取环
 
 ```yaml
 redis:
-  url_file: "/config/redis.url"   # 文件内容：redis://127.0.0.1:6379/0
+  url_file: "/app/config/redis.url"   # 文件内容：redis://127.0.0.1:6379/0
   prefix: "mikvace:"
   required: false
 ```
@@ -194,6 +195,22 @@ Docker 镜像由 `.github/workflows/docker.yml` 在同一标签上并行构建�
 ### 本地开发
 
 ```bash
+# 一键启动：编译后端 + Vite 热更新（后台运行，局域网可访问）
+./scripts/dev.sh start          # 或 make dev-up
+
+./scripts/dev.sh status         # PID、端口、健康检查
+./scripts/dev.sh restart        # 重启前后端
+./scripts/dev.sh restart --build # 重新编译后端后重启
+./scripts/dev.sh stop           # 停止
+./scripts/dev.sh logs           # 跟踪面板与 Vite 日志
+# 打开 http://<局域网IP>:5173/install
+```
+
+脚本会在 `panel.yaml` 不存在时自动生成 SQLite 开发配置，PID 与日志位于 `data/run/`。默认绑定 `0.0.0.0`，可通过 `PANEL_PORT`、`WEB_PORT`、`DEV_HOST` 覆盖。直接运行 `./scripts/dev.sh` 会显示常用命令帮助。
+
+手动方式（两个终端）：
+
+```bash
 # 终端 1：后端（配置只从 panel.yaml 读取）
 cp panel.example.yaml panel.yaml
 go run ./cmd/server --config ./panel.yaml
@@ -210,7 +227,7 @@ make build          # 先构建前端，再编译 server/node/client 到 bin/
 ./bin/mikvace-server --config ./panel.yaml
 ```
 
-首次启动打开 `http://localhost:8080/install`，先选择 SQLite / PostgreSQL / MySQL，再创建管理员。直接运行二进制时 `server.data_dir` 默认是 `./data`，`panel.yaml` 需要可写，`/install` 才能把配置写回。
+首次启动打开 `http://localhost:8080/install`，先确认 SQLite 数据文件路径，再创建管理员。直接运行二进制时 `server.data_dir` 默认是 `./data`，`panel.yaml` 需要可写，`/install` 才能把配置写回。
 
 ### 前后端分离 / CDN 部署（可选）
 
@@ -236,7 +253,7 @@ VITE_BASE_PATH=/panel/
 VITE_API_BASE_URL=https://api.example.com/api
 ```
 
-> 面板默认使用根路径（`/admin/login`、`/admin/dashboard`、`/user` 等）。旧的 `/panel` 已停用，访问时会直接返回 404，请改用 `/admin/dashboard`。
+> 面板默认使用根路径（`/admin/login`、`/admin/dashboard` 等）。旧的 `/panel` 与 `/user` 已停用，访问时会直接返回 404，请改用 `/admin/dashboard`。
 
 **2. 启动纯 API 服务（可选）**
 
@@ -280,7 +297,7 @@ API 域名的 Nginx 示例见 [`deploy/nginx-api.conf`](deploy/nginx-api.conf)�
 
 | 字段 | 说明 |
 |------|------|
-| `server.serve_web` | `true` 时由 Go 提供内嵌前端（`/admin`、`/user` 等）；CDN 部署设为 `false` |
+| `server.serve_web` | `true` 时由 Go 提供内嵌前端（`/admin` 等）；CDN 部署设为 `false` |
 | `server.frontend_url` | 前端公网地址，`serve_web: false` 时根路径跳转使用 |
 | `server.cors_origins` | 允许跨域访问 API 的前端 Origin，必须精确匹配 |
 | `server.trusted_proxies` | 反向代理 IP/CIDR，用于正确获取客户端 IP 和登录限流 |
@@ -451,7 +468,6 @@ Agent 会把 Hysteria 的 stdout/stderr 按 2 秒 / 100 行聚合，带 batch id
 - **立即备份**：生成 `data/backups/mikvace-*.tar.gz`（SQLite `VACUUM INTO` 一致性快照 + 元数据）。
 - **自动备份**：默认每 24 小时一次，保留最近 7 份，可在页面调整。
 - **恢复**：上传 `.tar.gz` 后服务端会校验数据库结构并暂存为 `panel.db.restore`，**重启面板**后替换当前数据库；原库会保留为 `panel.db.pre-restore-*`。
-- **远程后端**：PostgreSQL / MySQL 的备份与恢复接口当前返回未实现，自动备份会跳过；请使用 `pg_dump` / `mysqldump` 并同时备份 `cert.key`、`jwt.secret`。
 - **CELERITY 备份导入**：可直接上传 CELERITY-panel 的 `celerity-backup-*.tar.gz`（mongodump 格式）。服务端会解析 BSON 并转换为 MikvAce SQLite，导入用户、分组、Hysteria/Xray 节点、管理员、API 密钥、流量、到期时间及订阅页面设置。
   - 不支持的类型（`virtual`、`cdn`、Xray `xhttp`）和诊断探针用户会跳过并给出提示。
   - CELERITY 的 SSH 凭据和 2FA 使用其 `ENCRYPTION_KEY` 加密，无法迁移，需要重新填写/启用。
@@ -482,10 +498,10 @@ go build -o mikvace-client ./cmd/client
 
 ## 项目结构 / 技术栈
 
-- **后端**：Go 1.26+、chi、gorilla/websocket、JWT、bcrypt、yaml.v3、pgx/v5、go-sql-driver/mysql、modernc.org/sqlite（纯 Go）。
+- **后端**：Go 1.26+、chi、gorilla/websocket、JWT、bcrypt、yaml.v3、modernc.org/sqlite（纯 Go）。
 - **前端**：Vue 3、Vue Router、Vite、lucide-vue-next，无 UI 框架，手写深色响应式界面。
 - **节点端**：Go，进程模式或 Docker 模式，SIGHUP/SIGTERM 管理，自签名证书，iptables 端口跳跃。
-- **数据**：SQLite（安装向导的默认选项，WAL）、PostgreSQL 18、MySQL 8.0 均可作为面板数据库；选择 SQLite 后文件默认为 `/data/panel.db`；JWT secret 默认持久化在 `/data/jwt.secret`。
+- **数据**：SQLite（WAL），文件默认为 `/app/data/panel.db`；JWT secret 默认持久化在 `/app/data/jwt.secret`。
 
 ---
 
@@ -494,7 +510,7 @@ go build -o mikvace-client ./cmd/client
 - 必须通过 HTTPS 暴露面板；订阅链接和 Hy2 认证回调都依赖 `public_url`。
 - 修改默认管理员密码，并为 `security.jwt_secret_file` 配置至少 32 字节随机值。
 - 节点 Token 等同于节点身份，泄露后请在节点页 **Reset token**。配置文件中只放 `panel.token_file` 路径，不写明文 Token。
-- 数据库包含用户密码（订阅认证用）和节点统计密钥，请限制 `/data` 权限并做好备份。
+- 数据库包含用户密码（订阅认证用）和节点统计密钥，请限制 `/app/data` 权限并做好备份。
 - 节点 `agent.data_dir/state/users.json` 是离线认证快照，包含 Hysteria 连接密码；Agent 以 0600 写入，请确保只有 root 可读，并保持面板到节点使用 HTTPS/WSS。
 - 端口跳跃需要 `NET_ADMIN`，请只在自己控制的节点上运行。
 - 建议在面板前增加反向代理的速率限制和访问控制；面板自带登录失败限流。
@@ -512,6 +528,8 @@ go build -o mikvace-client ./cmd/client
 ```bash
 go test ./...          # 单元 + 接口 + WebSocket 集成测试
 go vet ./...
+./scripts/dev.sh       # 后台启动面板 + Vite 热更新
+./scripts/dev.sh restart
 make web               # 构建前端
 make build             # 前端 + 三个二进制
 make release           # 生成 dist/ 下的跨平台发布归档

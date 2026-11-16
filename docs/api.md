@@ -79,13 +79,11 @@ API Key（`Authorization: Bearer ck_...`）不受安全入口限制。
 
 | Method | Path | 说明 |
 | --- | --- | --- |
-| GET | `/api/health` | 健康检查、版本、uptime、Agent Hub 状态、数据库驱动 |
-| GET | `/api/install/status` | 首次初始化状态（是否已安装、面板名称、数据库驱动与配置） |
-| POST | `/api/install/database/test` | 测试 SQLite / PostgreSQL / MySQL 连接；仅在管理员表为空时可用 |
-| POST | `/api/install/database` | 保存数据库配置；切换后端后需要重启面板 |
+| GET | `/api/health` | 健康检查、版本、uptime、Agent Hub 状态、数据库类型 |
+| GET | `/api/install/status` | 首次初始化状态（是否已安装、面板名称、SQLite 配置） |
+| POST | `/api/install/database/test` | 测试 SQLite 数据文件路径；仅在管理员表为空时可用 |
+| POST | `/api/install/database` | 保存 SQLite 数据文件路径；变化后需要重启面板 |
 | POST | `/api/install` | 创建第一个管理员；仅在管理员表为空时可用 |
-| GET | `/homepage/*` | 自定义首页静态资源（沙箱 CSP） |
-| GET | `/preview/homepage/:token/*` | 自定义首页短时预览 |
 | GET | `/api/agent/version` | Agent 可用版本信息 |
 | GET | `/api/agent/install.sh` | 节点安装脚本（通过参数传 panel/token） |
 | POST | `/api/auth` | Hysteria 2 外部认证 |
@@ -107,36 +105,32 @@ API Key（`Authorization: Bearer ck_...`）不受安全入口限制。
   "database": "sqlite",
   "databaseConfig": {
     "driver": "sqlite",
-    "path": "/data/panel.db",
-    "dsnFile": "",
-    "dsnConfigured": false
+    "path": "/app/data/panel.db"
   },
-  "configPath": "/config/panel.yaml",
+  "configPath": "/app/config/panel.yaml",
   "configWritable": true,
   "startedAt": "2026-10-24T09:00:00Z",
   "version": "v1.2.3"
 }
 ```
 
-`databaseConfig` 只描述磁盘上的配置，**不会返回 DSN 内容**。`startedAt` 在进程重启后变化，安装页用它判断数据库切换是否完成。
+`databaseConfig` 描述磁盘上的 SQLite 配置。`startedAt` 在进程重启后变化，安装页用它判断数据库切换是否完成。
 
-`setupMode: true` 表示当前进程还没有选择数据库（`database.driver: setup` 或配置文件不存在），此时不会打开或创建 SQLite；保存数据库后进程重启，`setupMode` 变为 `false`。
+`setupMode: true` 表示当前进程还没有保存数据库配置（`database.driver: setup` 或配置文件不存在），此时不会打开或创建 SQLite；保存路径后进程重启，`setupMode` 变为 `false`。
 
 `POST /api/install/database/test` 与 `POST /api/install/database` 接收相同请求体：
 
 ```json
 {
-  "driver": "postgres",
-  "path": "/data/panel.db",
-  "dsn": "postgres://user:pass@db:5432/mikvace?sslmode=disable"
+  "driver": "sqlite",
+  "path": "/app/data/panel.db"
 }
 ```
 
-- SQLite 只使用 `path`，留空默认为 `data_dir/panel.db`；
-- PostgreSQL / MySQL 只使用 `dsn`；若与当前驱动相同，可留空表示沿用现有 DSN；
-- 测试接口只建立连接，不建表；保存接口会先连接并执行一次幂等迁移，确认建表权限后再写入配置；
-- 保存时 DSN 写入 `data_dir/database.dsn`（0600），`panel.yaml` 只记录文件路径；
-- 返回 `{"ok":true,"driver":"postgres","restartRequired":true}`。`restartRequired` 为 `true` 时进程会自行重启；
+- `driver` 只接受 `sqlite`（`sqlite3` 视为同义），留空也按 SQLite 处理；
+- `path` 留空默认为 `data_dir/panel.db`；
+- 测试接口只检查目录可写并连接 SQLite，不建表；保存接口会先执行一次幂等迁移，确认可用后再写入配置；
+- 返回 `{"ok":true,"driver":"sqlite","restartRequired":true}`。`restartRequired` 为 `true` 时进程会自行重启；
 - 已有管理员时两个接口都返回 `409`。
 
 `POST /api/install` 创建第一个管理员，请求体：
@@ -144,7 +138,7 @@ API Key（`Authorization: Bearer ck_...`）不受安全入口限制。
 ```json
 {
   "username": "admin",
-  "password": "至少 12 个字符",
+  "password": "至少 8 个字符",
   "panelName": "MikvAce Panel",
   "publicUrl": "https://panel.example.com"
 }
@@ -245,24 +239,6 @@ HAPP/Incy 请求还会把 routing 指令前置到 URI 订阅正文。
 
 ---
 
-## 用户中心
-
-终端用户自助接口，完整说明见 [用户中心](user-portal.md)。
-
-| Method | Path | 认证 | 说明 |
-| --- | --- | --- | --- |
-| GET | `/api/portal/config` | 无 | 是否启用及页面品牌信息 |
-| POST | `/api/portal/login` | 无 | `{ "userId": "...", "password": "..." }` |
-| POST | `/api/portal/logout` | Portal JWT | 注销会话 |
-| GET | `/api/portal/me` | Portal JWT | 账号、流量、设备、订阅与节点 |
-| POST | `/api/portal/password` | Portal JWT | `{ "oldPassword": "...", "newPassword": "..." }`，修改登录密码 |
-| POST | `/api/portal/connection-password` | Portal JWT | `{ "currentPassword": "...", "newPassword": "..." }`，修改连接密码 |
-| POST | `/api/portal/subscription/reset` | Portal JWT | 重置订阅 Token（需管理员开放） |
-
-Portal JWT 带有 `purpose=portal`，不能访问管理接口；管理员 JWT 也不能访问 `/api/portal/*`。
-
----
-
 ## 管理接口
 
 ### 会话
@@ -271,7 +247,7 @@ Portal JWT 带有 `purpose=portal`，不能访问管理接口；管理员 JWT �
 | --- | --- | --- |
 | GET | `/api/me` | 当前管理员、创建/最近登录时间、版本、默认密码警告 |
 | PUT | `/api/admin/account` | `{username,currentPassword,code}`，修改登录用户名；启用 2FA 时 `code` 必填；返回新 token |
-| POST | `/api/change-password` | `{oldPassword,newPassword,code}`，新密码至少 12 位；启用 2FA 时 `code` 必填；返回新 token |
+| POST | `/api/change-password` | `{oldPassword,newPassword,code}`，新密码至少 8 位；启用 2FA 时 `code` 必填；返回新 token |
 | GET | `/api/2fa` | 2FA 状态与剩余恢复码数量 |
 | POST | `/api/2fa/setup` | 生成 TOTP 密钥、二维码与恢复码（尚未启用） |
 | POST | `/api/2fa/enable` | `{code}` 确认启用 |
@@ -313,8 +289,8 @@ Portal JWT 带有 `purpose=portal`，不能访问管理接口；管理员 JWT �
 ```
 
 - `trafficLimit` 单位为字节，`trafficLimitGb` 为 GB 便捷字段；两者同时存在时以字节字段优先。
-- 创建时密码为空会自动生成；响应顶层包含一次性的 `password`（连接密码）和 `loginPassword`（控制台登录密码）。
-- 用户密码分为 `password`（连接密码）与 `loginPassword`（登录密码）；更新时留空表示保持不变。
+- 创建时密码为空会自动生成；响应顶层包含一次性的 `password`（连接密码）。
+- 更新时 `password` 留空表示保持当前连接密码不变。
 - `subscriptionToken` 可由管理员指定，6–128 位字母、数字、下划线或短横线；修改后旧订阅链接立即失效。
 - 响应包含 `trafficUsed`、`online`、`onlineDevices`、`subscriptionUrl` 等派生字段。
 
@@ -401,48 +377,15 @@ Xray 扩展选项放在请求体的 `xray` 对象中：
 
 | Method | Path | 说明 |
 | --- | --- | --- |
-| GET | `/api/homepage` | 自定义首页模式、启用版本与版本列表 |
-| POST | `/api/homepage/upload` | 上传 `.html` / `.zip` 首页（仅暂存） |
-| POST | `/api/homepage/activate` | 启用指定首页版本 |
-| POST | `/api/homepage/preview` | 生成 10 分钟有效的预览链接 |
-| PUT | `/api/homepage/mode` | 切换 `builtin` / `upload` |
-| DELETE | `/api/homepage/versions/:version` | 删除非当前首页版本 |
-| DELETE | `/api/homepage` | 恢复内置首页 |
 | GET | `/api/backups` | 备份列表和自动备份设置 |
 | POST | `/api/backups` | 立即创建备份 |
 | GET | `/api/backups/:name` | 下载备份 |
 | DELETE | `/api/backups/:name` | 删除备份 |
 | POST | `/api/backups/restore` | multipart 字段 `file`，上传后需重启面板生效 |
 
-备份为 `tar.gz`，包含一致性快照 `panel.db`、`meta.json`，以及当前选择的自定义首页版本（若存在）。恢复文件会先校验 SQLite 表结构，再暂存为 `panel.db.restore`，下次启动时替换当前数据库；自定义首页文件同时在下次启动时换入。
+备份为 `tar.gz`，包含一致性快照 `panel.db`、`meta.json` 和加密密钥文件（若存在）。恢复文件会先校验 SQLite 表结构，再暂存为 `panel.db.restore`，下次启动时替换当前数据库。
 
 恢复接口也兼容 CELERITY-panel 的 mongodump 备份（`celerity-backup-*.tar.gz`）。识别到 `hyusers.bson.gz`、`hynodes.bson.gz`、`servergroups.bson.gz` 等集合后，会转换为新的 SQLite 数据库并返回 `source: "celerity"` 以及 `summary`（用户/节点/分组/管理员数量）和 `warnings`。导入同样需要重启面板生效。
-
-### 自定义首页
-
-`POST /api/homepage/upload` 使用 multipart 字段 `file`，支持 `.html`、`.htm` 或 `.zip`。上传只会暂存版本，不会立即替换 `/`。
-
-```json
-// POST /api/homepage/activate
-{ "version": "20261024-173000-a1b2c3" }
-
-// PUT /api/homepage/mode
-{ "mode": "upload" }
-
-// POST /api/homepage/preview
-{ "version": "20261024-173000-a1b2c3" }
-```
-
-预览返回：
-
-```json
-{
-  "url": "/preview/homepage/<token>/index.html",
-  "expiresAt": "2026-10-24T09:30:00Z"
-}
-```
-
-自定义页面通过 `/` 的沙箱 iframe 加载，资源位于 `/homepage/*`，响应包含 `Content-Security-Policy: sandbox ...`。上传限制、ZIP 校验和备份行为见 [自定义首页](homepage.md)。
 
 ### 日志
 
@@ -471,6 +414,15 @@ Xray 扩展选项放在请求体的 `xray` 对象中：
 }
 ```
 
+### 数据清理
+
+| Method | Path | 说明 |
+| --- | --- | --- |
+| GET | `/api/maintenance/usage` | 数据库大小、WAL 大小和各遥测表行数 |
+| POST | `/api/maintenance/cleanup` | 立即清理过期数据；请求体 `{"vacuum":true,"logRetentionDays":14,"metricRetentionDays":30}`，两个天数可省略以使用设置值 |
+
+清理会删除超过保留期的 `hy2_logs`、`log_batches`、`events`、`stats_batches` 与 `node_metrics`。`vacuum: true` 会在清理后执行 `VACUUM` 压缩数据库文件，可能短暂阻塞写入。
+
 ### 仪表盘 / 设置
 
 | Method | Path | 说明 |
@@ -483,32 +435,52 @@ Xray 扩展选项放在请求体的 `xray` 对象中：
 
 ### API Key
 
-管理端接口也支持 `X-API-Key: ck_...` 或 `Authorization: Bearer ck_...`。API Key 只能在 **Settings → Security → API keys** 中创建，明文仅在创建时返回一次。
+管理端接口也支持 `X-API-Key: ck_...` 或 `Authorization: Bearer ck_...`。API Key 只能在 **Settings → Security → API keys** 中创建，明文仅在创建时返回一次；令牌可随时轮换，旧令牌立即失效。
 
-作用域：
+API Key 采用「权限 + 资源范围」双重控制：
+
+- **权限**按资源细分，未列出的路由默认拒绝；`GET /api/me` 对任意有效密钥开放，用于自检。
+- **资源范围**可限定到节点和/或分组。留空表示全部资源。
+- 限定资源后，节点、分组、用户、证书列表会自动过滤；访问范围外的单个资源返回 `403`。仪表盘、事件、设置、备份、维护与全局同步等无法安全过滤的全局接口也会返回 `403`。
+
+细分权限：
 
 | scope | 允许 |
 | --- | --- |
-| `users:read` | `GET /api/users*` |
-| `users:write` | 用户创建、更新、删除、启停、重置 |
-| `nodes:read` | `GET /api/nodes*` |
-| `nodes:write` | 节点创建、更新、删除、token、命令、配置 |
-| `stats:read` | dashboard、events、logs、groups 读取 |
-| `sync:write` | `POST /api/sync`，以及节点 sync |
+| `users:read` | 用户列表、详情、连接信息 |
+| `users:write` | 创建、更新、启停、重置密码 / 订阅 / 设备 / 流量 |
+| `users:delete` | 删除用户 |
+| `groups:read` / `groups:write` / `groups:delete` | 分组查询 / 创建更新 / 删除 |
+| `nodes:read` | 节点列表、状态与指标 |
+| `nodes:write` | 创建、更新节点与排序 |
+| `nodes:operate` | 同步、重启、重置 token、SSH 安装 |
+| `nodes:secrets` | 读取节点配置、安装脚本、证书（敏感） |
+| `nodes:delete` | 删除节点 |
+| `certs:read` / `certs:write` | 查看证书 / 修改 ACME 设置与签发证书 |
+| `dashboard:read` | 仪表盘与事件 |
+| `logs:read` / `logs:delete` | 日志查询与导出 / 删除日志 |
+| `maintenance:read` / `maintenance:write` | 数据用量 / 清理遥测 |
+| `backups:read` / `backups:write` | 查看下载备份 / 创建、删除、恢复备份 |
+| `settings:read` / `settings:write` | 查看 / 修改面板设置（敏感） |
+| `sync:write` | `POST /api/sync`，以及节点同步 |
 
-管理接口：
+兼容作用域：升级时会自动把旧密钥的 `users:write`、`nodes:write` 展开为对应的细分权限（保留原有删除、操作与凭据读取能力）；`stats:read` 仍然有效，等价于仪表盘、日志与分组读取。
+
+管理接口（仅 JWT）：
 
 | Method | Path | 说明 |
 | --- | --- | --- |
-| GET | `/api/api-keys` | 列表（不返回明文） |
-| POST | `/api/api-keys` | `{name,scopes:[],rateLimit,expiresAt}`，返回一次性 `token` |
+| GET | `/api/api-keys` | 列表（不返回明文），同时返回权限目录与可选节点/分组 |
+| POST | `/api/api-keys` | `{name,description,scopes:[],nodeIds:[],groupIds:[],rateLimit,expiresAt}`，返回一次性 `token` |
+| PUT | `/api/api-keys/:id` | 更新名称、说明、权限、资源范围、限流与到期时间 |
+| POST | `/api/api-keys/:id/rotate` | 轮换令牌，返回一次性新 `token` |
 | DELETE | `/api/api-keys/:id` | 删除 |
 | POST | `/api/api-keys/:id/enable` | 启用 |
 | POST | `/api/api-keys/:id/disable` | 禁用 |
 
-`/api/settings`、`/api/me`、`/api/change-password`、`/api/api-keys` 只接受 JWT，API Key 无法访问。
+`/api/api-keys`、`/api/change-password`、2FA 管理接口只接受 JWT，API Key 无法访问。
 
-每个 Key 有独立的每分钟请求上限（默认 60）。响应包含：
+每个 Key 有独立的每分钟请求上限（默认 60），列表中的 `requestCount`、`lastUsedIp`、`lastUsedAt` 可用于审计。响应包含：
 
 ```
 X-RateLimit-Limit: 60
@@ -517,7 +489,7 @@ X-RateLimit-Remaining: 58
 
 超限返回 `429` 和 `Retry-After: 60`。
 
-可写设置项：`panel_name`、`public_url`、`logo_url`、`page_title`、`page_note`、`support_url`、`web_page_url`、`subscription_title`、`subscription_update_interval`、`subscription_buttons`、`subscription_hy2_endpoints`、`device_grace_minutes`、`log_retention_days`、`log_ingest_enabled`、`analysis_window_hours`、`alert_auth_fail_threshold`、`alert_error_burst_threshold`。
+可写设置项：`panel_name`、`public_url`、`logo_url`、`page_title`、`page_note`、`support_url`、`web_page_url`、`subscription_title`、`subscription_update_interval`、`subscription_buttons`、`subscription_hy2_endpoints`、`device_grace_minutes`、`log_retention_days`、`metric_retention_days`、`log_ingest_enabled`、`analysis_window_hours`、`alert_auth_fail_threshold`、`alert_error_burst_threshold`。
 
 `subscription_hy2_endpoints` 取值为 `both`、`tls` 或 `hopping`，仅作为新建节点时 `includeTls` / `includeHopping` 的初始值；已有节点的订阅输出始终以节点自身的开关为准。
 

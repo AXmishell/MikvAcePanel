@@ -22,13 +22,10 @@ var editableSettings = map[string]bool{
 	"subscription_buttons": true, "subscription_hy2_endpoints": true, "device_grace_minutes": true,
 	"happ_provider_id": true, "happ_routing_mode": true, "happ_routing_profile": true,
 	"happ_announce":      true,
-	"log_retention_days": true, "log_ingest_enabled": true,
+	"log_retention_days": true, "metric_retention_days": true, "log_ingest_enabled": true,
 	"analysis_window_hours": true, "alert_auth_fail_threshold": true,
 	"alert_error_burst_threshold": true,
 	"backup_enabled":              true, "backup_interval_hours": true, "backup_keep": true,
-	"portal_enabled": true, "portal_title": true, "portal_note": true,
-	"portal_allow_password_change": true,
-	"portal_allow_sub_reset":       true, "portal_session_hours": true,
 	"admin_security_enabled": true, "admin_security_path": true,
 }
 
@@ -101,8 +98,8 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		values["public_url"] = v
 	}
 	for _, key := range []string{"subscription_update_interval", "device_grace_minutes", "log_retention_days",
-		"analysis_window_hours", "alert_auth_fail_threshold", "alert_error_burst_threshold",
-		"backup_interval_hours", "backup_keep", "portal_session_hours"} {
+		"metric_retention_days", "analysis_window_hours", "alert_auth_fail_threshold", "alert_error_burst_threshold",
+		"backup_interval_hours", "backup_keep"} {
 		if v, ok := values[key]; ok {
 			n, err := strconv.Atoi(v)
 			if err != nil || n < 0 || n > 100000 {

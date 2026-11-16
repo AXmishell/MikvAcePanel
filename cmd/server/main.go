@@ -28,7 +28,7 @@ func main() {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: parseLevel(cfg.LogLevel)}))
 	slog.SetDefault(logger)
-	// /install uses this hook after saving a different database backend. The
+	// /install uses this hook after saving a different SQLite path. The
 	// process re-executes itself so the store, migrations and every component
 	// holding it are rebuilt from the new panel.yaml.
 	cfg.Restart = func() {
@@ -49,8 +49,6 @@ func main() {
 	}
 
 	st, err := store.OpenConfig(store.Config{
-		Driver:          cfg.DBDriver,
-		DSN:             cfg.DBDSN,
 		Path:            cfg.DBPath,
 		MaxOpenConns:    cfg.DBMaxOpen,
 		MaxIdleConns:    cfg.DBMaxIdle,
@@ -62,9 +60,6 @@ func main() {
 	}
 	defer st.Close()
 	logger.Info("database ready", "driver", st.Dialect().Name(), "config", cfg.ConfigPath)
-	if err := server.ApplyPendingHomepageRestore(cfg.DataDir); err != nil {
-		logger.Warn("apply homepage restore", "error", err)
-	}
 
 	app, err := server.New(cfg, st, logger)
 	if err != nil {
@@ -126,8 +121,15 @@ func scheduler(ctx context.Context, app *server.Server, logger *slog.Logger) {
 		if days < 1 {
 			days = 14
 		}
-		if err := st.Prune(ctx, days, 60); err != nil {
+		metricDays := parseInt(settings["metric_retention_days"], 30)
+		if metricDays < 1 {
+			metricDays = 30
+		}
+		if res, err := st.Prune(ctx, days, metricDays); err != nil {
 			logger.Warn("prune", "error", err)
+		} else if res.Total() > 0 {
+			logger.Info("pruned telemetry", "logs", res.Logs, "logBatches", res.LogBatches,
+				"events", res.Events, "statsBatches", res.StatsBatches, "nodeMetrics", res.NodeMetrics)
 		}
 	}
 	expire()

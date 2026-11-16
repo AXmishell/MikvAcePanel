@@ -43,6 +43,16 @@ func logFilterFromRequest(r *http.Request) model.LogFilter {
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	f := logFilterFromRequest(r)
+	if nodeIDs, restricted := s.apiKeyAllowedNodes(r); restricted {
+		if f.NodeID > 0 {
+			if !containsID(nodeIDs, f.NodeID) {
+				writeError(w, http.StatusForbidden, "API key is restricted to other nodes")
+				return
+			}
+		} else {
+			f.NodeIDs = nodeIDs
+		}
+	}
 	items, total, err := s.store.QueryLogs(r.Context(), f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -67,13 +77,33 @@ func (s *Server) handleLogSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nodeID, _ := strconv.ParseInt(q.Get("nodeId"), 10, 64)
+	opts := model.LogStatsOptions{NodeID: nodeID, From: from, To: to}
+	if nodeIDs, restricted := s.apiKeyAllowedNodes(r); restricted {
+		if nodeID > 0 {
+			if !containsID(nodeIDs, nodeID) {
+				writeError(w, http.StatusForbidden, "API key is restricted to other nodes")
+				return
+			}
+		} else {
+			opts.NodeIDs = nodeIDs
+		}
+	}
 	settings, _ := s.store.GetSettings(r.Context())
 	th := logs.Thresholds{
 		AuthFailPerIP:   int64(parseIntSetting(settings["alert_auth_fail_threshold"], 10)),
 		ErrorBurstCount: int64(parseIntSetting(settings["alert_error_burst_threshold"], 20)),
 	}
-	summary, err := s.analyzer.Analyze(r.Context(), model.LogStatsOptions{NodeID: nodeID, From: from, To: to},
-		s.hub.OnlineUserCount(), th)
+	// The range and node scope are part of the key so a restricted API key can
+	// never receive a cached summary computed for another scope.
+	online := s.hub.OnlineUserCount()
+	if opts.NodeIDs != nil {
+		// The global online counter cannot be node-filtered, so hide it from
+		// resource-restricted keys instead of leaking unrelated activity.
+		online = 0
+	}
+	key := fmt.Sprintf("logs|%s|%s|%s|%d|%s|%d|%d", q.Get("range"), q.Get("from"), q.Get("to"),
+		nodeID, nodeScopeKey(opts.NodeIDs), th.AuthFailPerIP, th.ErrorBurstCount)
+	summary, err := s.analyzeCached(r.Context(), key, logSummaryAnalysisTTL, opts, online, th)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -83,8 +113,16 @@ func (s *Server) handleLogSummary(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogOptions(w http.ResponseWriter, r *http.Request) {
 	nodes, _ := s.store.ListNodes(r.Context())
+	allowedNodes, restricted := s.apiKeyAllowedNodes(r)
+	allowed := map[int64]bool{}
+	for _, id := range allowedNodes {
+		allowed[id] = true
+	}
 	nodeOpts := make([]map[string]any, 0, len(nodes))
 	for _, n := range nodes {
+		if restricted && !allowed[n.ID] {
+			continue
+		}
 		nodeOpts = append(nodeOpts, map[string]any{"id": n.ID, "name": n.Name, "flag": n.Flag, "status": n.Status})
 	}
 	total, _ := s.store.CountLogs(r.Context())
@@ -132,6 +170,16 @@ func (s *Server) handleDeleteLogs(w http.ResponseWriter, r *http.Request) {
 // Supported formats: log (one structured line per entry), csv and jsonl.
 func (s *Server) handleExportLogs(w http.ResponseWriter, r *http.Request) {
 	f := logFilterFromRequest(r)
+	if nodeIDs, restricted := s.apiKeyAllowedNodes(r); restricted {
+		if f.NodeID > 0 {
+			if !containsID(nodeIDs, f.NodeID) {
+				writeError(w, http.StatusForbidden, "API key is restricted to other nodes")
+				return
+			}
+		} else {
+			f.NodeIDs = nodeIDs
+		}
+	}
 	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
 	if format == "" {
 		format = "log"

@@ -14,8 +14,8 @@ import (
 )
 
 // SetupDriver is the sentinel database.driver value for a first-run panel that
-// has not selected a backend yet. It starts the setup-only server, which never
-// opens SQLite (or any other database) until the operator saves a choice.
+// has not selected a database location yet. It starts the setup-only server,
+// which never opens SQLite until the operator saves a path.
 const SetupDriver = "setup"
 
 // Config is the panel runtime configuration, loaded from panel.yaml.
@@ -24,8 +24,6 @@ type Config struct {
 	Addr          string
 	DataDir       string
 	DBDriver      string
-	DBDSN         string
-	DBDSNFile     string
 	DBPath        string
 	DBMaxOpen     int
 	DBMaxIdle     int
@@ -83,7 +81,6 @@ type fileConfig struct {
 	Database struct {
 		Driver          string `yaml:"driver"`
 		Path            string `yaml:"path"`
-		DSNFile         string `yaml:"dsn_file"`
 		MaxOpen         int    `yaml:"max_open"`
 		MaxIdle         int    `yaml:"max_idle"`
 		ConnMaxLifetime string `yaml:"conn_max_lifetime"`
@@ -112,17 +109,33 @@ func defaultFileConfig() fileConfig {
 
 // DefaultPanelConfigPath returns the first conventional panel.yaml location.
 func DefaultPanelConfigPath() string {
-	for _, p := range []string{"panel.yaml", "config/panel.yaml", "/config/panel.yaml", "/data/panel.yaml"} {
+	for _, p := range []string{
+		"panel.yaml",
+		"config/panel.yaml",
+		"/app/config/panel.yaml",
+		"/app/data/panel.yaml",
+		"/config/panel.yaml",
+		"/data/panel.yaml",
+	} {
 		if configfile.Exists(p) {
 			return p
 		}
 	}
-	// Prefer /config only when the mount point is not itself a directory.
+	// Prefer /app/config in the container image; the mounted directory exists
+	// even before /install writes panel.yaml.
+	if st, err := os.Stat("/app/config"); err == nil && st.IsDir() && !isDir("/app/config/panel.yaml") {
+		return "/app/config/panel.yaml"
+	}
+	// /config and /data are the legacy container paths. Keep them so existing
+	// deployments that still mount there keep working.
 	if st, err := os.Stat("/config"); err == nil && st.IsDir() && !isDir("/config/panel.yaml") {
 		return "/config/panel.yaml"
 	}
-	// /data is the persistent volume in the container image, so a config
-	// created there survives restarts even when /config is unusable.
+	// /app/data is the persistent volume in the image, so a config created
+	// there survives restarts even when no config directory is mounted.
+	if st, err := os.Stat("/app/data"); err == nil && st.IsDir() && !isDir("/app/data/panel.yaml") {
+		return "/app/data/panel.yaml"
+	}
 	if st, err := os.Stat("/data"); err == nil && st.IsDir() && !isDir("/data/panel.yaml") {
 		return "/data/panel.yaml"
 	}
@@ -163,7 +176,7 @@ func LoadConfig(path string) (Config, error) {
 		}
 	} else {
 		// A fresh deployment must not create data/panel.db just to show the
-		// wizard. /install writes the chosen driver before the next start.
+		// wizard. /install writes the SQLite path before the next start.
 		fc.Database.Driver = SetupDriver
 	}
 	ttl := 24 * time.Hour
@@ -187,7 +200,6 @@ func LoadConfig(path string) (Config, error) {
 		Addr:           strings.TrimSpace(fc.Server.Addr),
 		DataDir:        strings.TrimSpace(fc.Server.DataDir),
 		DBDriver:       strings.ToLower(strings.TrimSpace(fc.Database.Driver)),
-		DBDSNFile:      strings.TrimSpace(fc.Database.DSNFile),
 		DBPath:         strings.TrimSpace(fc.Database.Path),
 		DBMaxOpen:      fc.Database.MaxOpen,
 		DBMaxIdle:      fc.Database.MaxIdle,
@@ -218,13 +230,12 @@ func LoadConfig(path string) (Config, error) {
 	switch cfg.DBDriver {
 	case "sqlite3":
 		cfg.DBDriver = "sqlite"
-	case "postgresql", "pg":
-		cfg.DBDriver = "postgres"
-	case "mariadb":
-		cfg.DBDriver = "mysql"
 	case "none", "unset", "ask":
 		// Explicit aliases for the first-run no-database mode.
 		cfg.DBDriver = SetupDriver
+	case "setup", "sqlite":
+	default:
+		return Config{}, fmt.Errorf("database.driver: unsupported driver %q (only sqlite is supported)", fc.Database.Driver)
 	}
 	if cfg.DBPath == "" {
 		cfg.DBPath = filepath.Join(cfg.DataDir, "panel.db")
@@ -250,13 +261,6 @@ func LoadConfig(path string) (Config, error) {
 			return Config{}, fmt.Errorf("admin.password_file %q is empty", fc.Admin.PasswordFile)
 		}
 		cfg.AdminPassword = pw
-	}
-	if fc.Database.DSNFile != "" {
-		dsn, err := configfile.Secret(fc.Database.DSNFile)
-		if err != nil {
-			return Config{}, fmt.Errorf("database.dsn_file: %w", err)
-		}
-		cfg.DBDSN = dsn
 	}
 	if fc.Redis.URLFile != "" {
 		u, err := configfile.Secret(fc.Redis.URLFile)

@@ -47,6 +47,54 @@ database:
 	}
 }
 
+func TestLoadConfigIgnoresEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "panel.yaml")
+	if err := os.WriteFile(path, []byte(`version: 1
+panel:
+  name: From YAML
+  public_url: "https://yaml.example.com"
+server:
+  addr: ":9090"
+  data_dir: "/srv/yaml"
+  log_level: "debug"
+admin:
+  username: yaml-admin
+database:
+  driver: sqlite
+  path: "/srv/yaml/panel.db"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Legacy panel environment variables must never be read again: panel.yaml
+	// is the only configuration source.
+	for name, value := range map[string]string{
+		"ADDR":             ":7777",
+		"DATA_DIR":         "/srv/env",
+		"PANEL_PUBLIC_URL": "https://env.example.com",
+		"ADMIN_USERNAME":   "env-admin",
+		"LOG_LEVEL":        "error",
+		"DB_DRIVER":        "setup",
+		"DB_PATH":          "/srv/env/panel.db",
+		"SERVE_WEB":        "false",
+	} {
+		t.Setenv(name, value)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PanelName != "From YAML" || cfg.PublicURL != "https://yaml.example.com" {
+		t.Fatalf("panel values came from the environment: %+v", cfg)
+	}
+	if cfg.Addr != ":9090" || cfg.DataDir != "/srv/yaml" || cfg.LogLevel != "debug" {
+		t.Fatalf("server values came from the environment: %+v", cfg)
+	}
+	if cfg.AdminUsername != "yaml-admin" || cfg.DBDriver != "sqlite" || cfg.DBPath != "/srv/yaml/panel.db" {
+		t.Fatalf("admin/database values came from the environment: %+v", cfg)
+	}
+}
+
 func TestLoadConfigSecretFiles(t *testing.T) {
 	dir := t.TempDir()
 	pw := filepath.Join(dir, "admin_password")
@@ -149,6 +197,19 @@ func TestLoadConfigSetupAliases(t *testing.T) {
 		}
 		if cfg.DBDriver != SetupDriver {
 			t.Fatalf("driver %q = %q", driver, cfg.DBDriver)
+		}
+	}
+}
+
+func TestLoadConfigRejectsRemoteDatabaseDrivers(t *testing.T) {
+	for _, driver := range []string{"postgres", "mysql", "mariadb"} {
+		path := filepath.Join(t.TempDir(), "panel.yaml")
+		body := "version: 1\ndatabase:\n  driver: " + driver + "\n"
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadConfig(path); err == nil {
+			t.Fatalf("driver %q must be rejected", driver)
 		}
 	}
 }

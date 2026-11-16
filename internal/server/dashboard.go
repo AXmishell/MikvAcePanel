@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -53,11 +54,17 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	events, _ := s.store.ListEvents(ctx, 0, 10)
 
 	settings, _ := s.store.GetSettings(ctx)
-	summary, _ := s.analyzer.Analyze(ctx, model.LogStatsOptions{From: nowT.Add(-24 * time.Hour), To: nowT},
-		s.hub.OnlineUserCount(), logs.Thresholds{
-			AuthFailPerIP:   int64(parseIntSetting(settings["alert_auth_fail_threshold"], 10)),
-			ErrorBurstCount: int64(parseIntSetting(settings["alert_error_burst_threshold"], 20)),
-		})
+	thresholds := logs.Thresholds{
+		AuthFailPerIP:   int64(parseIntSetting(settings["alert_auth_fail_threshold"], 10)),
+		ErrorBurstCount: int64(parseIntSetting(settings["alert_error_burst_threshold"], 20)),
+	}
+	// The rolling 24h window moves every second; key the cache on the fixed
+	// parameters instead so the 30s dashboard polls can reuse a result.
+	summary, _ := s.analyzeCached(ctx,
+		fmt.Sprintf("dashboard|%d|%d", thresholds.AuthFailPerIP, thresholds.ErrorBurstCount),
+		dashboardAnalysisTTL,
+		model.LogStatsOptions{From: nowT.Add(-24 * time.Hour), To: nowT},
+		s.hub.OnlineUserCount(), thresholds)
 	findings := []model.Finding{}
 	if summary != nil {
 		findings = summary.Findings

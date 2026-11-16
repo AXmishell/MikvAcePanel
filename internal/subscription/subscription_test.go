@@ -570,3 +570,12 @@ func TestEndpointsSkipUnshareableModes(t *testing.T) {
 		t.Fatalf("mimic endpoints = %d, want 0", len(eps))
 	}
 }
+
+func TestRendererForRejectsUnknownFormat(t *testing.T) {
+	if _, err := RendererFor("not-a-format"); err == nil {
+		t.Fatal("expected unsupported format error")
+	}
+	if got := ContentType("not-a-format"); got != "text/plain; charset=utf-8" {
+		t.Fatalf("fallback content type = %q", got)
+	}
+}

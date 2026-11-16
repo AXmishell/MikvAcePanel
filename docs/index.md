@@ -38,7 +38,7 @@ hide:
 
     ---
 
-    管理员 TOTP 两步验证、一次性恢复码、JWT 会话、登录限流与 API Key 作用域。
+    管理员 TOTP 两步验证、一次性恢复码、JWT 会话、登录限流与 API Key 细分权限。
 
 -   :material-chart-timeline-variant:{ .lg .middle } **日志与流量**
 
@@ -88,11 +88,11 @@ git clone https://github.com/AXmishell/MikvAcePanel.git
 cd MikvAcePanel
 mkdir -p config
 cp panel.example.yaml config/panel.yaml
-# 修改 panel.public_url；database.driver 默认 setup，/install 会先选数据库
+# 修改 panel.public_url；database.driver 默认 setup，/install 会先确认 SQLite 路径
 docker compose up -d --build
 ```
 
-访问 `http://服务器IP:8080/` 查看公开首页。未配置 `admin.password_file` 时先打开 `/install`：第一步选择 SQLite / PostgreSQL / MySQL（`setup` 模式不会提前创建 SQLite 文件），第二步创建管理员；管理员控制台是 `/admin`。登录后：
+访问 `http://服务器IP:8080/install` 初始化面板。未配置 `admin.password_file` 时先打开 `/install`：第一步确认 SQLite 数据文件（`setup` 模式不会提前创建 SQLite 文件），第二步创建管理员；管理员控制台是 `/admin`。站点根路径 `/` 不提供公开首页，初始化完成后直接返回 404；尚未创建管理员时会跳转到 `/install`。登录后：
 
 1. 修改默认密码，建议同时启用两步验证；
 2. 在 **节点** 页面添加节点，复制生成的安装命令；
@@ -139,4 +139,4 @@ docker compose up -d --build
 
 !!! warning "安全提示"
 
-    面板必须通过 HTTPS 暴露；`public_url` 会影响订阅链接和 Hysteria 认证回调。请修改默认管理员密码，并限制 `/data` 与节点 Token 的访问权限。
+    面板必须通过 HTTPS 暴露；`public_url` 会影响订阅链接和 Hysteria 认证回调。请修改默认管理员密码，并限制 `/app/data` 与节点 Token 的访问权限。

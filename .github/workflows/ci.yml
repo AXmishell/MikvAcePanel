@@ -23,9 +23,12 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - name: Frontend lint and tests
+        working-directory: web
+        run: npm ci --no-audit --no-fund && npm run lint && npm run test
       - name: Frontend build
         working-directory: web
-        run: npm ci --no-audit --no-fund && npm run build
+        run: npm run build
       - name: Server build
         run: go build ./cmd/...
 

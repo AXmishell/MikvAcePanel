@@ -17,25 +17,17 @@
 <script setup>
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { api, setPortalUnauthorizedHandler, setUnauthorizedHandler } from './api'
-import { auth, clearPortalSession, clearSession, setWarning, toasts, dismissToast } from './store'
+import { api, setUnauthorizedHandler } from './api'
+import { auth, clearSession, setWarning, toasts, dismissToast } from './store'
 
 const router = useRouter()
 
 setUnauthorizedHandler(() => {
   clearSession()
   const current = router.currentRoute.value
-  // Never pull a portal visitor into the administrator login flow.
   if (!current.path.startsWith('/admin') || current.name === 'admin-login') return
   const entry = typeof current.params.entry === 'string' ? current.params.entry : ''
   router.push({ name: 'admin-login', params: { entry: entry || undefined }, query: { redirect: current.fullPath } })
-})
-
-setPortalUnauthorizedHandler(() => {
-  clearPortalSession()
-  if (router.currentRoute.value.name !== 'portal-login') {
-    router.push({ name: 'portal-login', query: { redirect: router.currentRoute.value.fullPath } })
-  }
 })
 
 onMounted(async () => {

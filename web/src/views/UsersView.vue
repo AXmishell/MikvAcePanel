@@ -105,11 +105,6 @@
           <input v-model="form.password" type="text" :placeholder="editing ? '留空保持当前连接密码' : '留空自动生成'" />
           <span class="hint">用于 Hysteria 认证和订阅 URI；修改后客户端需同步更新。</span>
         </div>
-        <div class="field">
-          <label>控制台登录密码</label>
-          <input v-model="form.loginPassword" type="text" :placeholder="editing ? '留空保持当前登录密码' : '留空则与连接密码相同'" />
-          <span class="hint">用于 /user 用户中心登录，与连接密码相互独立。</span>
-        </div>
         <div class="field full">
           <label>订阅 Token</label>
           <input v-model="form.subscriptionToken" type="text" :placeholder="editing ? '' : '留空自动生成'" />
@@ -165,7 +160,6 @@
       <dl class="kv">
         <dt>用户 ID</dt><dd class="mono">{{ credential.userId }}</dd>
         <dt>连接密码</dt><dd class="mono">{{ credential.password || '(未变更)' }}</dd>
-        <dt>登录密码</dt><dd class="mono">{{ credential.loginPassword || '(未变更)' }}</dd>
         <dt>订阅</dt><dd class="mono" style="font-size: 11px">{{ credential.subscriptionUrl }}</dd>
       </dl>
       <template #footer>
@@ -282,7 +276,7 @@ import ConfirmDialog from '../components/ConfirmDialog.vue'
 import Pagination from '../components/Pagination.vue'
 import Select from '../components/Select.vue'
 import {
-  bytesToGb, copyText, fmtBytes, fmtDate, fmtRelative, gbToBytes, pct, ratioClass,
+  bytesToGb, copyText, fmtBytes, fmtDate, fmtRelative, pct, ratioClass,
 } from '../format'
 
 const users = ref([])
@@ -304,7 +298,7 @@ const formError = ref('')
 const form = reactive(emptyForm())
 
 const credentialOpen = ref(false)
-const credential = reactive({ userId: '', password: '', loginPassword: '', subscriptionUrl: '' })
+const credential = reactive({ userId: '', password: '', subscriptionUrl: '' })
 const connectionsOpen = ref(false)
 const connections = ref(null)
 const connectionsError = ref('')
@@ -331,7 +325,7 @@ const STATUS_OPTIONS = [
 ]
 
 function emptyForm() {
-  return { userId: '', username: '', password: '', loginPassword: '', subscriptionToken: '', enabled: true, trafficGb: 0, maxDevices: 0, expireAt: '', groupIds: [], nodeIds: [] }
+  return { userId: '', username: '', password: '', subscriptionToken: '', enabled: true, trafficGb: 0, maxDevices: 0, expireAt: '', groupIds: [], nodeIds: [] }
 }
 function resetForm() {
   Object.assign(form, emptyForm())
@@ -383,7 +377,7 @@ function openCreate() {
 function openEdit(u) {
   editing.value = u
   Object.assign(form, {
-    userId: u.userId, username: u.username || '', password: '', loginPassword: '',
+    userId: u.userId, username: u.username || '', password: '',
     subscriptionToken: u.subscriptionToken || '', enabled: u.enabled,
     trafficGb: bytesToGb(u.trafficLimit), maxDevices: u.maxDevices || 0,
     expireAt: u.expireAt ? toLocalInput(u.expireAt) : '',
@@ -409,17 +403,15 @@ async function save() {
       groupIds: form.groupIds, nodeIds: form.nodeIds,
     }
     if (form.password) payload.password = form.password
-    if (form.loginPassword) payload.loginPassword = form.loginPassword
     if (form.subscriptionToken.trim()) payload.subscriptionToken = form.subscriptionToken.trim()
     let res
     if (editing.value) res = await api.updateUser(editing.value.id, payload)
     else res = await api.createUser(payload)
     modalOpen.value = false
     notify(editing.value ? '用户已更新' : '用户已创建')
-    if (res.password || res.loginPassword || !editing.value) {
+    if (res.password || !editing.value) {
       credential.userId = res.userId
       credential.password = res.password || ''
-      credential.loginPassword = res.loginPassword || ''
       credential.subscriptionUrl = res.subscriptionUrl
       credentialOpen.value = true
     }
@@ -521,7 +513,7 @@ async function confirmDelete() {
   }
 }
 async function copyCredential() {
-  await copyText(`用户 ID: ${credential.userId}\n连接密码: ${credential.password}\n登录密码: ${credential.loginPassword}\n订阅: ${credential.subscriptionUrl}`)
+  await copyText(`用户 ID: ${credential.userId}\n连接密码: ${credential.password}\n订阅: ${credential.subscriptionUrl}`)
   notify('Credentials copied')
 }
 
@@ -529,12 +521,12 @@ onMounted(() => { loadMeta(); load() })
 </script>
 
 <style scoped>
-.avatar-sm { width: 30px; height: 30px; border-radius: 7px; flex: none; display: grid; place-items: center; font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--on-accent); background: var(--accent); }
+.avatar-sm { width: 30px; height: 30px; border-radius: 0; flex: none; display: grid; place-items: center; font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--on-accent); background: var(--accent); }
 .stack { display: flex; flex-direction: column; gap: 14px; }
 .conn-qr { display: flex; justify-content: center; padding: 2px 0; }
-.conn-qr img { width: 150px; height: auto; aspect-ratio: 1; border-radius: 8px; background: #fff; padding: 7px; border: 1px solid var(--line); }
+.conn-qr img { width: 150px; height: auto; aspect-ratio: 1; border-radius: 0; background: #fff; padding: 7px; border: 1px solid var(--line); }
 .conn-nodes { display: flex; flex-direction: column; gap: 10px; }
-.conn-node { border: 1px solid var(--line-soft); border-radius: 10px; background: var(--panel-2); padding: 12px; }
+.conn-node { border: 1px solid var(--line-soft); border-radius: 0; background: var(--panel-2); padding: 12px; }
 .conn-configs { margin-top: 9px; border-top: 1px solid var(--line-soft); }
 .conn-cfg { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line-soft); font-size: 11.5px; color: var(--muted); }
 .conn-cfg:first-child { border-top: 0; }
