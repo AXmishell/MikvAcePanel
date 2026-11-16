@@ -278,7 +278,7 @@ Caddy 会自动处理证书、HTTP/2 和 WebSocket。
 
 ### 预构建二进制
 
-推送到 `v*.*.*` 标签后，`.github/workflows/release.yml` 会自动发布 `mikvace-server` / `mikvace-node` / `mikvace-client` 的跨平台归档和 `checksums.txt` 到 GitHub Releases。面板与客户端支持 Linux / macOS / Windows 的 amd64、arm64；节点 Agent 只发布 Linux amd64 / arm64，且归档不包含 Hysteria/Xray 核心，推荐节点继续使用 GHCR 镜像。
+发布 GitHub Release 后，`.github/workflows/release.yml` 会把 `mikvace-server` / `mikvace-node` / `mikvace-client` 的跨平台归档和 `checksums.txt` 上传到该 Release。只推 tag（`git push origin v1.2.3`）不会触发工作流，需要在 Releases 页面创建并发布 Release。面板与客户端支持 Linux / macOS / Windows 的 amd64、arm64；节点 Agent 只发布 Linux amd64 / arm64，且归档不包含 Hysteria/Xray 核心，推荐节点继续使用 GHCR 镜像。
 
 ```bash
 VERSION=1.2.3

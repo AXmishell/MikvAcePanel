@@ -157,18 +157,18 @@ docker compose --profile redis up -d --build
 
 ### 预构建镜像（GHCR）
 
-推送到 `main` 或打 `v*.*.*` 标签时，GitHub Actions 会自动构建并发布面板与节点镜像到 GHCR，支持 `linux/amd64` 和 `linux/arm64`（工作流见 `.github/workflows/docker.yml`）。面板镜像在构建时先编译 Vue 前端，再把 `web/dist` 嵌入 Go 二进制，因此默认只需要一个容器，不存在单独的 API 镜像。
+推送到 `main` 或发布 GitHub Release 时，GitHub Actions 会自动构建并发布面板与节点镜像到 GHCR，支持 `linux/amd64` 和 `linux/arm64`（工作流见 `.github/workflows/images.yml`）。只推 tag 不会触发任何构建。面板镜像在构建时先编译 Vue 前端，再把 `web/dist` 嵌入 Go 二进制，因此默认只需要一个容器，不存在单独的 API 镜像。
 
 ```bash
 docker pull ghcr.io/axmishell/mikvacepanel:latest      # 面板（内嵌前端）
 docker pull ghcr.io/axmishell/mikvacepanel-node:latest   # 节点 Agent
 ```
 
-标签规则：`main` 分支发布 `main`、`latest`、`sha-<commit>`；`v1.2.3` 标签发布 `1.2.3`、`1.2`、`latest`、`sha-<commit>`。`latest` 始终指向最后一次成功构建的镜像，因此后续的 `main` 构建会覆盖发布标签产生的 `latest`；需要稳定版本请使用语义化版本标签。
+标签规则：`main` 分支发布 `main`、`latest`、`sha-<commit>`；Release 的 `v1.2.3` 标签发布 `1.2.3`、`1.2`、`latest`、`sha-<commit>`。`latest` 始终指向最后一次成功构建的镜像，因此后续的 `main` 构建会覆盖发布标签产生的 `latest`；需要稳定版本请使用语义化版本标签。
 
 ### 预构建二进制（GitHub Releases）
 
-推送 `v*.*.*` 标签时，`.github/workflows/release.yml` 会运行测试、重建前端并生成以下归档，然后创建 GitHub Release：
+发布 GitHub Release 时，`.github/workflows/release.yml` 会运行测试、重建前端并生成以下归档，然后上传到该 Release。工作流只响应「发布 Release」事件：`git push origin v1.2.3` 只创建 tag，不会触发任何运行；在 GitHub 上创建或发布 Release 时才会构建并上传产物。
 
 - `mikvace-server_<version>_<os>_<arch>.tar.gz` / `.zip`：面板，内嵌前端，支持 Linux / macOS / Windows 的 amd64、arm64；
 - `mikvace-node_<version>_linux_<arch>.tar.gz`：节点 Agent，仅 Linux amd64 / arm64（依赖 iptables 与 Docker）；归档不包含 Hysteria/Xray 核心，进程模式需自行安装，推荐直接使用 GHCR 节点镜像；
@@ -187,14 +187,18 @@ tar -xzf "mikvace-server_${VERSION}_linux_amd64.tar.gz"
 sudo install -m 0755 mikvace-server /usr/local/bin/
 ```
 
-发布新版本：
+发布新版本（推送 tag 本身不会触发任何工作流，需要在 GitHub 上发布 Release）：
 
 ```bash
 git tag -a v1.2.3 -m "v1.2.3"
 git push origin v1.2.3
+
+# 二选一：在 GitHub 的 Releases 页面手动创建并发布，或直接用 gh：
+gh release create v1.2.3 --title v1.2.3 --generate-notes
+# 预发行版加 --prerelease，例如 v1.2.3-rc.1
 ```
 
-Docker 镜像由 `.github/workflows/docker.yml` 在同一标签上并行构建，两个工作流互不依赖。
+发布 Release 后，`.github/workflows/release.yml` 上传跨平台归档，`.github/workflows/images.yml` 并行构建并推送 `1.2.3` 等标签的镜像；两个工作流互不依赖。
 
 ### 本地开发
 

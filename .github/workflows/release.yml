@@ -1,15 +1,28 @@
 name: Release
 
+# Publishing a GitHub Release is the only thing that starts this workflow.
+# Pushing the tag alone stays silent (no run, no red X on the commit), and the
+# release is created/published by hand on GitHub, which also creates the tag.
 on:
-  push:
-    tags: ['v*.*.*']
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to attach the archives to (e.g. v1.2.3)
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
   cancel-in-progress: false
+
+env:
+  # The tag comes from the published release; the manual run passes it as input.
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
 jobs:
   release:
@@ -17,38 +30,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - name: Validate release tag
         run: |
-          tag="${GITHUB_REF_NAME}"
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::release tags must look like v1.2.3 or v1.2.3-rc.1 (got: $tag)"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::release tags must look like v1.2.3 or v1.2.3-rc.1 (got: $TAG)"
             exit 1
           fi
 
-      # Reserve the tag as a draft release *before* running any build tooling.
-      # If the tag cannot be published the run stops here instead of spending
-      # time on the full cross-platform build; on later failures the draft stays
-      # behind (invisible to users) and a re-run reuses it.
-      - name: Create draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -Eeuo pipefail
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; reusing it"
-            exit 0
-          fi
-          args=(--draft --verify-tag --generate-notes --title "$TAG")
-          if [[ "$TAG" == *-* ]]; then
-            args+=(--prerelease)
-          fi
-          gh release create "$TAG" "${args[@]}"
+      # Build the tagged commit even for manual runs, so the archives always
+      # match the release they are attached to.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          fetch-depth: 0
+
+      # Manual runs start from a branch ref, so resolve the commit from the
+      # checked-out tag rather than trusting github.sha.
+      - name: Resolve commit
+        id: commit
+        run: echo "commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-go@v5
         with:
@@ -72,22 +73,19 @@ jobs:
 
       - name: Build release archives
         env:
-          VERSION: ${{ github.ref_name }}
-          COMMIT: ${{ github.sha }}
+          VERSION: ${{ env.TAG }}
+          COMMIT: ${{ steps.commit.outputs.commit }}
         run: ./scripts/release.sh
 
-      - name: Upload assets and publish
+      # The release already exists (it is what triggered this run), so only the
+      # generated archives are attached. Pre-release state is whatever was
+      # chosen when publishing the release.
+      - name: Upload assets
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
         run: |
           set -Eeuo pipefail
-          pre=false
-          if [[ "$TAG" == *-* ]]; then
-            pre=true
-          fi
           gh release upload "$TAG" dist/* --clobber
-          gh release edit "$TAG" --title "$TAG" --draft=false --prerelease="$pre"
           {
             echo "### Released $TAG"
             echo ""
@@ -104,13 +102,3 @@ jobs:
           path: dist/
           if-no-files-found: ignore
           retention-days: 7
-
-  # Reusable workflows are resolved from the same commit as this file, so the
-  # tag must be cut after this change lands on the default branch.
-  docker:
-    name: Build release images
-    needs: release
-    permissions:
-      contents: read
-      packages: write
-    uses: ./.github/workflows/docker.yml
