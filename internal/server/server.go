@@ -14,6 +14,7 @@ import (
 
 	nodesvc "github.com/axmishell/mikvacepanel/internal/app/nodes"
 	usersvc "github.com/axmishell/mikvacepanel/internal/app/users"
+	"github.com/axmishell/mikvacepanel/internal/cache"
 	"github.com/axmishell/mikvacepanel/internal/certcrypto"
 	"github.com/axmishell/mikvacepanel/internal/certmanager"
 	"github.com/axmishell/mikvacepanel/internal/logs"
@@ -25,11 +26,12 @@ import (
 type Server struct {
 	cfg       Config
 	store     *store.Store
+	logs      store.LogStore
 	users     *usersvc.Service
 	nodes     *nodesvc.Service
 	hub       *Hub
 	analyzer  *logs.Analyzer
-	analysis  *analysisCache
+	cache     *cache.Store
 	certs     *certmanager.Manager
 	log       *slog.Logger
 	secret    []byte
@@ -64,6 +66,7 @@ type Server struct {
 	configSyncMu sync.Mutex
 	backupMu     sync.Mutex
 	installMu    sync.Mutex
+	infraMu      sync.Mutex
 
 	adminVerMu sync.Mutex
 	adminVer   map[int64]adminVersionEntry
@@ -84,14 +87,23 @@ type adminVersionEntry struct {
 // several panel instances share one database.
 const adminVersionTTL = 10 * time.Second
 
-// New creates a server, bootstraps the administrator and builds the router.
+// New creates a server whose logs live in the control database.
 func New(cfg Config, st *store.Store, logger *slog.Logger) (*Server, error) {
+	return NewWithLogs(cfg, st, nil, logger)
+}
+
+// NewWithLogs creates a server with an explicit telemetry backend. A nil
+// logStore keeps the SQLite log tables, which is the default deployment.
+func NewWithLogs(cfg Config, st *store.Store, logStore store.LogStore, logger *slog.Logger) (*Server, error) {
+	if logStore == nil {
+		logStore = st
+	}
 	secret, err := loadJWTSecret(cfg)
 	if err != nil {
 		return nil, err
 	}
 	s := &Server{
-		cfg: cfg, store: st, log: logger, secret: secret,
+		cfg: cfg, store: st, logs: logStore, log: logger, secret: secret,
 		started:        time.Now().UTC(),
 		loginTries:     map[string][]time.Time{},
 		trustedProxies: parseTrustedProxies(cfg.TrustedProxies),
@@ -116,8 +128,8 @@ func New(cfg Config, st *store.Store, logger *slog.Logger) (*Server, error) {
 	s.redis = redisClient
 	s.sessions = newSessionStore(redisClient, cfg.SessionTTL, logger)
 	s.hub = NewHub(st, logger)
-	s.analyzer = logs.New(st)
-	s.analysis = newAnalysisCache(maxCachedAnalyses)
+	s.analyzer = logs.New(st, logStore)
+	s.cache = cache.New(redisClient, cache.DefaultMaxEntries, cache.DefaultL1TTL)
 	certKey, err := certcrypto.LoadKey(cfg.DataDir, cfg.CertKeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("certificate encryption key: %w", err)
@@ -151,6 +163,9 @@ func (s *Server) Close() {
 // Store exposes the persistence layer to the scheduler.
 func (s *Server) Store() *store.Store { return s.store }
 
+// Logs exposes the telemetry backend.
+func (s *Server) Logs() store.LogStore { return s.logs }
+
 // Hub exposes live agent state.
 func (s *Server) Hub() *Hub { return s.hub }
 
@@ -159,6 +174,9 @@ func (s *Server) Analyzer() *logs.Analyzer { return s.analyzer }
 
 func (s *Server) bootstrap(ctx context.Context) error {
 	if err := s.store.EnsureDefaultSettings(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureAdminSecurityEntry(ctx); err != nil {
 		return err
 	}
 	if s.cfg.PanelName != "" {

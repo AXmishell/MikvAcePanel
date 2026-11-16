@@ -36,7 +36,8 @@ func newSetupEnv(t *testing.T) *testEnv {
 	}
 	ts := httptest.NewServer(app.Handler())
 	t.Cleanup(ts.Close)
-	return &testEnv{srv: ts, store: st, app: app}
+	_, entry := app.adminSecurityEntry(t.Context())
+	return &testEnv{srv: ts, store: st, app: app, entry: entry}
 }
 
 func TestInstallFlow(t *testing.T) {

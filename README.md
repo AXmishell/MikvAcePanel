@@ -29,7 +29,7 @@ mkdocs build --strict # 输出 site/
 - **双核心节点**：同一节点可同时运行 Hysteria 2（QUIC/UDP）与 Xray（TCP），也可只运行其中一个。
 - **Xray 多协议入站**：VLESS / VMess / Trojan / Shadowsocks；TCP / WebSocket / gRPC / XHTTP / mKCP；REALITY / TLS / 无加密；管理员可在新建节点时按协议开关启用，一个节点可配置多个入站。
 - **订阅分发**：Clash/Mihomo YAML、sing-box JSON、Shadowrocket Base64、原始 URI 列表、Xray JSON；支持 HAPP 路由头与 providerid。
-- **管理员控制台**：面板仅提供 `/admin` 管理员后台，用户、节点、分组、订阅与设置均在控制台内管理；旧的 `/user` 用户中心入口已移除并返回 404。
+- **管理员控制台**：管理员后台只通过 `/admin/<安全入口>` 进入，直接访问 `/admin` 返回 404；访问入口后获得 HttpOnly 门禁 Cookie。用户、节点、分组、订阅与设置均在控制台内管理；旧的 `/user` 用户中心入口已移除并返回 404。
 - **Hysteria 2 认证**：节点把客户端认证请求转发到 `POST /api/auth`，支持启用/禁用、到期、流量限额、设备数限制（按唯一 IP + 宽限期）；Agent 还会持久化用户认证快照，面板故障时 Hysteria 新连接仍可继续认证。
 - **节点管理**：面板生成 Hysteria / Xray 服务端配置，通过 WebSocket 实时下发；支持版本、运行状态、配置 revision、错误回报、启动/停止/重启，以及卡片/列表视图和鼠标拖动调整订阅排序权重。
 - **证书统一签发**：面板通过 ACME DNS-01 申请证书，Agent 提交 CSR、安装证书链（私钥不出节点）；节点自签 ACME 只使用 TLS-ALPN，不再占用 80 端口。
@@ -37,7 +37,7 @@ mkdocs build --strict # 输出 site/
 - **节点端 Docker 镜像**：单容器内置 Hysteria 2 + Xray + Agent，开箱即用；也可在节点表单中为每个节点选择 Docker 运行时（`runtime.type: docker`），由 Agent 管理同机的代理容器。
 - **SSH 自动安装**：保存 SSH 凭据后可一键远程安装/重启节点容器（可选自动安装 Docker）。
 - **备份恢复**：本地 tar.gz 备份、自动备份保留策略、上传恢复（重启生效）。
-- **数据清理**：可配置日志与监控采样保留天数，支持立即清理及 `VACUUM` 压缩数据库，控制数据库和备份体积。
+- **数据清理**：可配置日志与监控采样保留天数，清理后自动回收空闲页（必要时 `VACUUM`），控制数据库和备份体积。
 - **API Key 限流**：每个密钥独立速率限制与 `X-RateLimit-*` 响应头，并记录请求次数、最后使用时间与来源 IP。
 - **端口跳跃**：Agent 自动维护 iptables UDP REDIRECT 规则；也可改用 Hysteria 2.8+ 内置端口范围监听。
 - **Hysteria 2 深度调优**：QUIC 窗口、BBR/Reno 与 BBR 预设、带宽补偿、UDP 开关、DNS 解析器、协议嗅探、三种伪装模式、GeoIP/GeoSite ACL、直连绑定、Gecko 分片、mTLS 客户端 CA、ECH、Realms、mimic，以及受保留键保护的额外 YAML 覆盖；内置“官方默认 / 推荐均衡 / 高性能 / 抗审查 / 弱网优化”模板，新建节点默认应用推荐模板。
@@ -46,6 +46,10 @@ mkdocs build --strict # 输出 site/
 - **API Key**：多密钥、细分权限（用户 / 分组 / 节点 / 证书 / 日志 / 维护 / 系统）、可按节点与分组限定资源范围，支持编辑权限、轮换令牌、过期时间、启停、独立限流与用量审计。
 - **单二进制部署**：Vue 构建产物通过 `go:embed` 嵌入服务端。
 - **SQLite**：无需额外数据库，WAL 模式，数据默认位于 `/app/data`。
+- **可选 PostgreSQL 日志库**：`telemetry.driver: postgres` 可把 `hy2_logs` / `log_batches` 外置到 PostgreSQL；日志按天分区、过期直接删分区，用户与节点仍留在 SQLite。PostgreSQL 不可用时默认回退到本地日志表，认证与订阅不受影响。详见 [外部日志库](docs/telemetry-postgres.md)。
+- **安装向导**：首次启动可在 `/install` 配置 SQLite、可选 PostgreSQL 日志库与 Redis，测试连接后把 DSN / URL 写入 0600 密钥文件并自动重启；也可以在第一步直接导入本面板或 CELERITY 备份，恢复已有用户、节点和管理员。
+- **存储与缓存设置**：管理员可在 **设置 → 存储与缓存** 查看日志库 / Redis 状态、测试连接、修改配置并重启；内置 PostgreSQL / Redis DSN 模板，API Key 无权调用。
+- **Redis 高级缓存**：会话、限流、验证码、二维码与日志分析二级缓存；多实例共享分析结果，Redis 不可用时自动退回本地内存。
 
 ---
 
@@ -107,7 +111,7 @@ docker compose up -d --build
 
 > **注意**：compose 使用 `./config:/app/config` 目录映射，配置放在 `./config/panel.yaml`。如果沿用旧版的单文件挂载 `./panel.yaml:/app/config/panel.yaml`，而宿主机上没有该文件，Docker / 1Panel 会把挂载点创建成目录，日志出现 `read /app/config/panel.yaml: is a directory`。新版面板会自动回退到 `/app/data/panel.yaml` 继续启动，详见[常见问题](docs/faq.md#启动日志反复出现-read-appconfigpanelyaml-is-a-directory)。
 
-访问 `http://服务器IP:8080/install` 初始化面板。首次启动且 `admin.password_file` 为空时，向导第一步确认 SQLite 数据文件，第二步创建管理员账号。配置了密码文件的无人值守部署会在启动时自动创建。管理员控制台是 `/admin`（旧地址 `/panel` 与用户中心 `/user` 均已停用并直接返回 404）。站点根路径 `/` 不提供公开首页，初始化完成后直接返回 404；尚未创建管理员时会跳转到 `/install`。
+访问 `http://服务器IP:8080/install` 初始化面板。首次启动且 `admin.password_file` 为空时，向导第一步确认 SQLite 数据文件（也可以直接上传本面板 `.tar.gz` 或 CELERITY mongodump 备份恢复），第二步创建管理员账号。配置了密码文件的无人值守部署会在启动时自动创建。管理员控制台只通过安全入口 `/admin/<入口>` 访问，直接访问 `/admin` 返回 404；入口会在首次启动时随机生成并写入数据目录的 `admin-entry.txt`（0600），安装向导完成后也会自动跳转到该入口（旧地址 `/panel` 与用户中心 `/user` 均已停用并直接返回 404）。站点根路径 `/` 不提供公开首页，初始化完成后直接返回 404；尚未创建管理员时会跳转到 `/install`。
 
 Docker 部署时应用配置**只从 `config/panel.yaml` 读取**，不读取环境变量，也不使用 `.env`。Compose 只负责端口、配置目录和数据目录映射。
 
@@ -116,9 +120,9 @@ Docker 部署时应用配置**只从 `config/panel.yaml` 读取**，不读取环
 - 用户名：`admin.username`，初始化向导会更新该字段；
 - 密码：`admin.password_file` 指向的密钥文件；留空则由 `/install` 创建管理员（密码只以 bcrypt 存入数据库，不写入 YAML）。
 
-面板只使用 SQLite。`panel.example.yaml` 默认使用 `database.driver: setup`：**首次启动只运行安装向导，不会创建 SQLite 文件**；在 `/install` 确认 `database.path` 并保存后才真正打开数据库，同时把 `database.driver` / `database.path` 写回 `config/panel.yaml`。**首次保存路径后面板会自动重启一次**，管理员创建页面会在重启完成后继续。
+控制面只使用 SQLite，代理日志可选外置到 PostgreSQL。`panel.example.yaml` 默认使用 `database.driver: setup`：**首次启动只运行安装向导，不会创建 SQLite 文件**；在 `/install` 确认 `database.path` 并保存后才真正打开数据库，同时把 `database.driver` / `database.path` 写回 `config/panel.yaml`。**首次保存路径后面板会自动重启一次**，管理员创建页面会在重启完成后继续。日志库通过 `telemetry` 配置节启用，默认为 `sqlite`，不改变现有部署行为。
 
-首次登录后请到 **Settings → Security** 修改密码。初始化完成后 `/install` 会按 404 处理，不再暴露安装入口。同一页面还可以开启 **管理员安全入口**（默认关闭）：开启后 `/admin` 不再可用，必须使用 `/admin/<入口路径>/login` 访问，管理 API 也会校验该入口。
+首次登录后请到 **Settings → Security** 修改密码。初始化完成后 `/install` 会按 404 处理，不再暴露安装入口。**管理员安全入口强制开启**：首次启动会在数据目录生成随机入口（同时写入 `admin-entry.txt`，权限 0600），必须使用 `/admin/<入口路径>` 访问；直接访问 `/admin` 会返回 404。访问入口后浏览器会获得 HttpOnly 门禁 Cookie，管理 API 同时接受该 Cookie 或 `X-Admin-Entry` 请求头。
 
 生产环境建议：
 
@@ -129,7 +133,7 @@ Docker 部署时应用配置**只从 `config/panel.yaml` 读取**，不读取环
 
 ### 可选 Redis
 
-面板可以选用 Redis 保存管理员会话、API Key / 登录限流计数和订阅二维码缓存。`redis.url_file` 为空时使用进程内存模式；配置后如果 Redis 暂时不可用，有效 JWT 仍可继续使用，限流会回退到本机内存。
+面板可以选用 Redis 保存管理员会话、API Key / 登录限流计数、订阅二维码缓存，并启用**高级缓存**：日志分析结果写入 Redis 二级缓存，多实例共享同一份结果。`redis.url_file` 为空时使用进程内存模式；配置后如果 Redis 暂时不可用，有效 JWT 仍可继续使用，限流和缓存会回退到本机内存。安装向导 `/install` 可以直接勾选并测试 Redis。
 
 ```yaml
 redis:
@@ -217,7 +221,7 @@ go run ./cmd/server --config ./panel.yaml
 
 # 终端 2：前端（Vite，自动代理 /api 到 8080）
 cd web && npm install && npm run dev
-# 打开 http://localhost:5173/admin/login
+# 从 ./data/admin-entry.txt 读取入口，打开 http://localhost:5173/admin/<入口>/login
 ```
 
 构建单二进制：
@@ -253,7 +257,7 @@ VITE_BASE_PATH=/panel/
 VITE_API_BASE_URL=https://api.example.com/api
 ```
 
-> 面板默认使用根路径（`/admin/login`、`/admin/dashboard` 等）。旧的 `/panel` 与 `/user` 已停用，访问时会直接返回 404，请改用 `/admin/dashboard`。
+> 面板默认使用根路径（`/admin/<入口>/login`、`/admin/<入口>/dashboard` 等）。直接访问 `/admin` 会返回 404；入口见数据目录的 `admin-entry.txt`。旧的 `/panel` 与 `/user` 已停用，访问时会直接返回 404。
 
 **2. 启动纯 API 服务（可选）**
 
@@ -501,7 +505,7 @@ go build -o mikvace-client ./cmd/client
 - **后端**：Go 1.26+、chi、gorilla/websocket、JWT、bcrypt、yaml.v3、modernc.org/sqlite（纯 Go）。
 - **前端**：Vue 3、Vue Router、Vite、lucide-vue-next，无 UI 框架，手写深色响应式界面。
 - **节点端**：Go，进程模式或 Docker 模式，SIGHUP/SIGTERM 管理，自签名证书，iptables 端口跳跃。
-- **数据**：SQLite（WAL），文件默认为 `/app/data/panel.db`；JWT secret 默认持久化在 `/app/data/jwt.secret`。
+- **数据**：SQLite（WAL），文件默认为 `/app/data/panel.db`；可选 PostgreSQL 存放代理日志；JWT secret 默认持久化在 `/app/data/jwt.secret`。
 
 ---
 

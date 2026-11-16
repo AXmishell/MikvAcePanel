@@ -47,9 +47,9 @@ func Open(ctx context.Context, rawURL, prefix string, logger *slog.Logger) (*Cli
 	if rawURL == "" {
 		return nil, nil
 	}
-	opt, err := goredis.ParseURL(rawURL)
+	opt, err := parseURL(rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse redis URL: %w", err)
+		return nil, err
 	}
 	opt.DialTimeout = 5 * time.Second
 	opt.ReadTimeout = 3 * time.Second
@@ -82,6 +82,32 @@ func Open(ctx context.Context, rawURL, prefix string, logger *slog.Logger) (*Cli
 		logger.Debug("redis client ready", "addr", opt.Addr, "db", opt.DB, "prefix", prefix)
 	}
 	return &Client{rdb: rdb, prefix: prefix}, nil
+}
+
+// ValidateURL checks a Redis URL without connecting. The error is deliberately
+// generic because the URL contains a password and may be shown in the /install
+// wizard.
+func ValidateURL(rawURL string) error {
+	_, err := parseURL(rawURL)
+	return err
+}
+
+func parseURL(rawURL string) (*goredis.Options, error) {
+	opt, err := goredis.ParseURL(strings.TrimSpace(rawURL))
+	if err != nil {
+		return nil, errors.New("invalid redis URL")
+	}
+	return opt, nil
+}
+
+// TestConnection verifies that a Redis URL is reachable. It is used by the
+// first-run wizard before saving redis.url_file.
+func TestConnection(ctx context.Context, rawURL string) error {
+	client, err := Open(ctx, rawURL, "mikvace-install-test:", nil)
+	if err != nil {
+		return err
+	}
+	return client.Close()
 }
 
 // Close releases the underlying connection pool.

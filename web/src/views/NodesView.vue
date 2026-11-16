@@ -764,7 +764,7 @@ import {
   ChevronDown, Copy, Download, FileCode2, GripVertical, LayoutGrid, List as ListIcon, Pencil, Plus, RefreshCw, RotateCcw, ScrollText, Server, Square, Terminal, Trash2, X, Zap,
 } from 'lucide-vue-next'
 import { adminPath, api } from '../api'
-import { auth, notify } from '../store'
+import { askConfirm, auth, notify } from '../store'
 import Modal from '../components/Modal.vue'
 import Select from '../components/Select.vue'
 import StatusBadge from '../components/StatusBadge.vue'
@@ -1670,7 +1670,12 @@ async function save() {
 }
 
 async function sshSetup(n) {
-  if (!confirm(`Run the node installer over SSH on ${n.domain || n.ip}?`)) return
+  const ok = await askConfirm(`Run the node installer over SSH on ${n.domain || n.ip}?`, {
+    title: '通过 SSH 安装节点',
+    confirmText: '开始安装',
+    tone: 'warn',
+  })
+  if (!ok) return
   sshBusy.value = n.id
   sshResult.value = null
   sshOpen.value = true
@@ -1729,7 +1734,12 @@ async function openInstall(n) {
   }
 }
 async function resetToken() {
-  if (!confirm('Resetting the token disconnects the current agent until it is reconfigured. Continue?')) return
+  const ok = await askConfirm('Resetting the token disconnects the current agent until it is reconfigured. Continue?', {
+    title: '重置节点令牌',
+    confirmText: '重置令牌',
+    tone: 'danger',
+  })
+  if (!ok) return
   try {
     const res = await api.resetNodeToken(install.value.nodeId)
     install.value = {

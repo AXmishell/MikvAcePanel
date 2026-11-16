@@ -44,3 +44,43 @@ export function dismissToast(id) {
   const i = toasts.findIndex((t) => t.id === id)
   if (i >= 0) toasts.splice(i, 1)
 }
+
+// confirmDialog backs a single app-wide ConfirmDialog so views can replace the
+// native window.confirm() popup with an in-page div dialog.
+export const confirmDialog = reactive({
+  open: false,
+  title: '确认操作',
+  message: '',
+  eyebrow: '',
+  confirmText: '确定',
+  cancelText: '取消',
+  tone: 'accent',
+})
+let confirmResolve = null
+
+export function askConfirm(message, options = {}) {
+  // A second confirm replaces (and declines) one that is still open.
+  if (confirmResolve) {
+    confirmResolve(false)
+    confirmResolve = null
+  }
+  Object.assign(confirmDialog, {
+    open: true,
+    title: options.title || '确认操作',
+    message,
+    eyebrow: options.eyebrow || '',
+    confirmText: options.confirmText || '确定',
+    cancelText: options.cancelText || '取消',
+    tone: options.tone || 'accent',
+  })
+  return new Promise((resolve) => {
+    confirmResolve = resolve
+  })
+}
+
+export function resolveConfirm(value) {
+  confirmDialog.open = false
+  const resolve = confirmResolve
+  confirmResolve = null
+  if (resolve) resolve(Boolean(value))
+}

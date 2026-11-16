@@ -149,6 +149,7 @@ func TestLoginRateLimitCannotBeBypassedWithForwardedHeaders(t *testing.T) {
 			t.Fatal(err)
 		}
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Admin-Entry", env.entry)
 		if xff != "" {
 			req.Header.Set("X-Forwarded-For", xff)
 		}

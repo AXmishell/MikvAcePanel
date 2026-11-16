@@ -8,7 +8,7 @@ LDFLAGS := -s -w \
 	-X github.com/axmishell/mikvacepanel/internal/version.Commit=$(COMMIT) \
 	-X github.com/axmishell/mikvacepanel/internal/version.BuildDate=$(BUILD_DATE)
 
-.PHONY: all web server server-api node client build test web-test web-lint fmt vet clean docker docker-node release dev dev-up dev-down dev-restart dev-status dev-logs docs docs-serve smoke test-cert-e2e check
+.PHONY: all web server server-api node client telemetry-migrate build test web-test web-lint fmt vet clean docker docker-node release dev dev-up dev-down dev-restart dev-status dev-logs docs docs-serve smoke test-cert-e2e check
 
 all: build
 
@@ -33,8 +33,13 @@ client:
 	@mkdir -p $(BIN)
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN)/mikvace-client ./cmd/client
 
+# Copies existing SQLite logs into the configured PostgreSQL telemetry schema.
+telemetry-migrate:
+	@mkdir -p $(BIN)
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN)/mikvace-telemetry-migrate ./cmd/telemetry-migrate
+
 # The server embeds web/dist, so the frontend must be built first.
-build: web server node client
+build: web server node client telemetry-migrate
 
 test:
 	go test ./...

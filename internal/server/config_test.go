@@ -213,3 +213,78 @@ func TestLoadConfigRejectsRemoteDatabaseDrivers(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadConfigTelemetryDefaultsToSQLite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "panel.yaml")
+	if err := os.WriteFile(path, []byte("version: 1\ndatabase:\n  driver: sqlite\n  path: "+filepath.Join(dir, "panel.db")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TelemetryDriver != "sqlite" || cfg.TelemetrySchema != "public" || cfg.TelemetryDSN != "" {
+		t.Fatalf("telemetry = %+v", cfg)
+	}
+}
+
+func TestLoadConfigTelemetryPostgres(t *testing.T) {
+	dir := t.TempDir()
+	dsnPath := filepath.Join(dir, "telemetry.pg.url")
+	if err := os.WriteFile(dsnPath, []byte("postgres://panel:secret@db:5432/mikvace?sslmode=require\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "panel.yaml")
+	body := `version: 1
+database:
+  driver: sqlite
+  path: ` + filepath.Join(dir, "panel.db") + `
+telemetry:
+  driver: postgres
+  dsn_file: ` + dsnPath + `
+  schema: logs
+  max_open: 20
+  conn_max_lifetime: "30m"
+  required: true
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TelemetryDriver != "postgres" {
+		t.Fatalf("driver = %q", cfg.TelemetryDriver)
+	}
+	if cfg.TelemetryDSN != "postgres://panel:secret@db:5432/mikvace?sslmode=require" {
+		t.Fatalf("dsn = %q", cfg.TelemetryDSN)
+	}
+	if cfg.TelemetrySchema != "logs" || cfg.TelemetryMaxOpen != 20 || !cfg.TelemetryRequired {
+		t.Fatalf("telemetry = %+v", cfg)
+	}
+	if cfg.TelemetryConnMaxLife.Minutes() != 30 {
+		t.Fatalf("lifetime = %v", cfg.TelemetryConnMaxLife)
+	}
+}
+
+func TestLoadConfigTelemetryValidation(t *testing.T) {
+	dir := t.TempDir()
+	cases := []string{
+		"telemetry:\n  driver: postgres\n",
+		"telemetry:\n  driver: mysql\n",
+		"telemetry:\n  driver: postgres\n  dsn_file: /nonexistent/telemetry.url\n",
+		"telemetry:\n  driver: sqlite\n  conn_max_lifetime: nonsense\n",
+	}
+	for _, extra := range cases {
+		path := filepath.Join(dir, "panel.yaml")
+		body := "version: 1\ndatabase:\n  driver: sqlite\n  path: " + filepath.Join(dir, "panel.db") + "\n" + extra
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadConfig(path); err == nil {
+			t.Fatalf("expected error for:\n%s", extra)
+		}
+	}
+}

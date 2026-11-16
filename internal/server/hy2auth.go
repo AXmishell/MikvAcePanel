@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/subtle"
 	"net"
 	"net/http"
@@ -63,7 +64,11 @@ func (s *Server) handleHy2Auth(w http.ResponseWriter, r *http.Request) {
 			Raw:   "panel auth rejected user " + userID + " from " + addr + ": " + reason,
 			Error: reason,
 		}
-		_, _ = s.store.InsertLogBatch(ctx, nodeID, "panel-"+store.RandomToken(8), []model.LogEntry{entry})
+		// Authentication must not wait on remote telemetry. The batch is small
+		// and the node will resend it if the write fails.
+		writeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		_, _ = s.logs.InsertLogBatch(writeCtx, nodeID, "panel-"+store.RandomToken(8), []model.LogEntry{entry})
+		cancel()
 	}
 	user, err := s.store.GetUserByUserID(ctx, userID)
 	if err != nil {

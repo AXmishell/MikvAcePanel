@@ -8,6 +8,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/axmishell/mikvacepanel/internal/configfile"
+	"github.com/axmishell/mikvacepanel/internal/dsn"
 	"github.com/axmishell/mikvacepanel/internal/version"
 )
 
@@ -22,14 +23,17 @@ type installStatus struct {
 	NeedsSetup bool `json:"needsSetup"`
 	// SetupMode is true until the first database has been selected. In this
 	// mode the process has no store and has not opened SQLite.
-	SetupMode      bool           `json:"setupMode"`
-	PanelName      string         `json:"panelName"`
-	PublicURL      string         `json:"publicUrl"`
-	Driver         string         `json:"database"`
-	DatabaseConfig databaseStatus `json:"databaseConfig"`
-	Version        string         `json:"version"`
-	ConfigPath     string         `json:"configPath"`
-	ConfigWritable bool           `json:"configWritable"`
+	SetupMode       bool            `json:"setupMode"`
+	PanelName       string          `json:"panelName"`
+	PublicURL       string          `json:"publicUrl"`
+	Driver          string          `json:"database"`
+	DatabaseConfig  databaseStatus  `json:"databaseConfig"`
+	TelemetryConfig telemetryStatus `json:"telemetryConfig"`
+	RedisConfig     redisStatus     `json:"redisConfig"`
+	DSNTemplates    dsn.TemplateSet `json:"dsnTemplates"`
+	Version         string          `json:"version"`
+	ConfigPath      string          `json:"configPath"`
+	ConfigWritable  bool            `json:"configWritable"`
 	// StartedAt changes after the process re-executes, which lets the wizard
 	// wait for a database switch instead of polling a still-running old store.
 	StartedAt time.Time `json:"startedAt"`
@@ -39,6 +43,45 @@ type installStatus struct {
 type databaseStatus struct {
 	Driver string `json:"driver"`
 	Path   string `json:"path,omitempty"`
+}
+
+// telemetryStatus describes the optional PostgreSQL log store without exposing
+// its DSN.
+type telemetryStatus struct {
+	Driver     string `json:"driver"`
+	Schema     string `json:"schema"`
+	Required   bool   `json:"required"`
+	Configured bool   `json:"configured"`
+}
+
+// redisStatus describes the optional Redis cache without exposing its URL.
+type redisStatus struct {
+	Enabled  bool   `json:"enabled"`
+	Prefix   string `json:"prefix"`
+	Required bool   `json:"required"`
+}
+
+func telemetryDriverName(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "postgres", "postgresql", "pg":
+		return "postgres"
+	default:
+		return "sqlite"
+	}
+}
+
+func telemetrySchemaName(name string) string {
+	if name = strings.TrimSpace(name); name == "" {
+		return "public"
+	}
+	return name
+}
+
+func redisPrefixName(name string) string {
+	if name = strings.TrimSpace(name); name == "" {
+		return "mikvace:"
+	}
+	return name
 }
 
 func (s *Server) installStatus(r *http.Request) installStatus {
@@ -51,6 +94,18 @@ func (s *Server) installStatus(r *http.Request) installStatus {
 			Driver: s.cfg.DBDriver,
 			Path:   s.cfg.DBPath,
 		},
+		TelemetryConfig: telemetryStatus{
+			Driver:     telemetryDriverName(s.cfg.TelemetryDriver),
+			Schema:     telemetrySchemaName(s.cfg.TelemetrySchema),
+			Required:   s.cfg.TelemetryRequired,
+			Configured: telemetryDriverName(s.cfg.TelemetryDriver) == "postgres" && s.cfg.TelemetryDSN != "",
+		},
+		RedisConfig: redisStatus{
+			Enabled:  s.cfg.RedisURL != "",
+			Prefix:   redisPrefixName(s.cfg.RedisPrefix),
+			Required: s.cfg.RedisRequired,
+		},
+		DSNTemplates:   dsn.All(),
 		Version:        version.String(),
 		ConfigPath:     s.cfg.ConfigPath,
 		ConfigWritable: configfile.Writable(s.cfg.ConfigPath),
@@ -201,12 +256,17 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sessions.Add(r.Context(), token, expires)
 	_ = s.store.TouchAdminLogin(r.Context(), admin.ID)
+	// The installer is the one place where the entrance must be disclosed so
+	// the operator can bookmark it. It is also written to the data volume.
+	entrance, _ := s.store.GetSetting(r.Context(), "admin_security_path")
+	s.setAdminGateCookie(w, r, entrance)
 	s.log.Warn("panel installed", "username", admin.Username, "remote", ip)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"token":     token,
-		"expiresAt": expires,
-		"admin":     map[string]any{"id": admin.ID, "username": admin.Username},
-		"version":   version.String(),
+		"token":      token,
+		"expiresAt":  expires,
+		"admin":      map[string]any{"id": admin.ID, "username": admin.Username},
+		"adminEntry": entrance,
+		"version":    version.String(),
 	})
 }
 

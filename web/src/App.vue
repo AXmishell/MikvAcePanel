@@ -8,17 +8,33 @@
       :class="'toast--' + t.type"
       @click="dismissToast(t.id)"
     >
-      <span class="toast-dot"></span>
-      <span>{{ t.message }}</span>
+      <div class="toast-dot"></div>
+      <div>{{ t.message }}</div>
     </div>
   </div>
+  <ConfirmDialog
+    :model-value="confirmDialog.open"
+    :title="confirmDialog.title"
+    :message="confirmDialog.message"
+    :eyebrow="confirmDialog.eyebrow"
+    :confirm-text="confirmDialog.confirmText"
+    :cancel-text="confirmDialog.cancelText"
+    :tone="confirmDialog.tone"
+    @update:model-value="onConfirmUpdate"
+    @confirm="resolveConfirm(true)"
+  />
 </template>
 
 <script setup>
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, setUnauthorizedHandler } from './api'
-import { auth, clearSession, setWarning, toasts, dismissToast } from './store'
+import { confirmDialog, resolveConfirm, auth, clearSession, setWarning, toasts, dismissToast } from './store'
+import ConfirmDialog from './components/ConfirmDialog.vue'
+
+function onConfirmUpdate(open) {
+  if (!open) resolveConfirm(false)
+}
 
 const router = useRouter()
 

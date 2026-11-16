@@ -319,7 +319,9 @@ func (s *Server) handleAgentLogs(ctx context.Context, nodeID int64, raw json.Raw
 		}
 		entries = append(entries, entry)
 	}
-	_, err := s.store.InsertLogBatch(ctx, nodeID, batch.BatchID, entries)
+	writeCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	_, err := s.logs.InsertLogBatch(writeCtx, nodeID, batch.BatchID, entries)
+	cancel()
 	if err != nil {
 		s.log.Warn("store logs", "nodeId", nodeID, "error", err)
 		return

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/axmishell/mikvacepanel/internal/logs"
 	"github.com/axmishell/mikvacepanel/internal/model"
+	"github.com/axmishell/mikvacepanel/internal/store"
 )
 
 const maxLogExportRows = 100000
@@ -53,7 +55,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			f.NodeIDs = nodeIDs
 		}
 	}
-	items, total, err := s.store.QueryLogs(r.Context(), f)
+	items, total, err := s.logs.QueryLogs(r.Context(), f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -125,7 +127,7 @@ func (s *Server) handleLogOptions(w http.ResponseWriter, r *http.Request) {
 		}
 		nodeOpts = append(nodeOpts, map[string]any{"id": n.ID, "name": n.Name, "flag": n.Flag, "status": n.Status})
 	}
-	total, _ := s.store.CountLogs(r.Context())
+	total, _ := s.logs.CountLogs(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"nodes":  nodeOpts,
 		"levels": []string{"DEBUG", "INFO", "WARN", "ERROR", "FATAL"},
@@ -158,12 +160,42 @@ func (s *Server) handleDeleteLogs(w http.ResponseWriter, r *http.Request) {
 	if before.IsZero() {
 		before = time.Now().UTC()
 	}
-	n, err := s.store.DeleteLogsBefore(r.Context(), before)
+	n, err := s.logs.DeleteLogsBefore(r.Context(), before)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
+	resp := map[string]any{"deleted": n}
+	if n > 0 && s.localLogs() {
+		// Clearing rows does not shrink the SQLite file: their pages stay on the
+		// freelist. Reclaim them right away so the reported database size drops
+		// without waiting for the hourly maintenance pass. PostgreSQL manages
+		// its own storage, so this only runs for the embedded backend.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Minute)
+		defer cancel()
+		resp["reclaimedPages"], resp["freeBytes"], resp["maintenanceError"] = s.reclaimAfterDelete(ctx)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// localLogs reports whether the telemetry backend shares the SQLite file with
+// the control database.
+func (s *Server) localLogs() bool {
+	return s.logs == store.LogStore(s.store)
+}
+
+// reclaimAfterDelete runs a maintenance pass and flattens the result for JSON
+// responses. A failed pass is reported, not fatal: the rows are already gone.
+func (s *Server) reclaimAfterDelete(ctx context.Context) (int64, int64, string) {
+	result, err := s.store.Maintain(ctx)
+	if err != nil {
+		stats, statErr := s.store.StorageStats(ctx)
+		if statErr != nil {
+			return 0, 0, err.Error()
+		}
+		return 0, stats.FreeBytes, err.Error()
+	}
+	return result.ReclaimedPages, result.FreeBytes, ""
 }
 
 // handleExportLogs streams the current log filter as a downloadable file.
@@ -200,7 +232,7 @@ func (s *Server) handleExportLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	total, err := s.store.CountLogsFiltered(r.Context(), f)
+	total, err := s.logs.CountLogsFiltered(r.Context(), f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -232,7 +264,7 @@ func (s *Server) handleExportLogs(w http.ResponseWriter, r *http.Request) {
 		enc = json.NewEncoder(bw)
 	}
 
-	_, err = s.store.StreamLogs(r.Context(), f, maxLogExportRows, func(e model.LogEntry) error {
+	_, err = s.logs.StreamLogs(r.Context(), f, maxLogExportRows, func(e model.LogEntry) error {
 		written++
 		ts := e.TS.Format(time.RFC3339Nano)
 		switch format {

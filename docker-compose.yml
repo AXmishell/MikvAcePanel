@@ -30,3 +30,25 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - ./data/redis:/data
+
+  # Optional external log database. Enable with:
+  #   docker compose --profile postgres up -d
+  # Create ./config/pg_password (mode 0600) and ./config/telemetry.pg.url
+  # before the first start; see docs/telemetry-postgres.md.
+  postgres:
+    image: postgres:16-alpine
+    container_name: mikvace-postgres
+    restart: unless-stopped
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_DB: mikvace
+      POSTGRES_USER: panel
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./config/pg_password:/run/secrets/pg_password:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U panel -d mikvace"]
+      interval: 10s
+      timeout: 3s
+      retries: 5

@@ -13,7 +13,7 @@ POST 解析 → hy2_logs 表（按 node_id + batch_id 幂等）
    │
    ├─ /api/logs          分页检索
    ├─ /api/logs/summary  聚合 + 规则 findings
-   └─ /api/dashboard     最近日志 + Top findings
+   └─ /api/dashboard     最近日志 + 全部 findings
 ```
 
 ## 解析规则
@@ -96,16 +96,20 @@ POST 解析 → hy2_logs 表（按 node_id + batch_id 幂等）
 
 - `log_retention_days` 默认 14 天；调度器每小时清理 `hy2_logs`、`log_batches`、`events`、`stats_batches`（`stats_batches` 至少保留 7 天，保证 Agent 重传幂等）；
 - `metric_retention_days` 默认 30 天，控制 `node_metrics` 心跳与流量采样；
-- 设置 → 日志分析 → 数据清理 可查看当前行数与数据库大小，并立即执行一次清理；勾选“压缩数据库”会执行 `VACUUM` 回收磁盘空间；
-- 管理 API `POST /api/maintenance/cleanup`（可传 `{"vacuum":true,"logRetentionDays":14,"metricRetentionDays":30}`）与 `GET /api/maintenance/usage` 提供同样的能力；
+- 设置 → 日志分析 → 数据清理 可查看当前行数、数据库大小与可回收空间，并立即执行一次清理；
+- `DELETE` 不会缩小数据库文件，空闲页需要回收（`VACUUM` 或 `PRAGMA incremental_vacuum`）。调度器每小时清理后会自动回收：空闲空间超过 64 MiB 或占文件 25% 以上时执行一次 `VACUUM` 并把数据库切换为增量自动回收模式，其余情况只做增量回收；`DELETE /api/logs` 清空日志后同样会自动回收；
+- 勾选“完整压缩数据库”会在清理后强制执行 `VACUUM`（重写整个文件，可能短暂阻塞写入）；
+- 管理 API `POST /api/maintenance/cleanup`（可传 `{"vacuum":true,"logRetentionDays":14,"metricRetentionDays":30}`）与 `GET /api/maintenance/usage` 提供同样的能力，后者返回 `liveBytes`/`freeBytes`/`freelistPages`/`autoVacuum`；
 - 管理 API `DELETE /api/logs?before=...` 可手动清空全部/部分代理日志；
 - 日志采集可在设置中关闭，关闭后 Agent 批次仍会被 ack 但不会落库。
 
-> 备份是完整的 SQLite 快照，日志和监控采样会一起进入 `tar.gz`。缩小备份体积最有效的方式是降低 `metric_retention_days`（采样数据通常占数据库的大部分），必要时再执行一次带 `VACUUM` 的清理。
+> 配置 `telemetry.driver: postgres` 后，`hy2_logs` 与 `log_batches` 存放在 PostgreSQL 的按天分区表中。保留策略改为优先 `DROP` 完全过期的分区，再对边界分区执行 `DELETE`；SQLite 侧的 `VACUUM`/空闲页回收只针对控制库，不再影响日志存储。详见 [外部 PostgreSQL 日志库](telemetry-postgres.md)。
+
+> 备份是完整的 SQLite 快照，日志和监控采样会一起进入 `tar.gz`。日志外置后，面板备份只包含控制库；缩小备份体积最有效的方式是降低 `metric_retention_days`（采样数据通常占数据库的大部分），必要时再执行一次带 `VACUUM` 的清理。
 
 ## 性能考虑
 
 - 单批最多 1000 条（Agent 实际 100 条）；
 - `(node_id, ts)`、`(event, ts)`、`(client_ip, ts)`、`(user_id, ts)` 均有索引；
-- 时间线按 `substr(ts,1,16)` 分钟聚合，再在 Go 里合并为更粗粒度；
+- 时间线按分钟聚合，再在 Go 里合并为更粗粒度：SQLite 使用 `substr(ts,1,16)`，PostgreSQL 使用 `date_trunc('minute', ts AT TIME ZONE 'UTC')`；
 - 分页接口最多 500 行/页。

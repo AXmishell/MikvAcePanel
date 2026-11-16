@@ -62,6 +62,13 @@ package_one() {
   CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
     go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o "$stage/${bin}${ext}" "./cmd/${pkg}"
 
+  if [[ "$kind" == "server" ]]; then
+    log "build mikvace-telemetry-migrate ${goos}/${goarch}"
+    CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+      go build -trimpath -buildvcs=false -ldflags "-s -w" \
+      -o "$stage/mikvace-telemetry-migrate${ext}" ./cmd/telemetry-migrate
+  fi
+
   cp LICENSE "$stage/LICENSE"
   if [[ -n "$example" ]]; then
     cp "$example" "$stage/"

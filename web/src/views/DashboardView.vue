@@ -78,8 +78,10 @@
           <div v-for="f in findings" :key="f.id" class="finding" :class="f.severity">
             <div class="sev"></div>
             <div>
-              <div class="finding-title">{{ f.title }}<span v-if="f.nodeName" class="dim"> · {{ f.nodeName }}</span></div>
+              <div class="finding-title">{{ f.title }}</div>
+              <div v-if="f.nodeName" class="dim small">{{ f.nodeName }}</div>
               <div class="finding-desc">{{ f.description }}</div>
+              <div v-for="(line, i) in (f.details || [])" :key="i" class="finding-meta">{{ line }}</div>
               <div class="finding-meta">{{ f.countLabel ? f.countLabel + ' · ' : (f.count ? f.count + ' events · ' : '') }}{{ fmtRelative(f.lastSeen) }}</div>
             </div>
           </div>

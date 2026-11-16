@@ -15,6 +15,7 @@ import (
 
 	"github.com/axmishell/mikvacepanel/internal/server"
 	"github.com/axmishell/mikvacepanel/internal/store"
+	"github.com/axmishell/mikvacepanel/internal/store/pglogs"
 	"github.com/axmishell/mikvacepanel/internal/version"
 )
 
@@ -61,7 +62,34 @@ func main() {
 	defer st.Close()
 	logger.Info("database ready", "driver", st.Dialect().Name(), "config", cfg.ConfigPath)
 
-	app, err := server.New(cfg, st, logger)
+	var logStore store.LogStore = st
+	if cfg.TelemetryDriver == "postgres" {
+		openCtx, cancelOpen := context.WithTimeout(ctx, 20*time.Second)
+		pg, pgErr := pglogs.Open(openCtx, pglogs.Config{
+			DSN:             cfg.TelemetryDSN,
+			Schema:          cfg.TelemetrySchema,
+			MaxOpenConns:    cfg.TelemetryMaxOpen,
+			MaxIdleConns:    cfg.TelemetryMaxIdle,
+			ConnMaxLifetime: cfg.TelemetryConnMaxLife,
+			Directory:       st,
+		})
+		cancelOpen()
+		if pgErr != nil {
+			if cfg.TelemetryRequired {
+				logger.Error("open postgres telemetry", "error", pgErr)
+				os.Exit(1)
+			}
+			logger.Warn("postgres telemetry unavailable, falling back to SQLite logs", "error", pgErr)
+		} else {
+			logStore = pg
+			defer pg.Close()
+			logger.Info("telemetry ready", "driver", pg.Driver(), "schema", cfg.TelemetrySchema)
+		}
+	} else {
+		logger.Info("telemetry ready", "driver", st.Dialect().Name())
+	}
+
+	app, err := server.NewWithLogs(cfg, st, logStore, logger)
 	if err != nil {
 		logger.Error("initialize server", "error", err)
 		os.Exit(1)
@@ -125,11 +153,20 @@ func scheduler(ctx context.Context, app *server.Server, logger *slog.Logger) {
 		if metricDays < 1 {
 			metricDays = 30
 		}
-		if res, err := st.Prune(ctx, days, metricDays); err != nil {
+		if res, err := app.PruneData(ctx, days, metricDays); err != nil {
 			logger.Warn("prune", "error", err)
 		} else if res.Total() > 0 {
 			logger.Info("pruned telemetry", "logs", res.Logs, "logBatches", res.LogBatches,
 				"events", res.Events, "statsBatches", res.StatsBatches, "nodeMetrics", res.NodeMetrics)
+		}
+		// Reclaim the pages earlier deletes released. This must run even when
+		// this pass deleted nothing: the freelist may be left over from a bulk
+		// delete, and without a reclaim the file never shrinks.
+		if result, err := st.Maintain(ctx); err != nil {
+			logger.Warn("reclaim database space", "error", err)
+		} else if result.Vacuumed || result.ReclaimedPages > 0 {
+			logger.Info("reclaimed database space", "vacuumed", result.Vacuumed,
+				"pages", result.ReclaimedPages, "freeBytes", result.FreeBytes)
 		}
 	}
 	expire()

@@ -45,8 +45,33 @@ database:
   max_idle: 4
   conn_max_lifetime: "1h"
 
+telemetry:
+  # Where parsed proxy logs live. "sqlite" (default) keeps hy2_logs and
+  # log_batches in the control database above. "postgres" moves only those two
+  # tables to an external server; users, nodes, settings and traffic counters
+  # stay in SQLite. The /install wizard can fill this section and write the DSN
+  # to server.data_dir/telemetry.pg.url.
+  driver: "sqlite"          # sqlite | postgres
+  # Required for postgres. The DSN is read from a file so it never appears in
+  # panel.yaml, logs or backups, e.g.:
+  #   postgres://panel:secret@postgres:5432/mikvace?sslmode=disable
+  dsn_file: ""
+  # Dedicated schema; the panel creates it and its tables on first start.
+  # The runtime role needs CREATE on this schema (or pre-create the schema and
+  # grant USAGE, CREATE).
+  schema: "public"
+  max_open: 12
+  max_idle: 4
+  conn_max_lifetime: "1h"
+  # true: refuse to start when PostgreSQL is unreachable.
+  # false: fall back to the local SQLite log tables and report the failure in
+  # /api/health. Control-plane features always keep working.
+  required: false
+
 redis:
   # Optional. The URL is read from this file, e.g. /app/config/redis.url.
+  # The /install wizard can write server.data_dir/redis.url instead. When
+  # enabled, Redis also provides the shared L2 analysis cache.
   url_file: ""
   prefix: "mikvace:"
   required: false

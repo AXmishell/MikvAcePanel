@@ -92,7 +92,7 @@ cp panel.example.yaml config/panel.yaml
 docker compose up -d --build
 ```
 
-访问 `http://服务器IP:8080/install` 初始化面板。未配置 `admin.password_file` 时先打开 `/install`：第一步确认 SQLite 数据文件（`setup` 模式不会提前创建 SQLite 文件），第二步创建管理员；管理员控制台是 `/admin`。站点根路径 `/` 不提供公开首页，初始化完成后直接返回 404；尚未创建管理员时会跳转到 `/install`。登录后：
+访问 `http://服务器IP:8080/install` 初始化面板。未配置 `admin.password_file` 时先打开 `/install`：第一步确认 SQLite 数据文件（`setup` 模式不会提前创建 SQLite 文件），第二步创建管理员；管理员控制台只通过 `/admin/<入口>` 访问（入口见 `data_dir/admin-entry.txt`，直接访问 `/admin` 返回 404）。站点根路径 `/` 不提供公开首页，初始化完成后直接返回 404；尚未创建管理员时会跳转到 `/install`。登录后：
 
 1. 修改默认密码，建议同时启用两步验证；
 2. 在 **节点** 页面添加节点，复制生成的安装命令；

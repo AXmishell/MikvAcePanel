@@ -40,6 +40,10 @@
 | `database.path` | `<data_dir>/panel.db` | SQLite 数据文件路径 |
 | `database.max_open` / `max_idle` | 后端默认 | 连接池大小 |
 | `database.conn_max_lifetime` | `1h` | 连接最长复用时间 |
+| `telemetry.driver` | `sqlite` | `sqlite` / `postgres`；仅影响代理日志 |
+| `telemetry.dsn_file` | 空 | PostgreSQL DSN 文件，`postgres` 时必填 |
+| `telemetry.schema` | `public` | 日志表所在 schema |
+| `telemetry.required` | `false` | PostgreSQL 不可用时是否拒绝启动 |
 | `redis.url_file` | 空 | Redis URL 文件；为空则使用进程内存 |
 | `redis.prefix` | `mikvace:` | Redis key 前缀 |
 | `redis.required` | `false` | Redis 不可用时是否拒绝启动 |
@@ -176,7 +180,7 @@ services:
 
 ### 数据库
 
-面板只使用 SQLite（`modernc.org/sqlite`，纯 Go，无需 CGO）。`panel.example.yaml` 默认 `database.driver: setup`：首次启动只运行安装器，**不会创建 SQLite 文件**；打开 `/install` 确认数据文件路径后才打开数据库：
+控制面只使用 SQLite（`modernc.org/sqlite`，纯 Go，无需 CGO），代理日志可选外置到 PostgreSQL。`panel.example.yaml` 默认 `database.driver: setup`：首次启动只运行安装器，**不会创建 SQLite 文件**；打开 `/install` 确认数据文件路径后才打开数据库：
 
 - 保存路径后创建 `server.data_dir/panel.db`；
 - `panel.yaml` 写入 `database.driver: sqlite` 与 `database.path`；
@@ -197,8 +201,29 @@ database:
 
 - 面板启动时自动创建表、索引和 `schema_migrations`；
 - SQLite 使用 WAL 模式；`./data` 或 `server.data_dir` 必须持久化，并保留 `panel.db`、`panel.db-wal`、`panel.db-shm`；
-- 备份/恢复面板只操作 SQLite 文件；
+- 备份/恢复面板只操作 SQLite 文件；外置 PostgreSQL 日志需单独 `pg_dump`；
 - `database.driver` 只接受 `setup` 或 `sqlite`，其他值会让启动直接失败。
+
+#### 可选 PostgreSQL 日志库
+
+当日志量较大时，可只把 `hy2_logs` / `log_batches` 放到 PostgreSQL：
+
+```yaml
+telemetry:
+  driver: postgres
+  dsn_file: /app/config/telemetry.pg.url
+  schema: mikvace
+  required: false
+```
+
+```bash
+# ./config/telemetry.pg.url，权限 0600
+printf '%s' 'postgres://panel:CHANGE_ME@postgres:5432/mikvace?sslmode=disable' \
+  | sudo tee ./config/telemetry.pg.url >/dev/null
+sudo chmod 600 ./config/telemetry.pg.url
+```
+
+PostgreSQL 不可用时面板默认回退到本地 SQLite 日志表，认证、订阅和节点管理不受影响。完整说明（权限、分区、迁移、备份）见 [外部 PostgreSQL 日志库](telemetry-postgres.md)。
 
 ## HTTPS 反向代理
 
@@ -354,7 +379,8 @@ Redis 用于：
 
 - 多实例共享管理员会话；
 - 登录 / API Key 限流计数；
-- 订阅二维码缓存。
+- 订阅二维码缓存；
+- **高级缓存**：日志分析结果进入 Redis 二级缓存，多实例共享同一份分析结果，控制库压力显著下降。
 
 ```yaml
 redis:
@@ -362,6 +388,10 @@ redis:
   prefix: "mikvace:"
   required: false
 ```
+
+也可以直接在 `/install` 安装向导中勾选 Redis，填写 URL 与 Key 前缀；向导会把 URL 写入 `server.data_dir/redis.url`（权限 0600），`panel.yaml` 只保存文件路径。安装完成后，管理员可在 **设置 → 存储与缓存** 中查看状态、测试连接并修改 Redis / PostgreSQL 配置，保存后自动重启。
+
+手工配置：
 
 ```bash
 install -m 600 /dev/null /etc/mikvace/redis.url
@@ -374,7 +404,7 @@ Compose 内置 profile：
 docker compose --profile redis up -d
 ```
 
-未启用 Redis 时使用进程内内存；Redis 临时不可用时，已签发的 JWT 仍可继续使用，限流回退到内存。
+未启用 Redis 时使用进程内内存；Redis 临时不可用时，已签发的 JWT 仍可继续使用，限流回退到内存，分析缓存回退为本地计算。`/api/health` 的 `cache` 字段会显示当前后端（`redis` / `memory`）与命中率，设置页“数据清理”也能看到缓存状态。
 
 ## 升级
 
@@ -392,6 +422,7 @@ panel.db-wal
 panel.db-shm
 jwt.secret
 cert.key
+admin-entry.txt   # 管理员安全入口（0600，丢失时用于恢复 /admin/<入口>）
 backups/
 ```
 
@@ -413,6 +444,8 @@ docker pull ghcr.io/axmishell/mikvacepanel-node:latest
 - 备份包含完整数据库，日志与监控采样会显著影响体积；可在 **设置 → 日志分析 → 数据清理** 降低 `metric_retention_days` / `log_retention_days`，并执行一次带 `VACUUM` 的清理；
 - 上传恢复后需要 **重启面板** 才会替换数据库；
 - 原数据库会保留为 `panel.db.pre-restore-<时间>`。
+
+首次初始化时无需先创建空面板：`/install` 第一步可以直接上传同样的备份归档，面板会校验、暂存为 `<path>.restore`、写入 `panel.yaml` 并自动重启。备份中已有管理员时使用原账号登录；没有管理员时安装页继续要求创建管理员。CELERITY mongodump 备份也可以在安装器中直接导入。
 
 手动恢复 SQLite 前请停止面板，避免 WAL 写入：
 

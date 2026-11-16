@@ -18,7 +18,7 @@ func newTestAnalyzer(t *testing.T) (*Analyzer, *store.Store, context.Context) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	return New(st), st, context.Background()
+	return New(st, nil), st, context.Background()
 }
 
 func insertEvents(t *testing.T, st *store.Store, nodeID int64, event string, times ...time.Time) {

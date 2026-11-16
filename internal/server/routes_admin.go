@@ -78,6 +78,13 @@ func (s *Server) registerAdminRoutes(r chi.Router) {
 		pr.Get("/api/maintenance/usage", s.handleDataUsage)
 		pr.Post("/api/maintenance/cleanup", s.handleCleanupData)
 
+		// Optional infrastructure: PostgreSQL log storage and Redis cache.
+		// These endpoints are administrator-session only; API keys must not be
+		// able to point the panel at another database.
+		pr.With(s.requireAdminSession).Get("/api/infra", s.handleGetInfra)
+		pr.With(s.requireAdminSession).Post("/api/infra/test", s.handleTestInfra)
+		pr.With(s.requireAdminSession).Put("/api/infra", s.handleSaveInfra)
+
 		// Settings, backups and API keys.
 		pr.Get("/api/settings", s.handleGetSettings)
 		pr.Put("/api/settings", s.handleUpdateSettings)

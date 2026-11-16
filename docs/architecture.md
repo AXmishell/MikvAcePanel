@@ -8,7 +8,7 @@
                         │  Vue SPA (embedded in binary)      │
   Subscription ────────▶│  REST API + subscription renderer  │
                         │  WebSocket Hub                     │
-  Hy2 auth callback ───▶│  SQLite / optional Redis           │
+  Hy2 auth callback ───▶│  SQLite / optional PG logs / Redis │
                         └───────────────┬────────────────────┘
                                         │ WSS /api/node/ws
                         ┌───────────────▼────────────────────┐
@@ -33,7 +33,8 @@ transport/httpapi + transport/agentws   HTTP / WebSocket 适配
 internal/app/{users,nodes,...}          用例编排、校验、事务边界
         │  ports（仓储 / 通知 / 配置推送接口）
         ▼
-internal/store (SQLite)                 持久化实现
+internal/store (SQLite)                 控制面持久化实现
+internal/store/pglogs (PostgreSQL)      可选日志持久化实现
 internal/domain (model)                 实体、值对象、领域错误
 ```
 
@@ -106,8 +107,8 @@ Agent 断线重连时：
 | `certificates` / `node_certificates` | 证书、节点映射、指纹与有效期 |
 | `node_metrics` | 心跳指标 |
 | `events` | 节点上下线、配置、证书、备份等事件 |
-| `hy2_logs` | 解析后的代理日志 |
-| `log_batches` / `stats_batches` | 幂等批次 |
+| `hy2_logs` | 解析后的代理日志（可外置到 PostgreSQL） |
+| `log_batches` / `stats_batches` | 幂等批次（`log_batches` 随日志外置） |
 | `api_keys` | 细分权限、节点/分组资源范围、限流、用量、过期 |
 | `settings` | 面板设置、加密后的 DNS 凭据 |
 | `acme_accounts` | 持久化 ACME 账户密钥 |
@@ -115,7 +116,48 @@ Agent 断线重连时：
 
 SQLite 使用 WAL 模式；`VACUUM INTO` 生成一致性备份快照。
 
-存储层只使用 SQLite，业务 SQL 统一使用 `?` 占位符；`internal/store/dialect` 提供 SQLite DDL、内省和 DML 片段。`database.driver: setup` 会先启动不打开数据库的安装器。DDL 由 `internal/store/schema` 元数据生成，`schema_migrations` 记录版本。备份/恢复直接操作 SQLite 文件。
+控制面只使用 SQLite，业务 SQL 统一使用 `?` 占位符；`internal/store/dialect` 提供 SQLite DDL、内省和 DML 片段。`database.driver: setup` 会先启动不打开数据库的安装器。DDL 由 `internal/store/schema` 元数据生成，`schema_migrations` 记录版本。备份/恢复直接操作 SQLite 文件。
+
+### 可选 PostgreSQL 日志库
+
+日志是唯一可以外置的数据域：
+
+```text
+internal/store.LogStore
+  ├─ *store.Store            SQLite（默认）
+  └─ *pglogs.Store           PostgreSQL（telemetry.driver: postgres）
+```
+
+- 只有 `hy2_logs` 和 `log_batches` 会进入 PostgreSQL；用户、节点、设置、证书、审计事件、心跳采样和流量批次仍在 SQLite；
+- PostgreSQL 表按 UTC 天分区，清理时优先 `DROP` 过期分区；
+- 节点名称与用户存在性无法跨库 JOIN，由 `store.LogDirectory` 分两步解析；
+- 日志写入失败不会阻塞认证与订阅，Agent 会按 batch id 重发；`required: false` 时面板可回退到本地 SQLite 日志表；
+- 面板备份只包含 SQLite 控制库，PostgreSQL 日志用 `pg_dump` 独立备份。
+
+详见 [外部 PostgreSQL 日志库](telemetry-postgres.md)。
+
+### 缓存层
+
+`internal/cache` 提供两级缓存：
+
+```text
+分析请求 ──▶ 本地 LRU（5s） ──miss──▶ Redis（与配置 TTL 一致）
+                                │
+                                └─ 未配置 Redis：只使用本地 LRU
+```
+
+- 日志分析结果（仪表盘 60s、日志页 20s）是主要缓存对象；
+- 本地层保证单进程热点请求不访问 Redis，Redis 层让多个面板实例共享结果；
+- Redis 不可用时自动退化为本地计算，不影响功能；
+- `/api/health` 的 `cache` 字段和设置页“数据清理”显示后端、命中率、条目数与错误数。
+
+### DSN 模板
+
+`internal/dsn` 统一维护 PostgreSQL / Redis 连接模板与 PostgreSQL DSN 格式校验：
+
+- `/api/install/status` 与 `/api/infra` 在 `dsnTemplates` 中返回模板；
+- 安装向导和设置页用同一个 `DsnTemplate` 组件渲染，点击“填入”后只需替换大写占位符；
+- 保存前仍会调用真实连接测试，模板本身不会被自动保存。
 
 ## 安全边界
 

@@ -269,7 +269,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { Cable, Copy, Gauge, Pencil, Plus, Power, RefreshCw, Smartphone, Trash2, Users } from 'lucide-vue-next'
 import { api } from '../api'
-import { notify } from '../store'
+import { askConfirm, notify } from '../store'
 import CopyField from '../components/CopyField.vue'
 import Modal from '../components/Modal.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
@@ -460,7 +460,12 @@ async function copySub(u) {
   }
 }
 async function resetSub(u) {
-  if (!confirm(`Generate a new subscription link for ${u.userId}? The old link stops working.`)) return
+  const ok = await askConfirm(`Generate a new subscription link for ${u.userId}? The old link stops working.`, {
+    title: '生成新订阅链接',
+    confirmText: '生成',
+    tone: 'warn',
+  })
+  if (!ok) return
   try {
     const res = await api.resetSubscription(u.id)
     await copyText(res.subscriptionUrl)
@@ -489,7 +494,12 @@ async function confirmResetDevices() {
   }
 }
 async function resetTraffic(u) {
-  if (!confirm(`重置 ${u.userId} 的流量统计？此操作不可撤销。`)) return
+  const ok = await askConfirm(`重置 ${u.userId} 的流量统计？此操作不可撤销。`, {
+    title: '重置流量统计',
+    confirmText: '重置',
+    tone: 'danger',
+  })
+  if (!ok) return
   try {
     await api.resetTraffic(u.id)
     notify('流量统计已重置')

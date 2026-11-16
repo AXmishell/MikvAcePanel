@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"strings"
 	"testing"
 )
@@ -67,10 +68,10 @@ func TestSettingsNeverReturnEABHMAC(t *testing.T) {
 }
 
 func TestAdminSecurityEntrance(t *testing.T) {
-	env := newTestEnv(t)
+	env := newWebTestEnv(t)
 	ctx := context.Background()
 
-	doEntry := func(method, path, token, entry string, body any) *http.Response {
+	doEntry := func(client *http.Client, method, path, token, entry string, body any) *http.Response {
 		t.Helper()
 		var rdr io.Reader
 		if body != nil {
@@ -87,17 +88,26 @@ func TestAdminSecurityEntrance(t *testing.T) {
 		if entry != "" {
 			req.Header.Set("X-Admin-Entry", entry)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		if client == nil {
+			client = http.DefaultClient
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return resp
 	}
 
-	// Disabled by default.
+	// The entrance is mandatory from the first boot.
+	if env.entry == "" {
+		t.Fatal("boot did not generate an administrator entrance")
+	}
 	cfg := decode[map[string]any](t, env.do(t, "GET", "/api/admin/config", "", nil))
-	if cfg["securityEntryEnabled"] != false {
-		t.Fatalf("security entry should default to disabled: %+v", cfg)
+	if cfg["securityEntryEnabled"] != true {
+		t.Fatalf("security entry must be enabled: %+v", cfg)
+	}
+	if cfg["gateActive"] != false {
+		t.Fatalf("gate should be inactive before visiting the entrance: %+v", cfg)
 	}
 	probe := env.do(t, "GET", "/api/admin/config", "", nil)
 	if got := probe.Header.Get("Cache-Control"); !strings.Contains(got, "no-store") {
@@ -106,10 +116,10 @@ func TestAdminSecurityEntrance(t *testing.T) {
 	}
 	probe.Body.Close()
 
-	// Invalid paths are rejected before the entrance is enabled.
-	for _, bad := range []string{"abc", "has space", "with/slash", "admin"} {
+	// Invalid and empty paths are rejected; the entrance cannot be disabled.
+	for _, bad := range []string{"abc", "has space", "with/slash", "admin", ""} {
 		r := env.do(t, "PUT", "/api/settings", env.token, map[string]any{
-			"admin_security_enabled": true, "admin_security_path": bad,
+			"admin_security_path": bad,
 		})
 		if r.StatusCode != http.StatusBadRequest {
 			r.Body.Close()
@@ -117,51 +127,55 @@ func TestAdminSecurityEntrance(t *testing.T) {
 		}
 		r.Body.Close()
 	}
-	// Enabling without a path is rejected.
 	r := env.do(t, "PUT", "/api/settings", env.token, map[string]any{
-		"admin_security_enabled": true, "admin_security_path": "",
+		"admin_security_enabled": false,
 	})
 	if r.StatusCode != http.StatusBadRequest {
 		r.Body.Close()
-		t.Fatalf("missing path status = %d, want 400", r.StatusCode)
+		t.Fatalf("disabling the entrance = %d, want 400", r.StatusCode)
 	}
 	r.Body.Close()
 
-	if err := env.store.SetSetting(ctx, "admin_security_enabled", "true"); err != nil {
-		t.Fatal(err)
+	// Rotating the path applies immediately.
+	r = env.do(t, "PUT", "/api/settings", env.token, map[string]any{
+		"admin_security_path": "secret-entry",
+	})
+	if r.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		t.Fatalf("rotate entrance = %d: %s", r.StatusCode, b)
 	}
-	if err := env.store.SetSetting(ctx, "admin_security_path", "secret-entry"); err != nil {
-		t.Fatal(err)
+	if setCookie := r.Header.Get("Set-Cookie"); !strings.Contains(setCookie, adminEntryCookieName+"=") ||
+		!strings.Contains(setCookie, "HttpOnly") {
+		r.Body.Close()
+		t.Fatalf("rotate Set-Cookie = %q, want a rotated HttpOnly gate cookie", setCookie)
 	}
-	if cfg := decode[map[string]any](t, env.do(t, "GET", "/api/admin/config", "", nil)); cfg["securityEntryEnabled"] != true {
-		t.Fatalf("security entry should be enabled: %+v", cfg)
-	}
+	r.Body.Close()
+	env.entry = "secret-entry"
 
-	// The login endpoint is hidden without the entrance header.
-	r = doEntry("POST", "/api/login", "", "", map[string]any{"username": "admin", "password": "testpass123"})
+	// The login endpoint and every admin API are hidden without the entrance.
+	r = doEntry(nil, "POST", "/api/login", "", "", map[string]any{"username": "admin", "password": "testpass123"})
 	if r.StatusCode != http.StatusNotFound {
 		r.Body.Close()
 		t.Fatalf("login without entry = %d, want 404", r.StatusCode)
 	}
 	r.Body.Close()
 
-	// Anonymous admin API requests must also look like a missing path instead
-	// of revealing that the endpoint exists behind the entrance.
-	r = doEntry("GET", "/api/me", "", "", nil)
+	r = doEntry(nil, "GET", "/api/me", "", "", nil)
 	if r.StatusCode != http.StatusNotFound {
 		r.Body.Close()
 		t.Fatalf("anonymous /api/me without entry = %d, want 404", r.StatusCode)
 	}
 	r.Body.Close()
 
-	r = doEntry("POST", "/api/login", "", "wrong-entry", map[string]any{"username": "admin", "password": "testpass123"})
+	r = doEntry(nil, "POST", "/api/login", "", "wrong-entry", map[string]any{"username": "admin", "password": "testpass123"})
 	if r.StatusCode != http.StatusNotFound {
 		r.Body.Close()
 		t.Fatalf("login with wrong entry = %d, want 404", r.StatusCode)
 	}
 	r.Body.Close()
 
-	login := decode[map[string]any](t, doEntry("POST", "/api/login", "", "secret-entry", map[string]any{
+	login := decode[map[string]any](t, doEntry(nil, "POST", "/api/login", "", "secret-entry", map[string]any{
 		"username": "admin", "password": "testpass123",
 	}))
 	token, _ := login["token"].(string)
@@ -169,40 +183,91 @@ func TestAdminSecurityEntrance(t *testing.T) {
 		t.Fatalf("login with entry failed: %+v", login)
 	}
 
-	// Admin API calls carry the same entrance requirement for JWT sessions.
-	r = doEntry("GET", "/api/me", token, "", nil)
+	// Authenticated requests still need the entrance header or gate cookie.
+	r = doEntry(nil, "GET", "/api/me", token, "", nil)
 	if r.StatusCode != http.StatusNotFound {
 		r.Body.Close()
 		t.Fatalf("/api/me without entry = %d, want 404", r.StatusCode)
 	}
 	r.Body.Close()
-	r = doEntry("GET", "/api/me", token, "secret-entry", nil)
+	r = doEntry(nil, "GET", "/api/me", token, "secret-entry", nil)
 	if r.StatusCode != http.StatusOK {
 		r.Body.Close()
 		t.Fatalf("/api/me with entry = %d, want 200", r.StatusCode)
 	}
 	r.Body.Close()
 
-	// A misconfigured enabled entrance (empty path) must fail closed instead
-	// of silently restoring the public /admin console.
-	if err := env.store.SetSetting(ctx, "admin_security_path", ""); err != nil {
+	// Visiting the entrance issues the HttpOnly gate cookie. The cookie alone
+	// is enough for the SPA and API in the same browser.
+	jar, err := cookiejar.New(nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	r = doEntry("GET", "/api/me", token, "secret-entry", nil)
-	if r.StatusCode != http.StatusNotFound {
+	gated := &http.Client{Jar: jar}
+	first := doEntry(gated, "GET", "/admin/secret-entry", "", "", nil)
+	if first.StatusCode != http.StatusOK {
+		first.Body.Close()
+		t.Fatalf("entrance = %d, want 200", first.StatusCode)
+	}
+	first.Body.Close()
+	if setCookie := first.Header.Get("Set-Cookie"); !strings.Contains(setCookie, adminEntryCookieName+"=") || !strings.Contains(setCookie, "HttpOnly") {
+		t.Fatalf("entrance Set-Cookie = %q, want HttpOnly gate cookie", setCookie)
+	}
+	gateCookie := false
+	for _, c := range jar.Cookies(mustParseURL(env.srv.URL)) {
+		if c.Name == adminEntryCookieName && c.Value != "" {
+			gateCookie = true
+			break
+		}
+	}
+	if !gateCookie {
+		t.Fatal("entrance did not issue the admin gate cookie")
+	}
+	r = doEntry(gated, "GET", "/api/me", token, "", nil)
+	if r.StatusCode != http.StatusOK {
 		r.Body.Close()
-		t.Fatalf("/api/me with empty entrance path = %d, want 404", r.StatusCode)
+		t.Fatalf("/api/me with gate cookie = %d, want 200", r.StatusCode)
 	}
 	r.Body.Close()
+	r = doEntry(gated, "GET", "/admin", "", "", nil)
+	if r.StatusCode != http.StatusOK {
+		r.Body.Close()
+		t.Fatalf("/admin with gate cookie = %d, want 200", r.StatusCode)
+	}
+	r.Body.Close()
+	if cfg := decode[map[string]any](t, doEntry(gated, "GET", "/api/admin/config", "", "", nil)); cfg["gateActive"] != true {
+		t.Fatalf("gateActive with cookie = %+v", cfg)
+	}
 
-	// Disabling restores the normal /admin login flow.
+	// Rotating the entrance invalidates the old gate cookie.
+	if err := env.store.SetSetting(ctx, "admin_security_path", "rotated-entry"); err != nil {
+		t.Fatal(err)
+	}
+	r = doEntry(gated, "GET", "/api/me", token, "", nil)
+	if r.StatusCode != http.StatusNotFound {
+		r.Body.Close()
+		t.Fatalf("/api/me with stale gate cookie = %d, want 404", r.StatusCode)
+	}
+	r.Body.Close()
 	if err := env.store.SetSetting(ctx, "admin_security_enabled", "false"); err != nil {
 		t.Fatal(err)
 	}
-	r = doEntry("POST", "/api/login", "", "", map[string]any{"username": "admin", "password": "testpass123"})
+	// The legacy disabled flag cannot reopen the console.
+	r = doEntry(nil, "GET", "/api/me", token, "rotated-entry", nil)
 	if r.StatusCode != http.StatusOK {
 		r.Body.Close()
-		t.Fatalf("login after disabling = %d, want 200", r.StatusCode)
+		t.Fatalf("/api/me after legacy disable = %d, want 200", r.StatusCode)
+	}
+	r.Body.Close()
+
+	// A misconfigured empty path fails closed.
+	if err := env.store.SetSetting(ctx, "admin_security_path", ""); err != nil {
+		t.Fatal(err)
+	}
+	r = doEntry(nil, "GET", "/api/me", token, "rotated-entry", nil)
+	if r.StatusCode != http.StatusNotFound {
+		r.Body.Close()
+		t.Fatalf("/api/me with empty entrance path = %d, want 404", r.StatusCode)
 	}
 	r.Body.Close()
 }

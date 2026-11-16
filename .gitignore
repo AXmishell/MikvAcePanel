@@ -1,6 +1,7 @@
 # build output
 bin/
 /server
+/telemetry-migrate
 /dist/
 *.exe
 *.test

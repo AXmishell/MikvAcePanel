@@ -36,9 +36,22 @@ type testEnv struct {
 	store *store.Store
 	app   *Server
 	token string
+	entry string
 }
 
 func newTestEnv(t *testing.T) *testEnv {
+	t.Helper()
+	return newTestEnvWithWeb(t, false)
+}
+
+// newWebTestEnv enables the embedded SPA so tests can exercise /admin routes
+// and the gate-cookie handshake end to end.
+func newWebTestEnv(t *testing.T) *testEnv {
+	t.Helper()
+	return newTestEnvWithWeb(t, true)
+}
+
+func newTestEnvWithWeb(t *testing.T, serveWeb bool) *testEnv {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "panel.db"))
@@ -49,7 +62,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	cfg := Config{
 		Addr: ":0", DataDir: dir, DBPath: filepath.Join(dir, "panel.db"),
 		PublicURL: "http://panel.test", AdminUsername: "admin", AdminPassword: "testpass123",
-		SessionTTL: time.Hour,
+		SessionTTL: time.Hour, ServeWeb: serveWeb,
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	app, err := New(cfg, st, logger)
@@ -58,7 +71,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	ts := httptest.NewServer(app.Handler())
 	t.Cleanup(ts.Close)
-	env := &testEnv{srv: ts, store: st, app: app}
+	_, entry := app.adminSecurityEntry(context.Background())
+	env := &testEnv{srv: ts, store: st, app: app, entry: entry}
 	env.token = env.login(t)
 	return env
 }
@@ -91,6 +105,37 @@ func (e *testEnv) do(t *testing.T, method, path, token string, body any) *http.R
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	// Every test request carries the mandatory entrance. Tests that exercise
+	// the entrance itself build their own requests instead of using do().
+	if e.entry != "" {
+		req.Header.Set("X-Admin-Entry", e.entry)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// requestWithEntrance is the explicit variant used by tests that exercise a
+// non-default entrance value (for example a rotated secret).
+func requestWithEntrance(t *testing.T, env *testEnv, method, path, token, entry string, body any) *http.Response {
+	t.Helper()
+	var rdr io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rdr = bytes.NewReader(b)
+	}
+	req, _ := http.NewRequest(method, env.srv.URL+path, rdr)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if entry != "" {
+		req.Header.Set("X-Admin-Entry", entry)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -478,6 +523,7 @@ func TestBackupCreateListAndRestoreUpload(t *testing.T) {
 	_ = mw.Close()
 	req, _ := http.NewRequest("POST", env.srv.URL+"/api/backups/restore", &buf)
 	req.Header.Set("Authorization", "Bearer "+env.token)
+	req.Header.Set("X-Admin-Entry", env.entry)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -777,6 +823,7 @@ func TestRestoreCelerityBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Authorization", "Bearer "+env.token)
+	req.Header.Set("X-Admin-Entry", env.entry)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

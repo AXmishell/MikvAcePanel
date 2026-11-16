@@ -14,6 +14,7 @@
       <button class="tab" :class="{ active: tab === 'general' }" @click="tab = 'general'">常规</button>
       <button class="tab" :class="{ active: tab === 'subscription' }" @click="tab = 'subscription'">订阅页面</button>
       <button class="tab" :class="{ active: tab === 'analysis' }" @click="tab = 'analysis'">日志分析</button>
+      <button class="tab" :class="{ active: tab === 'infra' }" @click="tab = 'infra'; loadInfra()">存储与缓存</button>
       <button class="tab" :class="{ active: tab === 'security' }" @click="tab = 'security'">安全</button>
       <button class="tab" :class="{ active: tab === 'certs' }" @click="tab = 'certs'; loadCertSettings()">证书签发</button>
       <button class="tab" :class="{ active: tab === 'backups' }" @click="tab = 'backups'">备份</button>
@@ -162,19 +163,156 @@
           <div class="divider"></div>
           <dl class="kv">
             <dt>数据库大小</dt><dd>{{ fmtBytes(usage?.databaseBytes || 0) }}<span v-if="usage?.walBytes" class="dim"> · WAL {{ fmtBytes(usage.walBytes) }}</span></dd>
+            <dt>可回收空间</dt><dd>
+              <span :class="{ dim: !usage?.freeBytes }">{{ fmtBytes(usage?.freeBytes || 0) }}</span>
+              <span v-if="usage?.autoVacuum" class="dim"> · 增量回收已启用</span>
+            </dd>
+            <dt>日志存储</dt><dd>
+              <span v-if="usage?.telemetryFallback">SQLite（回退，PostgreSQL 不可用）</span>
+              <span v-else>{{ usage?.telemetryDriver === 'postgres' ? 'PostgreSQL' : 'SQLite（控制库）' }}</span>
+              <span v-if="usage?.telemetryDriver === 'postgres' && usage?.telemetryDetail" class="dim"> · {{ usage.telemetryDetail }}</span>
+              <span v-if="usage?.telemetryDriver === 'postgres' && usage?.telemetryPartitions" class="dim"> · {{ usage.telemetryPartitions }} 个分区</span>
+            </dd>
+            <template v-if="usage?.telemetryDriver === 'postgres'">
+              <dt>日志库大小</dt><dd>{{ fmtBytes(usage?.telemetryBytes || 0) }}<span class="dim"> · 约 {{ fmtRows(usage?.telemetryRows) }} 行</span></dd>
+            </template>
+            <dt>缓存后端</dt><dd>
+              {{ usage?.cache?.backend === 'redis' ? 'Redis（跨实例共享）' : '进程内存' }}
+              <span class="dim"> · 命中率 {{ Math.round((usage?.cache?.hitRate || 0) * 100) }}%</span>
+              <span v-if="usage?.cache?.entries" class="dim"> · {{ usage.cache.entries }} 项</span>
+            </dd>
             <dt>代理日志</dt><dd>{{ fmtRows(usage?.logs) }} 行</dd>
             <dt>审计事件</dt><dd>{{ fmtRows(usage?.events) }} 行</dd>
             <dt>监控采样</dt><dd>{{ fmtRows(usage?.nodeMetrics) }} 行</dd>
             <dt>流量批次</dt><dd>{{ fmtRows(usage?.statsBatches) }} 行</dd>
           </dl>
+          <div v-if="usage && usage.telemetryOk === false" class="hint" style="margin-top: 10px; color: var(--danger, #d33)">
+            日志存储不可用：{{ usage.telemetryError || '连接失败' }}。控制面、认证与订阅不受影响；日志写入会由节点重试。
+          </div>
           <label class="checkbox" style="margin-top: 12px">
             <span class="switch"><input v-model="cleanupVacuum" type="checkbox" /><span></span></span>
-            清理后压缩数据库（VACUUM，可能短暂阻塞写入）
+            清理后完整压缩数据库（VACUUM，可能短暂阻塞写入）
           </label>
+          <span class="hint" style="margin-top: 8px">“按保留期清理”只删除超过保留天数的数据；如需清空全部代理日志，请到「日志分析 → 清空日志」操作。未勾选时仍会自动回收空闲页，只有空闲空间较多或数据库仍处于旧的紧凑模式时才会重写文件。</span>
         </div>
         <div class="modal-footer" style="border-radius: 0">
-          <button class="btn btn-danger" :disabled="cleanupBusy" @click="runCleanup">{{ cleanupBusy ? '清理中…' : '立即清理' }}</button>
+          <button class="btn btn-danger" :disabled="cleanupBusy" @click="runCleanup">{{ cleanupBusy ? '清理中…' : '按保留期清理' }}</button>
           <button class="btn btn-primary" :disabled="saving" @click="save(['log_retention_days', 'metric_retention_days'])">保存清理策略</button>
+        </div>
+      </section>
+
+      <section v-show="tab === 'infra'" class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">存储与缓存</div>
+            <div class="card-sub">主数据库始终是 SQLite；PostgreSQL 只存放代理日志，Redis 提供共享会话、限流与二级缓存。</div>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn btn-sm" :disabled="infraLoading" @click="loadInfra">{{ infraLoading ? '读取中…' : '刷新状态' }}</button>
+        </div>
+        <div class="card-body">
+          <div v-if="infraError" class="banner banner-danger">{{ infraError }}</div>
+          <div v-if="infraMessage" class="banner banner-info">{{ infraMessage }}</div>
+
+          <dl v-if="infra" class="kv">
+            <dt>控制库</dt>
+            <dd>SQLite <span class="dim mono">· {{ meta.dataDir || 'data' }}/panel.db</span></dd>
+            <dt>日志库</dt>
+            <dd>
+              {{ infra.telemetry.activeDriver === 'postgres' ? 'PostgreSQL' : 'SQLite' }}
+              <span
+                class="badge"
+                :class="infra.telemetry.fallback ? 'badge-danger' : (infra.telemetry.ok ? 'badge-ok' : 'badge-warn')"
+              >
+                {{ infra.telemetry.fallback ? '已回退 SQLite' : (infra.telemetry.ok ? '正常' : '异常') }}
+              </span>
+              <span v-if="infra.telemetry.error" class="dim"> · {{ infra.telemetry.error }}</span>
+            </dd>
+            <dt>Redis</dt>
+            <dd>
+              {{ infra.redis.enabled ? (infra.redis.ok ? '已连接' : '连接异常') : '未启用' }}
+              <span class="dim"> · 缓存 {{ infra.cache.backend === 'redis' ? 'Redis' : '进程内存' }}，命中率 {{ Math.round((infra.cache.hitRate || 0) * 100) }}%</span>
+              <span v-if="infra.redis.error" class="dim"> · {{ infra.redis.error }}</span>
+            </dd>
+          </dl>
+
+          <div class="divider"></div>
+
+          <div class="form-grid">
+            <div class="field full">
+              <label class="checkbox">
+                <span class="switch"><input v-model="infraForm.telemetry.enabled" type="checkbox" /><span></span></span>
+                <span>使用外部 PostgreSQL 存放代理日志</span>
+              </label>
+              <span class="hint">关闭时日志保留在 SQLite；用户、节点、订阅和流量统计始终在 SQLite。</span>
+            </div>
+            <template v-if="infraForm.telemetry.enabled">
+              <div class="field full">
+                <label>PostgreSQL DSN</label>
+                <input
+                  v-model="infraForm.telemetry.dsn"
+                  type="text"
+                  class="mono"
+                  autocomplete="off"
+                  spellcheck="false"
+                  :placeholder="infra?.telemetry?.configured ? '已配置 — 留空保持不变' : 'postgres://user:pass@host:5432/db?sslmode=disable'"
+                />
+                <span class="hint">保存到 data 目录下的 0600 密钥文件，不写入 panel.yaml。</span>
+                <DsnTemplate :templates="infra?.dsnTemplates?.postgres || []" @apply="(v) => (infraForm.telemetry.dsn = v)" />
+              </div>
+              <div class="field">
+                <label>Schema</label>
+                <input v-model="infraForm.telemetry.schema" type="text" class="mono" placeholder="public" />
+              </div>
+              <div class="field">
+                <label>连接失败时</label>
+                <label class="checkbox">
+                  <span class="switch"><input v-model="infraForm.telemetry.required" type="checkbox" /><span></span></span>
+                  <span>拒绝启动</span>
+                </label>
+                <span class="hint">关闭时回退到 SQLite 日志表。</span>
+              </div>
+            </template>
+
+            <div class="field full">
+              <label class="checkbox">
+                <span class="switch"><input v-model="infraForm.redis.enabled" type="checkbox" /><span></span></span>
+                <span>启用 Redis（共享会话与高级缓存）</span>
+              </label>
+              <span class="hint">关闭时使用进程内存；启用后日志分析结果可跨实例共享。启用或切换 Redis 后，已登录会话需要重新登录一次。</span>
+            </div>
+            <template v-if="infraForm.redis.enabled">
+              <div class="field full">
+                <label>Redis URL</label>
+                <input
+                  v-model="infraForm.redis.url"
+                  type="text"
+                  class="mono"
+                  autocomplete="off"
+                  spellcheck="false"
+                  :placeholder="infra?.redis?.configured ? '已配置 — 留空保持不变' : 'redis://:password@host:6379/0'"
+                />
+                <span class="hint">保存到 data 目录下的 0600 密钥文件，不写入 panel.yaml。</span>
+                <DsnTemplate :templates="infra?.dsnTemplates?.redis || []" @apply="(v) => (infraForm.redis.url = v)" />
+              </div>
+              <div class="field">
+                <label>Key 前缀</label>
+                <input v-model="infraForm.redis.prefix" type="text" class="mono" placeholder="mikvace:" />
+              </div>
+              <div class="field">
+                <label>连接失败时</label>
+                <label class="checkbox">
+                  <span class="switch"><input v-model="infraForm.redis.required" type="checkbox" /><span></span></span>
+                  <span>拒绝启动</span>
+                </label>
+                <span class="hint">关闭时自动回退内存会话与缓存。</span>
+              </div>
+            </template>
+          </div>
+        </div>
+        <div class="modal-footer" style="border-radius: 0">
+          <button class="btn" :disabled="infraBusy" @click="testInfra">{{ infraTesting ? '测试中…' : '测试连接' }}</button>
+          <button class="btn btn-primary" :disabled="infraBusy" @click="saveInfra">{{ infraSaving ? '保存中…' : '保存并重启' }}</button>
         </div>
       </section>
 
@@ -235,39 +373,30 @@
         <div class="card-header">
           <div>
             <div class="card-title">管理员安全入口</div>
-            <div class="card-sub">为 /admin 增加一个可选的秘密路径，默认关闭。开启后访问普通 /admin 地址只会得到 404。</div>
+            <div class="card-sub">安全入口强制开启。没有访问入口拿到门禁口令时，普通 /admin 地址一律返回 404。</div>
           </div>
           <div class="spacer"></div>
-          <span class="badge" :class="form.admin_security_enabled ? 'badge-ok' : 'badge-muted'">
-            {{ form.admin_security_enabled ? '已开启' : '已关闭' }}
-          </span>
+          <span class="badge badge-ok">强制开启</span>
         </div>
         <div class="card-body">
           <div class="form-grid">
-            <div class="field full">
-              <label class="checkbox">
-                <span class="switch"><input v-model="form.admin_security_enabled" type="checkbox" /></span>
-                启用管理员安全入口
-              </label>
-              <span class="hint">关闭时管理员入口为 <span class="mono">/admin</span>；开启后必须使用下方完整地址，登录接口也会校验入口。</span>
-            </div>
             <div class="field full">
               <label>入口路径</label>
               <div class="flex" style="gap: 8px; align-items: center">
                 <input v-model.trim="form.admin_security_path" type="text" class="mono" placeholder="例如 mikvace-8f3a2c" style="max-width: 320px" />
                 <button class="btn btn-sm" type="button" @click="generateSecurityPath">随机生成</button>
               </div>
-              <span class="hint">4–64 位，仅允许字母、数字、短横线和下划线。修改后旧的入口地址立即失效。</span>
+              <span class="hint">4–64 位，仅允许字母、数字、短横线和下划线。修改后旧入口和已有门禁口令立即失效。</span>
             </div>
             <div class="field full">
               <label>完整入口地址</label>
               <CopyField :value="adminEntryPreview" prefix="入口" />
-              <span class="hint">请妥善保存该地址。忘记时可在服务器上临时关闭安全入口（settings 表的 admin_security_enabled）。</span>
+              <span class="hint">访问该地址一次即可获得 HttpOnly 门禁口令，随后 /admin 在当前浏览器可用。忘记时可查看数据目录中的 admin-entry.txt（0600）。</span>
             </div>
           </div>
         </div>
         <div class="modal-footer" style="border-radius: 0">
-          <button class="btn btn-primary" :disabled="saving" @click="save(['admin_security_enabled', 'admin_security_path'])">保存安全入口设置</button>
+          <button class="btn btn-primary" :disabled="saving" @click="save(['admin_security_path'])">保存安全入口设置</button>
         </div>
       </section>
 
@@ -567,9 +696,10 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Download, Pencil, Plus, Power, RefreshCw, Trash2 } from 'lucide-vue-next'
-import { api, resetAdminConfig, setAdminEntry } from '../api'
-import { auth, notify, setSession } from '../store'
+import { API_BASE, api, resetAdminConfig, setAdminEntry } from '../api'
+import { askConfirm, auth, notify, setSession } from '../store'
 import CopyField from '../components/CopyField.vue'
+import DsnTemplate from '../components/DsnTemplate.vue'
 import Modal from '../components/Modal.vue'
 import Select from '../components/Select.vue'
 import { copyText, fmtBytes, fmtDate, fmtRelative } from '../format'
@@ -612,6 +742,17 @@ const usage = ref(null)
 const usageLoading = ref(false)
 const cleanupBusy = ref(false)
 const cleanupVacuum = ref(false)
+const infra = ref(null)
+const infraLoading = ref(false)
+const infraTesting = ref(false)
+const infraSaving = ref(false)
+const infraError = ref('')
+const infraMessage = ref('')
+const infraForm = reactive({
+  telemetry: { enabled: false, dsn: '', schema: 'public', required: false },
+  redis: { enabled: false, url: '', prefix: 'mikvace:', required: false },
+})
+const infraBusy = computed(() => infraLoading.value || infraTesting.value || infraSaving.value)
 const twoFA = reactive({ enabled: false, recoveryRemaining: 0, password: '', code: '', busy: false, setup: null, newCodes: null, error: '' })
 const certForm = reactive({
   ca: 'https://acme-v02.api.letsencrypt.org/directory', email: '', provider: 'manual',
@@ -655,7 +796,7 @@ const DNS_PROVIDER_OPTIONS = [
 // Settings are stored as strings, so checkbox-bound keys must be normalized
 // when loading and stringified when saving.
 const BOOL_KEYS = [
-  'log_ingest_enabled', 'admin_security_enabled',
+  'log_ingest_enabled',
 ]
 
 function applySettings(src) {
@@ -692,7 +833,12 @@ async function loadUsage() {
   }
 }
 async function runCleanup() {
-  if (!confirm('立即删除超过保留天数的日志和监控数据？此操作不可撤销。')) return
+  const ok = await askConfirm('立即删除超过保留天数的日志和监控数据？此操作不可撤销。', {
+    title: '按保留期清理',
+    confirmText: '开始清理',
+    tone: 'danger',
+  })
+  if (!ok) return
   cleanupBusy.value = true
   try {
     const res = await api.cleanupData({
@@ -701,10 +847,13 @@ async function runCleanup() {
       metricRetentionDays: Number(form.metric_retention_days) || 0,
     })
     const d = res.deleted || {}
-    let msg = `清理完成：日志 ${fmtRows(d.logs)}、事件 ${fmtRows(d.events)}、监控采样 ${fmtRows(d.nodeMetrics)}`
+    let msg = `清理完成：日志 ${fmtRows(d.logs)}、日志批次 ${fmtRows(d.logBatches)}、事件 ${fmtRows(d.events)}、流量批次 ${fmtRows(d.statsBatches)}、监控采样 ${fmtRows(d.nodeMetrics)}`
     if (res.vacuumed) msg += '，数据库已压缩'
+    else if (res.reclaimedPages > 0) msg += `，已回收 ${fmtBytes((res.reclaimedPages || 0) * (usage.value?.pageSize || 4096))}`
     else if (res.vacuumError) msg += `；压缩失败：${res.vacuumError}`
-    notify(msg)
+    if (res.freeBytes > 0) msg += `（仍有 ${fmtBytes(res.freeBytes)} 可回收空间）`
+    if (!d.logs) msg += '（没有超过保留期的代理日志；如需全部清空请到「日志分析」页）'
+    notify(msg, res.totalDeleted ? 'success' : 'info', 8000)
     await loadUsage()
   } catch (e) {
     notify(e.message, 'error')
@@ -738,7 +887,12 @@ async function downloadBackup(b) {
   }
 }
 async function deleteBackup(b) {
-  if (!confirm(`删除备份 ${b.name}?`)) return
+  const ok = await askConfirm(`删除备份 ${b.name}?`, {
+    title: '删除备份',
+    confirmText: '删除',
+    tone: 'danger',
+  })
+  if (!ok) return
   try {
     await api.deleteBackup(b.name)
     notify('备份删除成功')
@@ -751,7 +905,12 @@ async function restoreBackup(ev) {
   const file = ev.target.files?.[0]
   ev.target.value = ''
   if (!file) return
-  if (!confirm('用该备份替换面板数据库？支持 MikvAce 与 CELERITY 备份，必须重启面板后才会生效。')) return
+  const ok = await askConfirm('用该备份替换面板数据库？支持 MikvAce 与 CELERITY 备份，必须重启面板后才会生效。', {
+    title: '恢复面板数据库',
+    confirmText: '继续恢复',
+    tone: 'danger',
+  })
+  if (!ok) return
   try {
     const res = await api.restoreBackup(file)
     const warnings = Array.isArray(res.warnings) ? res.warnings : []
@@ -872,7 +1031,12 @@ async function saveKey() {
   }
 }
 async function rotateKey(k) {
-  if (!confirm(`轮换 API 密钥 "${k.name}" 的令牌？旧令牌会立即失效。`)) return
+  const ok = await askConfirm(`轮换 API 密钥 "${k.name}" 的令牌？旧令牌会立即失效。`, {
+    title: '轮换 API 令牌',
+    confirmText: '轮换',
+    tone: 'danger',
+  })
+  if (!ok) return
   try {
     const res = await api.rotateAPIKey(k.id)
     newToken.value = res.token
@@ -894,7 +1058,12 @@ async function toggleKey(k) {
   }
 }
 async function deleteKey(k) {
-  if (!confirm(`删除 API 密钥 "${k.name}"？使用它的自动化将停止工作。`)) return
+  const ok = await askConfirm(`删除 API 密钥 "${k.name}"？使用它的自动化将停止工作。`, {
+    title: '删除 API 密钥',
+    confirmText: '删除',
+    tone: 'danger',
+  })
+  if (!ok) return
   try {
     await api.deleteAPIKey(k.id)
     notify('API key deleted')
@@ -941,7 +1110,12 @@ async function enable2FA() {
   }
 }
 async function disable2FA() {
-  if (!confirm('关闭两步验证？之后仅使用密码即可登录。')) return
+  const ok = await askConfirm('关闭两步验证？之后仅使用密码即可登录。', {
+    title: '关闭两步验证',
+    confirmText: '关闭',
+    tone: 'danger',
+  })
+  if (!ok) return
   twoFA.error = ''
   twoFA.busy = true
   try {
@@ -1030,7 +1204,12 @@ async function saveCertSettings() {
   }
 }
 async function clearEabCredentials() {
-  if (!confirm('清除已保存的 EAB 凭据？LiteSSL 需要重新填写才能签发。')) return
+  const ok = await askConfirm('清除已保存的 EAB 凭据？LiteSSL 需要重新填写才能签发。', {
+    title: '清除 EAB 凭据',
+    confirmText: '清除',
+    tone: 'danger',
+  })
+  if (!ok) return
   certSaving.value = true
   try {
     await api.updateCertSettings({
@@ -1048,7 +1227,12 @@ async function clearEabCredentials() {
   }
 }
 async function clearCertCredentials() {
-  if (!confirm('清除已保存的 DNS 服务商凭据？')) return
+  const ok = await askConfirm('清除已保存的 DNS 服务商凭据？', {
+    title: '清除 DNS 凭据',
+    confirmText: '清除',
+    tone: 'danger',
+  })
+  if (!ok) return
   certSaving.value = true
   try {
     await api.updateCertSettings({ ca: certForm.ca, email: certForm.email, provider: certForm.provider, renewDays: Number(certForm.renewDays) || 30, dnsConfig: {} })
@@ -1060,6 +1244,131 @@ async function clearCertCredentials() {
     certSaving.value = false
   }
 }
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function applyInfraStatus(s) {
+  infra.value = s
+  infraForm.telemetry.enabled = s.telemetry?.driver === 'postgres'
+  infraForm.telemetry.dsn = ''
+  infraForm.telemetry.schema = s.telemetry?.schema || 'public'
+  infraForm.telemetry.required = !!s.telemetry?.required
+  infraForm.redis.enabled = !!s.redis?.enabled
+  infraForm.redis.url = ''
+  infraForm.redis.prefix = s.redis?.prefix || 'mikvace:'
+  infraForm.redis.required = !!s.redis?.required
+}
+
+async function loadInfra() {
+  infraLoading.value = true
+  infraError.value = ''
+  try {
+    applyInfraStatus(await api.infraStatus())
+  } catch (e) {
+    infraError.value = e.message
+  } finally {
+    infraLoading.value = false
+  }
+}
+
+function infraPayload() {
+  return {
+    telemetry: {
+      enabled: !!infraForm.telemetry.enabled,
+      dsn: infraForm.telemetry.dsn.trim(),
+      schema: infraForm.telemetry.schema.trim() || 'public',
+      required: !!infraForm.telemetry.required,
+    },
+    redis: {
+      enabled: !!infraForm.redis.enabled,
+      url: infraForm.redis.url.trim(),
+      prefix: infraForm.redis.prefix.trim() || 'mikvace:',
+      required: !!infraForm.redis.required,
+    },
+  }
+}
+
+function validateInfra() {
+  infraError.value = ''
+  infraMessage.value = ''
+  if (infraForm.telemetry.enabled && !infraForm.telemetry.dsn.trim() && !infra.value?.telemetry?.configured) {
+    infraError.value = '请填写 PostgreSQL DSN，或关闭外部日志库。'
+    return false
+  }
+  if (infraForm.redis.enabled && !infraForm.redis.url.trim() && !infra.value?.redis?.configured) {
+    infraError.value = '请填写 Redis URL，或关闭 Redis。'
+    return false
+  }
+  return true
+}
+
+async function testInfra() {
+  if (!validateInfra()) return
+  infraTesting.value = true
+  try {
+    const res = await api.testInfra(infraPayload())
+    const parts = [`连接正常（${res.latencyMs ?? 0} ms）`]
+    if (res.telemetry?.enabled) parts.push('PostgreSQL 正常')
+    if (res.redis?.enabled) parts.push('Redis 正常')
+    infraMessage.value = parts.join(' · ')
+  } catch (e) {
+    infraError.value = e.message
+  } finally {
+    infraTesting.value = false
+  }
+}
+
+async function waitForPanelRestart() {
+  await sleep(1800)
+  const deadline = Date.now() + 60000
+  let healthy = 0
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(API_BASE + '/health', { cache: 'no-store' })
+      // Two consecutive healthy checks avoid returning while the old process
+      // is still flushing its final response before exec.
+      healthy = res.ok ? healthy + 1 : 0
+      if (healthy >= 2) return
+    } catch {
+      // The process is re-executing.
+      healthy = 0
+    }
+    await sleep(1000)
+  }
+  throw new Error('等待面板重启超时，请手动刷新页面')
+}
+
+async function saveInfra() {
+  if (!validateInfra()) return
+  const ok = await askConfirm('保存存储与缓存配置后需要重启面板才能生效。确定继续？', {
+    title: '保存并重启',
+    confirmText: '保存并重启',
+  })
+  if (!ok) return
+  infraSaving.value = true
+  infraError.value = ''
+  infraMessage.value = ''
+  try {
+    const res = await api.saveInfra(infraPayload())
+    if (!res.restartRequired) {
+      infraMessage.value = '配置已保存，无需重启'
+      notify('配置已保存')
+      await loadInfra()
+      return
+    }
+    infraMessage.value = '配置已保存，面板正在重启…'
+    await waitForPanelRestart()
+    await loadInfra()
+    infraMessage.value = '配置已生效'
+    notify('存储与缓存配置已生效')
+  } catch (e) {
+    infraError.value = e.message
+  } finally {
+    infraSaving.value = false
+  }
+}
+
 async function load() {
   try {
     const res = await api.settings()
@@ -1084,14 +1393,14 @@ function generateSecurityPath() {
   form.admin_security_path = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('')
 }
 async function save(keys) {
-  const securityChanged = keys.includes('admin_security_enabled') || keys.includes('admin_security_path')
+  const securityChanged = keys.includes('admin_security_path')
   const securityPath = String(form.admin_security_path || '').trim()
   if (securityChanged) {
-    if (form.admin_security_enabled && !/^[A-Za-z0-9_-]{4,64}$/.test(securityPath)) {
+    if (!/^[A-Za-z0-9_-]{4,64}$/.test(securityPath)) {
       notify('入口路径需要 4–64 位，仅允许字母、数字、短横线和下划线', 'error')
       return
     }
-    if (form.admin_security_enabled && ['admin', 'api', 'assets', 'panel', 'user', 'login', 'logout', 'dashboard', 'users', 'nodes', 'groups', 'logs', 'settings'].includes(securityPath.toLowerCase())) {
+    if (['admin', 'api', 'assets', 'panel', 'user', 'login', 'logout', 'dashboard', 'users', 'nodes', 'groups', 'logs', 'settings'].includes(securityPath.toLowerCase())) {
       notify('该入口路径是保留字，请换一个', 'error')
       return
     }
@@ -1113,11 +1422,10 @@ async function save(keys) {
     syncPreview()
     if (securityChanged) {
       const path = String(form.admin_security_path || '').trim()
-      const enabled = !!form.admin_security_enabled
-      setAdminEntry(enabled ? path : '')
+      setAdminEntry(path)
       resetAdminConfig()
       if (route.path.startsWith('/admin')) {
-        router.replace((enabled && path ? `/admin/${path}` : '/admin') + '/settings')
+        router.replace(`/admin/${path}/settings`)
       }
     }
     saved.value = '设置已保存。'

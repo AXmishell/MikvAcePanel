@@ -113,7 +113,7 @@
 - 不改变现有订阅路径、Agent WebSocket 协议、部署方式。
 - 不引入微服务、消息队列、Kubernetes 依赖。
 - 不在重构期同时增加大量新功能；新功能走独立 PR。
-- 暂不追求多数据库支持；SQLite 仍是唯一生产后端。
+- 控制面仍只使用 SQLite；代理日志可通过 `telemetry.driver: postgres` 选择性外置，见 `docs/telemetry-postgres.md`。
 
 ---
 

@@ -46,6 +46,17 @@ type Config struct {
 	RedisPrefix    string
 	RedisRequired  bool
 
+	// Telemetry selects where proxy logs are stored. The default "sqlite"
+	// keeps them in the control database; "postgres" moves hy2_logs and
+	// log_batches to an external server.
+	TelemetryDriver      string
+	TelemetryDSN         string
+	TelemetrySchema      string
+	TelemetryMaxOpen     int
+	TelemetryMaxIdle     int
+	TelemetryConnMaxLife time.Duration
+	TelemetryRequired    bool
+
 	// Restart re-executes the panel after /install saves a new database
 	// configuration. It is wired by cmd/server and is nil in tests.
 	Restart func()
@@ -90,6 +101,15 @@ type fileConfig struct {
 		Prefix   string `yaml:"prefix"`
 		Required bool   `yaml:"required"`
 	} `yaml:"redis"`
+	Telemetry struct {
+		Driver          string `yaml:"driver"`
+		DSNFile         string `yaml:"dsn_file"`
+		Schema          string `yaml:"schema"`
+		MaxOpen         int    `yaml:"max_open"`
+		MaxIdle         int    `yaml:"max_idle"`
+		ConnMaxLifetime string `yaml:"conn_max_lifetime"`
+		Required        bool   `yaml:"required"`
+	} `yaml:"telemetry"`
 }
 
 func defaultFileConfig() fileConfig {
@@ -104,6 +124,9 @@ func defaultFileConfig() fileConfig {
 	f.Database.Driver = "sqlite"
 	f.Database.ConnMaxLifetime = "1h"
 	f.Redis.Prefix = "mikvace:"
+	f.Telemetry.Driver = "sqlite"
+	f.Telemetry.Schema = "public"
+	f.Telemetry.ConnMaxLifetime = "1h"
 	return f
 }
 
@@ -195,6 +218,14 @@ func LoadConfig(path string) (Config, error) {
 		}
 		life = d
 	}
+	telemetryLife := time.Hour
+	if strings.TrimSpace(fc.Telemetry.ConnMaxLifetime) != "" {
+		d, err := time.ParseDuration(strings.TrimSpace(fc.Telemetry.ConnMaxLifetime))
+		if err != nil || d <= 0 {
+			return Config{}, fmt.Errorf("telemetry.conn_max_lifetime: invalid duration %q", fc.Telemetry.ConnMaxLifetime)
+		}
+		telemetryLife = d
+	}
 	cfg := Config{
 		ConfigPath:     path,
 		Addr:           strings.TrimSpace(fc.Server.Addr),
@@ -217,6 +248,13 @@ func LoadConfig(path string) (Config, error) {
 		SessionTTL:     ttl,
 		RedisPrefix:    strings.TrimSpace(fc.Redis.Prefix),
 		RedisRequired:  fc.Redis.Required,
+
+		TelemetryDriver:      strings.ToLower(strings.TrimSpace(fc.Telemetry.Driver)),
+		TelemetrySchema:      strings.TrimSpace(fc.Telemetry.Schema),
+		TelemetryMaxOpen:     fc.Telemetry.MaxOpen,
+		TelemetryMaxIdle:     fc.Telemetry.MaxIdle,
+		TelemetryConnMaxLife: telemetryLife,
+		TelemetryRequired:    fc.Telemetry.Required,
 	}
 	if cfg.Addr == "" {
 		cfg.Addr = ":8080"
@@ -268,6 +306,33 @@ func LoadConfig(path string) (Config, error) {
 			return Config{}, fmt.Errorf("redis.url_file: %w", err)
 		}
 		cfg.RedisURL = u
+	}
+	switch cfg.TelemetryDriver {
+	case "", "sqlite", "sqlite3":
+		cfg.TelemetryDriver = "sqlite"
+	case "postgres", "postgresql", "pg":
+		cfg.TelemetryDriver = "postgres"
+	default:
+		return Config{}, fmt.Errorf("telemetry.driver: unsupported driver %q (use sqlite or postgres)", fc.Telemetry.Driver)
+	}
+	if cfg.TelemetrySchema == "" {
+		cfg.TelemetrySchema = "public"
+	}
+	if cfg.TelemetryDriver == "postgres" {
+		if strings.TrimSpace(fc.Telemetry.DSNFile) == "" {
+			return Config{}, fmt.Errorf("telemetry.dsn_file: required when telemetry.driver is postgres")
+		}
+		dsn, err := configfile.Secret(fc.Telemetry.DSNFile)
+		if err != nil {
+			return Config{}, fmt.Errorf("telemetry.dsn_file: %w", err)
+		}
+		if strings.TrimSpace(dsn) == "" {
+			return Config{}, fmt.Errorf("telemetry.dsn_file %q is empty", fc.Telemetry.DSNFile)
+		}
+		cfg.TelemetryDSN = dsn
+	} else {
+		cfg.TelemetryDSN = ""
+		cfg.TelemetryRequired = false
 	}
 	return cfg, nil
 }

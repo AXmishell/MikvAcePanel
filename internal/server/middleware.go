@@ -79,7 +79,7 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK
 		}
-		logPath := r.URL.Path
+		logPath := redactAdminEntrancePath(r.URL.Path)
 		if strings.HasPrefix(logPath, "/api/files/") {
 			logPath = "/api/files/<redacted>"
 		}

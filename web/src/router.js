@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { auth } from './store'
-import { fetchAdminConfig, fetchInstallStatus, setAdminEntry } from './api'
+import { fetchAdminConfig, fetchInstallStatus, getAdminEntry, setAdminEntry } from './api'
 
 // The administrator console is the only panel surface. `/` intentionally
 // renders the 404 view and must not link to /admin.
@@ -102,9 +102,12 @@ router.beforeEach(async (to) => {
     }
 
     if (cfg.securityEntryEnabled) {
-      // Without the secret entrance segment, pretend the admin area does not
-      // exist instead of revealing the login page.
-      if (!entry) return notFound(to)
+      // The server only serves /admin when it carries the secret segment or
+      // the gate cookie issued by visiting that segment. Client-side
+      // navigation must apply the same rule instead of revealing the shell.
+      // The stored entry keeps split-origin API deployments working, where
+      // the HttpOnly gate cookie is scoped to the API host.
+      if (!entry && !cfg.gateActive && !getAdminEntry()) return notFound(to)
     } else if (entry && to.name) {
       // Drop stale entry segments when the entrance has been disabled.
       return {

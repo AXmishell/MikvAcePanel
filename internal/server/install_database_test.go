@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -131,4 +132,142 @@ func TestInstallDatabaseBlockedAfterInstall(t *testing.T) {
 		t.Fatalf("database change after install = %d: %s", resp.StatusCode, b)
 	}
 	resp.Body.Close()
+}
+
+func TestInstallDatabaseOptionalPostgresAndRedis(t *testing.T) {
+	env := newSetupEnv(t)
+
+	originalDBTest := testDatabaseConnection
+	originalPrepare := prepareDatabaseConnection
+	originalPG := testTelemetryConnection
+	originalRedis := testRedisConnection
+	var pgCalls, redisCalls int
+	testDatabaseConnection = func(store.Config) error { return nil }
+	prepareDatabaseConnection = func(store.Config) error { return nil }
+	testTelemetryConnection = func(_ context.Context, dsn, schema string) error {
+		pgCalls++
+		if !strings.HasPrefix(dsn, "postgres://") || schema != "logs" {
+			t.Fatalf("telemetry test dsn=%q schema=%q", dsn, schema)
+		}
+		return nil
+	}
+	testRedisConnection = func(_ context.Context, rawURL string) error {
+		redisCalls++
+		if rawURL != "redis://:secret@cache:6379/2" {
+			t.Fatalf("redis test url=%q", rawURL)
+		}
+		return nil
+	}
+	defer func() {
+		testDatabaseConnection = originalDBTest
+		prepareDatabaseConnection = originalPrepare
+		testTelemetryConnection = originalPG
+		testRedisConnection = originalRedis
+	}()
+
+	payload := map[string]any{
+		"driver": "sqlite",
+		"path":   filepath.Join(env.app.cfg.DataDir, "panel.db"),
+		"telemetry": map[string]any{
+			"enabled": true, "dsn": "postgres://panel:pw@db:5432/mikvace?sslmode=disable",
+			"schema": "logs", "required": true,
+		},
+		"redis": map[string]any{
+			"enabled": true, "url": "redis://:secret@cache:6379/2",
+			"prefix": "panel:", "required": false,
+		},
+	}
+	testResp := env.do(t, "POST", "/api/install/database/test", "", payload)
+	if testResp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(testResp.Body)
+		t.Fatalf("test optional backends = %d: %s", testResp.StatusCode, b)
+	}
+	testResp.Body.Close()
+	if pgCalls != 1 || redisCalls != 1 {
+		t.Fatalf("test calls pg=%d redis=%d", pgCalls, redisCalls)
+	}
+
+	saved := decode[map[string]any](t, env.do(t, "POST", "/api/install/database", "", payload))
+	if saved["ok"] != true || saved["restartRequired"] != true ||
+		saved["telemetry"] != "postgres" || saved["redis"] != true {
+		t.Fatalf("save = %+v", saved)
+	}
+	raw, err := os.ReadFile(env.app.cfg.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, want := range []string{
+		"driver: postgres", "schema: logs", "dsn_file:", "url_file:",
+		"prefix:", "panel:", "required: true",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("panel.yaml missing %q:\n%s", want, text)
+		}
+	}
+	pgSecret, err := os.ReadFile(filepath.Join(env.app.cfg.DataDir, "telemetry.pg.url"))
+	if err != nil || !strings.Contains(string(pgSecret), "postgres://panel:pw@db") {
+		t.Fatalf("telemetry secret = %q err=%v", pgSecret, err)
+	}
+	redisSecret, err := os.ReadFile(filepath.Join(env.app.cfg.DataDir, "redis.url"))
+	if err != nil || string(redisSecret) != "redis://:secret@cache:6379/2" {
+		t.Fatalf("redis secret = %q err=%v", redisSecret, err)
+	}
+	for _, name := range []string{"telemetry.pg.url", "redis.url"} {
+		info, err := os.Stat(filepath.Join(env.app.cfg.DataDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm()&0o077 != 0 {
+			t.Fatalf("%s mode = %v", name, info.Mode().Perm())
+		}
+	}
+	if strings.Contains(text, "postgres://panel:pw@db") || strings.Contains(text, "secret@cache") {
+		t.Fatal("panel.yaml must not contain DSN or Redis credentials")
+	}
+}
+
+func TestInstallDatabaseOptionalValidation(t *testing.T) {
+	env := newSetupEnv(t)
+	cases := []map[string]any{
+		{"driver": "sqlite", "telemetry": map[string]any{"enabled": true}},
+		{"driver": "sqlite", "redis": map[string]any{"enabled": true, "url": "http://not-a-redis"}},
+		{"driver": "sqlite", "telemetry": map[string]any{"enabled": true, "dsn": "x", "schema": "bad-schema"}},
+	}
+	for _, payload := range cases {
+		resp := env.do(t, "POST", "/api/install/database/test", "", payload)
+		if resp.StatusCode != http.StatusBadRequest {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			t.Fatalf("%+v = %d: %s", payload, resp.StatusCode, b)
+		}
+		resp.Body.Close()
+	}
+}
+
+func TestInstallStatusReportsOptionalBackends(t *testing.T) {
+	env := newSetupEnv(t)
+	env.app.cfg.TelemetryDriver = "postgres"
+	env.app.cfg.TelemetryDSN = "postgres://secret"
+	env.app.cfg.TelemetrySchema = "mikvace"
+	env.app.cfg.TelemetryRequired = true
+	env.app.cfg.RedisURL = "redis://secret"
+	env.app.cfg.RedisPrefix = "panel:"
+	env.app.cfg.RedisRequired = true
+	status := decode[map[string]any](t, env.do(t, "GET", "/api/install/status", "", nil))
+	telemetry, _ := status["telemetryConfig"].(map[string]any)
+	if telemetry["driver"] != "postgres" || telemetry["schema"] != "mikvace" ||
+		telemetry["configured"] != true || telemetry["required"] != true {
+		t.Fatalf("telemetryConfig = %+v", telemetry)
+	}
+	if _, leaked := telemetry["dsn"]; leaked {
+		t.Fatalf("status leaked DSN: %+v", telemetry)
+	}
+	redis, _ := status["redisConfig"].(map[string]any)
+	if redis["enabled"] != true || redis["prefix"] != "panel:" || redis["required"] != true {
+		t.Fatalf("redisConfig = %+v", redis)
+	}
+	if _, leaked := redis["url"]; leaked {
+		t.Fatalf("status leaked Redis URL: %+v", redis)
+	}
 }

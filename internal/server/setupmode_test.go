@@ -50,6 +50,14 @@ func TestSetupModeStartsWithoutCreatingDatabase(t *testing.T) {
 	}
 	resp.Body.Close()
 
+	for _, path := range []string{"/admin", "/admin/login"} {
+		resp = env.do(t, "GET", path, "", nil)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s in setup mode = %d, want 404", path, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+
 	// Admin creation must wait until a database has been selected.
 	resp = env.do(t, "POST", "/api/install", "", map[string]any{
 		"username": "ops", "password": "a-strong-password-123",

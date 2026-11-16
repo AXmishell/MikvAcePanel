@@ -88,6 +88,7 @@ nav:
   - 首页: index.md
   - 快速开始: getting-started.md
   - 部署指南: deployment.md
+  - 外部日志库: telemetry-postgres.md
   - 使用手册:
       - 面板功能: panel.md
       - 订阅与客户端: subscriptions.md

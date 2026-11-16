@@ -43,7 +43,7 @@ docker compose up -d --build
 docker compose logs -f panel
 ```
 
-打开 `http://服务器IP:8080/install` 初始化面板。首次启动且 `admin.password_file` 为空时，打开 `/install`：先确认 SQLite 数据文件，再创建第一个管理员；管理员控制台位于 `/admin`（旧地址 `/panel` 不再跳转，直接返回 404）。站点根路径 `/` 不提供公开首页，初始化完成后直接返回 404；尚未创建管理员时会跳转到 `/install`。
+打开 `http://服务器IP:8080/install` 初始化面板。首次启动且 `admin.password_file` 为空时，打开 `/install`：先确认 SQLite 数据文件，可同时启用外部 PostgreSQL 日志库和 Redis 高级缓存，再创建第一个管理员；管理员控制台只通过 `/admin/<入口>` 访问（直接访问 `/admin` 返回 404）；入口在首次启动时随机生成并写入 `data_dir/admin-entry.txt`，安装完成后向导会自动跳转到该地址（旧地址 `/panel` 不再跳转，直接返回 404）。站点根路径 `/` 不提供公开首页，初始化完成后直接返回 404；尚未创建管理员时会跳转到 `/install`。
 
 ### 使用 GHCR 预构建镜像
 
@@ -70,8 +70,8 @@ docker run -d --name mikvace-panel --restart unless-stopped \
 
 首次启动有两种初始化方式：
 
-- **`admin.password_file` 为空**：访问 `http://服务器IP:8080/install`。第一步确认 SQLite 数据文件路径，保存后才创建 `data/panel.db`；向导会先测试路径，再写入配置并自动重启面板。第二步设置管理员用户名、密码、面板名称和公共访问地址。提交后会自动登录，并把非敏感字段写回 `panel.yaml`。
-- **配置了 `admin.password_file`**：启动时读取密钥文件并自动创建 `admin.username` 对应的管理员，直接打开 `/admin` 登录即可。文件内容只保存密码，权限保持 0600。
+- **`admin.password_file` 为空**：访问 `http://服务器IP:8080/install`。第一步确认 SQLite 数据文件路径，保存后才创建 `data/panel.db`；同一页可以勾选外部 PostgreSQL 日志库和 Redis（均可测试连接），保存时 DSN / URL 写入 `data` 目录下的 0600 密钥文件，`panel.yaml` 只记录路径，然后自动重启面板。第二步设置管理员用户名、密码、面板名称和公共访问地址。提交后会自动登录并跳转到安全入口，把非敏感字段写回 `panel.yaml`；入口同时保存在 `data_dir/admin-entry.txt`（0600）。**如果已有备份，也可以在第一步直接上传本面板 `.tar.gz` 或 CELERITY mongodump 备份**：面板会校验、暂存数据库并重启，备份中已有管理员时直接使用原账号登录，没有管理员时继续创建管理员。
+- **配置了 `admin.password_file`**：启动时读取密钥文件并自动创建 `admin.username` 对应的管理员；从 `data_dir/admin-entry.txt` 读取安全入口，打开 `/admin/<入口>` 登录即可。文件内容只保存密码，权限保持 0600。
 
 !!! note "数据库配置的写入位置"
 

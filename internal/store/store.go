@@ -71,6 +71,15 @@ func OpenConfig(cfg Config) (*Store, error) {
 		return nil, fmt.Errorf("connect %s: %w", d.Name(), err)
 	}
 	s := &Store{DB: &DB{DB: raw}, Path: path, dialect: d}
+	// Fresh databases start in incremental auto-vacuum mode so pruned telemetry
+	// can be handed back to the filesystem later without a full rewrite.
+	initCtx, cancelInit := context.WithTimeout(context.Background(), 10*time.Second)
+	initErr := s.EnableIncrementalAutoVacuum(initCtx)
+	cancelInit()
+	if initErr != nil {
+		_ = raw.Close()
+		return nil, fmt.Errorf("configure auto-vacuum: %w", initErr)
+	}
 	if err := s.Migrate(context.Background()); err != nil {
 		_ = raw.Close()
 		return nil, err
@@ -307,5 +316,93 @@ func ValidateDatabase(path string) error {
 	if groups == 0 {
 		return fmt.Errorf("backup is missing table %q", "panel_groups")
 	}
+	return nil
+}
+
+// DatabaseContents summarizes an uploaded SQLite database. The first-run
+// installer uses it to show what a backup contains before the panel restarts.
+type DatabaseContents struct {
+	Admins            int
+	Users             int
+	Nodes             int
+	Groups            int
+	APIKeys           int
+	AdminSecurityPath string
+}
+
+// InspectDatabase counts the rows a backup will restore. It opens the file
+// read-only and tolerates tables added by newer versions.
+func InspectDatabase(path string) (DatabaseContents, error) {
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&immutable=1&_pragma=busy_timeout(2000)")
+	if err != nil {
+		return DatabaseContents{}, err
+	}
+	defer db.Close()
+	if err := db.Ping(); err != nil {
+		return DatabaseContents{}, err
+	}
+	tableExists := func(name string) bool {
+		var n int
+		err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&n)
+		return err == nil && n > 0
+	}
+	count := func(name string) (int, error) {
+		if !tableExists(name) {
+			return 0, nil
+		}
+		var n int
+		err := db.QueryRow(`SELECT COUNT(*) FROM "` + name + `"`).Scan(&n)
+		return n, err
+	}
+	var info DatabaseContents
+	groups := "panel_groups"
+	if !tableExists(groups) {
+		groups = "groups"
+	}
+	for _, item := range []struct {
+		table string
+		dst   *int
+	}{
+		{"admins", &info.Admins},
+		{"users", &info.Users},
+		{"nodes", &info.Nodes},
+		{groups, &info.Groups},
+		{"api_keys", &info.APIKeys},
+	} {
+		n, err := count(item.table)
+		if err != nil {
+			return DatabaseContents{}, err
+		}
+		*item.dst = n
+	}
+	if tableExists("settings") {
+		var entrance string
+		if err := db.QueryRow(`SELECT value FROM settings WHERE setting_key = 'admin_security_path'`).Scan(&entrance); err == nil {
+			info.AdminSecurityPath = strings.TrimSpace(entrance)
+		}
+	}
+	return info, nil
+}
+
+// SetDatabaseSetting writes one settings row in an existing database file. It
+// runs the normal migrations first so legacy backup schemas are upgraded before
+// the installer assigns a security entrance.
+func SetDatabaseSetting(path, key, value string) error {
+	st, err := Open(path)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := st.SetSetting(ctx, key, value); err != nil {
+		_ = st.Close()
+		return err
+	}
+	_, _ = st.DB.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`)
+	if err := st.Close(); err != nil {
+		return err
+	}
+	_ = os.Remove(path + "-wal")
+	_ = os.Remove(path + "-shm")
 	return nil
 }

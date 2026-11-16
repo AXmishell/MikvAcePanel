@@ -71,6 +71,11 @@ func (s *Server) CreateBackup(ctx context.Context) (*BackupInfo, error) {
 	meta := map[string]any{
 		"app": "MikvAce Panel", "version": version.String(),
 		"createdAt": nowT.Format(time.RFC3339), "databaseSize": stat.Size(),
+		// External telemetry is not part of this archive. Teams that keep logs
+		// in PostgreSQL back them up with pg_dump independently.
+		"telemetry": map[string]any{
+			"driver": s.logs.Driver(), "included": s.localLogs(),
+		},
 	}
 	if writeErr == nil {
 		var metaBytes []byte

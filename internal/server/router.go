@@ -39,6 +39,7 @@ func (s *Server) registerPublicRoutes(r chi.Router) {
 	r.With(noStore).Get("/api/install/status", s.handleInstallStatus)
 	r.With(noStore).Post("/api/install/database/test", s.handleInstallDatabaseTest)
 	r.With(noStore).Post("/api/install/database", s.handleInstallDatabase)
+	r.With(noStore).Post("/api/install/import", s.handleInstallImport)
 	r.With(noStore).Post("/api/install", s.handleInstall)
 	r.With(s.requireAdminEntry).Post("/api/login", s.handleLogin)
 	r.With(s.requireAdminEntry).Post("/api/login/2fa", s.handleLogin2FA)

@@ -34,10 +34,19 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -trimpath -buildvcs=false \
     -ldflags "-s -w -X github.com/axmishell/mikvacepanel/internal/version.Version=${VERSION} -X github.com/axmishell/mikvacepanel/internal/version.Commit=${COMMIT} -X github.com/axmishell/mikvacepanel/internal/version.BuildDate=${BUILD_DATE}" \
     -o /out/mikvace-server ./cmd/server
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 \
+    GOOS="${TARGETOS:-$(go env GOOS)}" \
+    GOARCH="${TARGETARCH:-$(go env GOARCH)}" \
+    go build -trimpath -buildvcs=false \
+    -ldflags "-s -w" \
+    -o /out/mikvace-telemetry-migrate ./cmd/telemetry-migrate
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata wget
 COPY --from=go-build /out/mikvace-server /usr/local/bin/mikvace-server
+COPY --from=go-build /out/mikvace-telemetry-migrate /usr/local/bin/mikvace-telemetry-migrate
 WORKDIR /app
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

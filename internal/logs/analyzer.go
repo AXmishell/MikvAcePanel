@@ -34,11 +34,20 @@ type Summary struct {
 
 // Analyzer performs rule based analysis over stored Hysteria logs.
 type Analyzer struct {
+	// Store is the SQLite control database (nodes, users, quotas).
 	Store *store.Store
+	// Logs is the telemetry backend. It is the same as Store when logs live in
+	// SQLite, and a PostgreSQL store otherwise.
+	Logs store.LogStore
 }
 
 // New creates an analyzer.
-func New(st *store.Store) *Analyzer { return &Analyzer{Store: st} }
+func New(st *store.Store, logStore store.LogStore) *Analyzer {
+	if logStore == nil {
+		logStore = st
+	}
+	return &Analyzer{Store: st, Logs: logStore}
+}
 
 // Thresholds are configurable alert limits.
 type Thresholds struct {
@@ -88,31 +97,31 @@ func (a *Analyzer) Analyze(ctx context.Context, opts model.LogStatsOptions, onli
 	if opts.From.IsZero() {
 		opts.From = opts.To.Add(-24 * time.Hour)
 	}
-	total, errs, warns, authOK, authFail, err := a.Store.LogCounts(ctx, opts)
+	total, errs, warns, authOK, authFail, err := a.Logs.LogCounts(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	levels, err := a.Store.LogLevelCounts(ctx, opts)
+	levels, err := a.Logs.LogLevelCounts(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	events, err := a.Store.LogEventCounts(ctx, opts)
+	events, err := a.Logs.LogEventCounts(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	timeline, err := a.Store.LogTimeline(ctx, opts)
+	timeline, err := a.Logs.LogTimeline(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	topIPs, err := a.Store.LogTopIPs(ctx, opts, 10)
+	topIPs, err := a.Logs.LogTopIPs(ctx, opts, 10)
 	if err != nil {
 		return nil, err
 	}
-	topUsers, err := a.Store.LogTopUsers(ctx, opts, 10)
+	topUsers, err := a.Logs.LogTopUsers(ctx, opts, 10)
 	if err != nil {
 		return nil, err
 	}
-	nodeStats, err := a.Store.LogNodeStats(ctx, opts)
+	nodeStats, err := a.Logs.LogNodeStats(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +220,7 @@ func (a *Analyzer) findings(ctx context.Context, opts model.LogStatsOptions, s *
 	}
 
 	// Brute-force / credential stuffing from a single address.
-	ips, err := a.Store.AuthFailuresByIP(ctx, opts, th.AuthFailPerIP)
+	ips, err := a.Logs.AuthFailuresByIP(ctx, opts, th.AuthFailPerIP)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +239,7 @@ func (a *Analyzer) findings(ctx context.Context, opts model.LogStatsOptions, s *
 	}
 
 	// Unknown user ids indicate credential stuffing or stale clients.
-	unknown, err := a.Store.UnknownAuthUsers(ctx, opts, 10)
+	unknown, err := a.Logs.UnknownAuthUsers(ctx, opts, 10)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +261,7 @@ func (a *Analyzer) findings(ctx context.Context, opts model.LogStatsOptions, s *
 	}
 
 	// Error bursts per node.
-	bursts, err := a.Store.NodeEventStats(ctx, "error", opts)
+	bursts, err := a.Logs.NodeEventStats(ctx, "error", opts)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +280,7 @@ func (a *Analyzer) findings(ctx context.Context, opts model.LogStatsOptions, s *
 	// Crash / restart loop. Only starts that were not preceded by a shutdown
 	// count: config pushes, manual restarts and certificate installs are
 	// intentional and must not look like a crash loop.
-	startMarks, err := a.Store.NodeEventMarks(ctx, "start", opts)
+	startMarks, err := a.Logs.NodeEventMarks(ctx, "start", opts)
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +289,7 @@ func (a *Analyzer) findings(ctx context.Context, opts model.LogStatsOptions, s *
 		// A shutdown just before the window still explains the first start.
 		shutdownOpts.From = shutdownOpts.From.Add(-restartShutdownGrace)
 	}
-	shutdownMarks, err := a.Store.NodeEventMarks(ctx, "shutdown", shutdownOpts)
+	shutdownMarks, err := a.Logs.NodeEventMarks(ctx, "shutdown", shutdownOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +363,7 @@ func (a *Analyzer) findings(ctx context.Context, opts model.LogStatsOptions, s *
 
 	// TLS / ACME problems.
 	for _, event := range []string{"tls", "acme"} {
-		counts, err := a.Store.NodeEventStats(ctx, event, opts)
+		counts, err := a.Logs.NodeEventStats(ctx, event, opts)
 		if err != nil {
 			return nil, err
 		}

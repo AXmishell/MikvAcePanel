@@ -202,8 +202,10 @@ var DefaultSettings = map[string]string{
 	"backup_enabled":               "true",
 	"backup_interval_hours":        "24",
 	"backup_keep":                  "7",
-	"admin_security_enabled":       "false",
-	"admin_security_path":          "",
+	// The administrator security entrance is mandatory. The enabled flag is
+	// kept for older backups and API clients; the server forces it to "true".
+	"admin_security_enabled": "true",
+	"admin_security_path":    "",
 }
 
 // EnsureDefaultSettings inserts missing settings.
@@ -337,31 +339,14 @@ func (r PruneResult) Total() int64 {
 // receipts are kept for at least seven days so retransmitted Agent batches
 // stay idempotent.
 func (s *Store) Prune(ctx context.Context, logDays, metricDays int) (PruneResult, error) {
-	var res PruneResult
-	var err error
+	res, err := s.PruneControl(ctx, logDays, metricDays)
+	if err != nil {
+		return res, err
+	}
 	if logDays > 0 {
-		cutoff := ts(now().AddDate(0, 0, -logDays))
-		if res.Logs, err = s.deleteBefore(ctx, "hy2_logs", "ts", cutoff); err != nil {
-			return res, err
-		}
-		if res.LogBatches, err = s.deleteBefore(ctx, "log_batches", "received_at", cutoff); err != nil {
-			return res, err
-		}
-		if res.Events, err = s.deleteBefore(ctx, "events", "created_at", cutoff); err != nil {
-			return res, err
-		}
-		statsCutoff := ts(now().AddDate(0, 0, -maxInt(logDays, 7)))
-		if res.StatsBatches, err = s.deleteBefore(ctx, "stats_batches", "received_at", statsCutoff); err != nil {
-			return res, err
-		}
+		res.Logs, res.LogBatches, err = s.PruneLogs(ctx, now().AddDate(0, 0, -logDays))
 	}
-	if metricDays > 0 {
-		cutoff := ts(now().AddDate(0, 0, -metricDays))
-		if res.NodeMetrics, err = s.deleteBefore(ctx, "node_metrics", "ts", cutoff); err != nil {
-			return res, err
-		}
-	}
-	return res, nil
+	return res, err
 }
 
 // deleteBefore removes rows older than cutoff. Table and column names are
@@ -372,16 +357,6 @@ func (s *Store) deleteBefore(ctx context.Context, table, column, cutoff string) 
 		return 0, err
 	}
 	return res.RowsAffected()
-}
-
-// Compact checkpoints the WAL and rewrites the database file, reclaiming the
-// space left behind by pruned rows. It can briefly block other writers.
-func (s *Store) Compact(ctx context.Context) error {
-	if _, err := s.DB.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
-		return err
-	}
-	_, err := s.DB.ExecContext(ctx, `VACUUM`)
-	return err
 }
 
 // DBTime exposes the canonical timestamp format to other packages (tests).

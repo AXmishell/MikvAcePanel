@@ -50,7 +50,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		nodeItems = append(nodeItems, item)
 	}
-	recent, _ := s.store.RecentLogs(ctx, 0, 8)
+	recent, _ := s.logs.RecentLogs(ctx, 0, 8)
 	events, _ := s.store.ListEvents(ctx, 0, 10)
 
 	settings, _ := s.store.GetSettings(ctx)
@@ -68,9 +68,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	findings := []model.Finding{}
 	if summary != nil {
 		findings = summary.Findings
-		if len(findings) > 5 {
-			findings = findings[:5]
-		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"stats": map[string]any{

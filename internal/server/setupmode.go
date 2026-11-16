@@ -48,6 +48,7 @@ func (s *Server) setupRoutes() http.Handler {
 	r.With(noStore).Get("/api/install/status", s.handleInstallStatus)
 	r.With(noStore).Post("/api/install/database/test", s.handleInstallDatabaseTest)
 	r.With(noStore).Post("/api/install/database", s.handleInstallDatabase)
+	r.With(noStore).Post("/api/install/import", s.handleInstallImport)
 	r.With(noStore).Post("/api/install", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusConflict, "select and save a database before creating an administrator")
 	})
@@ -59,7 +60,15 @@ func (s *Server) setupRoutes() http.Handler {
 		r.Get("/install", s.serveSPA)
 		r.Get("/assets/*", s.serveSPA)
 		r.Get("/favicon.ico", s.serveSPA)
-		r.NotFound(s.serveSPA)
+		// No administrator exists yet and no entrance has been generated, so
+		// every /admin path is indistinguishable from a missing route.
+		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+			if _, isAdmin := adminUIPathSegment(r.URL.Path); isAdmin {
+				writeError(w, http.StatusNotFound, "not found")
+				return
+			}
+			s.serveSPA(w, r)
+		})
 	} else {
 		r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "database setup required; open /install or POST /api/install/database")
@@ -88,7 +97,8 @@ func (s *Server) handleSetupAdminConfig(w http.ResponseWriter, _ *http.Request) 
 		name = "MikvAce Panel"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"securityEntryEnabled": false,
+		"securityEntryEnabled": true,
+		"gateActive":           false,
 		"panelName":            name,
 		"installed":            false,
 		"setupMode":            true,

@@ -59,19 +59,27 @@ Authorization: Bearer <token>
 
 ### 管理员安全入口
 
-安全入口默认关闭。开启后（**设置 → 安全**），`/api/login`、`/api/login/2fa` 以及所有管理员接口都需要额外的请求头：
+安全入口强制开启，无法关闭。首次启动会在数据目录生成随机入口并写入 `admin-entry.txt`（0600）；入口地址形如：
+
+```text
+/admin/<入口路径>
+```
+
+直接访问 `/admin`、`/admin/login` 或任何不包含入口路径的管理端地址都会返回 `404 {"error":"not found"}`。访问一次入口地址后，服务端会签发 HttpOnly 门禁 Cookie `mikvace_admin_gate`；同一浏览器随后可以直接使用 `/admin`。入口路径变更后，旧 Cookie 立即失效。
+
+API 客户端也可以不依赖 Cookie，直接在请求中携带：
 
 ```http
 X-Admin-Entry: <入口路径>
 ```
 
-缺少或校验失败返回 `404 {"error":"not found"}`。`GET /api/admin/config` 是公开探测接口，只返回是否启用、面板名称以及是否已完成初始化（不返回入口路径）：
+`/api/login`、`/api/login/2fa` 以及所有管理员接口缺少入口时返回 `404 {"error":"not found"}`。`GET /api/admin/config` 是公开探测接口，只返回入口是否强制开启、当前请求是否已持有门禁 Cookie、面板名称以及是否已完成初始化（不返回入口路径）：
 
 ```json
-{ "securityEntryEnabled": true, "panelName": "MikvAce Panel", "installed": true }
+{ "securityEntryEnabled": true, "gateActive": false, "panelName": "MikvAce Panel", "installed": true }
 ```
 
-API Key（`Authorization: Bearer ck_...`）不受安全入口限制。
+API Key（`Authorization: Bearer ck_...`）不受安全入口限制，但仍受权限范围、速率限制和过期时间约束。
 
 ---
 
@@ -79,10 +87,11 @@ API Key（`Authorization: Bearer ck_...`）不受安全入口限制。
 
 | Method | Path | 说明 |
 | --- | --- | --- |
-| GET | `/api/health` | 健康检查、版本、uptime、Agent Hub 状态、数据库类型 |
+| GET | `/api/health` | 健康检查、版本、uptime、Agent Hub 状态、控制库/日志库/缓存后端 |
 | GET | `/api/install/status` | 首次初始化状态（是否已安装、面板名称、SQLite 配置） |
 | POST | `/api/install/database/test` | 测试 SQLite 数据文件路径；仅在管理员表为空时可用 |
 | POST | `/api/install/database` | 保存 SQLite 数据文件路径；变化后需要重启面板 |
+| POST | `/api/install/import` | 从 MikvAce / CELERITY 备份恢复；仅在管理员表为空时可用 |
 | POST | `/api/install` | 创建第一个管理员；仅在管理员表为空时可用 |
 | GET | `/api/agent/version` | Agent 可用版本信息 |
 | GET | `/api/agent/install.sh` | 节点安装脚本（通过参数传 panel/token） |
@@ -107,6 +116,21 @@ API Key（`Authorization: Bearer ck_...`）不受安全入口限制。
     "driver": "sqlite",
     "path": "/app/data/panel.db"
   },
+  "telemetryConfig": {
+    "driver": "sqlite",
+    "schema": "public",
+    "required": false,
+    "configured": false
+  },
+  "redisConfig": {
+    "enabled": false,
+    "prefix": "mikvace:",
+    "required": false
+  },
+  "dsnTemplates": {
+    "postgres": [{ "id": "postgres-local", "label": "本地 / 内网", "value": "postgres://USER:PASSWORD@HOST:5432/DATABASE?sslmode=disable" }],
+    "redis": [{ "id": "redis-password", "label": "密码", "value": "redis://:PASSWORD@HOST:6379/0" }]
+  },
   "configPath": "/app/config/panel.yaml",
   "configWritable": true,
   "startedAt": "2026-10-24T09:00:00Z",
@@ -118,19 +142,33 @@ API Key（`Authorization: Bearer ck_...`）不受安全入口限制。
 
 `setupMode: true` 表示当前进程还没有保存数据库配置（`database.driver: setup` 或配置文件不存在），此时不会打开或创建 SQLite；保存路径后进程重启，`setupMode` 变为 `false`。
 
-`POST /api/install/database/test` 与 `POST /api/install/database` 接收相同请求体：
+`POST /api/install/database/test` 与 `POST /api/install/database` 接收相同请求体，主库固定为 SQLite，PostgreSQL 与 Redis 均为可选：
 
 ```json
 {
   "driver": "sqlite",
-  "path": "/app/data/panel.db"
+  "path": "/app/data/panel.db",
+  "telemetry": {
+    "enabled": true,
+    "dsn": "postgres://panel:pw@db:5432/mikvace?sslmode=disable",
+    "schema": "public",
+    "required": false
+  },
+  "redis": {
+    "enabled": true,
+    "url": "redis://:password@cache:6379/0",
+    "prefix": "mikvace:",
+    "required": false
+  }
 }
 ```
 
-- `driver` 只接受 `sqlite`（`sqlite3` 视为同义），留空也按 SQLite 处理；
-- `path` 留空默认为 `data_dir/panel.db`；
-- 测试接口只检查目录可写并连接 SQLite，不建表；保存接口会先执行一次幂等迁移，确认可用后再写入配置；
-- 返回 `{"ok":true,"driver":"sqlite","restartRequired":true}`。`restartRequired` 为 `true` 时进程会自行重启；
+- `driver` 只接受 `sqlite`（`sqlite3` 视为同义），留空也按 SQLite 处理；`telemetry` / `redis` 可省略；
+- `telemetry.enabled` 为 `true` 时 DSN 必填（重启后再次保存可留空以复用已保存的密钥）；`required` 决定 PostgreSQL 不可用时是否拒绝启动；
+- `redis.enabled` 为 `true` 时 URL 必填（同样支持留空复用）；`required` 决定 Redis 不可用时是否拒绝启动；
+- 测试接口验证所有已启用后端但不写配置；保存接口先执行 SQLite 幂等迁移，再测试可选后端。`required: false` 的后端测试失败只记录警告，仍会保存并允许启动时回退；
+- DSN / Redis URL 写入 `data_dir/telemetry.pg.url` 与 `data_dir/redis.url`（0600），`panel.yaml` 只保存 `*_file` 路径；
+- 返回 `{"ok":true,"driver":"sqlite","telemetry":"postgres","redis":true,"restartRequired":true}`。`restartRequired` 为 `true` 时进程会自行重启；
 - 已有管理员时两个接口都返回 `409`。
 
 `POST /api/install` 创建第一个管理员，请求体：
@@ -145,6 +183,38 @@ API Key（`Authorization: Bearer ck_...`）不受安全入口限制。
 ```
 
 成功返回与 `/api/login` 相同结构的 `token` / `expiresAt` / `admin` / `version`，前端会直接进入控制台。已有管理员时返回 `409 {"error":"panel is already installed"}`。用户名规则为 3–32 位字母、数字、点、下划线或短横线。
+
+### 从备份导入
+
+首次初始化时也可以直接恢复已有数据，而不是创建新的空面板。`POST /api/install/import` 使用 `multipart/form-data`：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `file` | 是 | `.tar.gz` 备份文件，最大 512 MB |
+| `path` | 否 | 目标 SQLite 路径；留空使用当前安装器配置的默认路径 |
+
+支持两种归档：
+
+- 本面板导出的 `mikvace-*.tar.gz`：读取其中的 `panel.db`，校验核心表后暂存，并同时恢复 `cert.key`（若存在）以解密证书私钥；
+- CELERITY-panel 的 mongodump（`celerity-backup-*.tar.gz`）：会转换为新的 SQLite 数据库，返回 `source: "celerity"` 以及 `summary` / `warnings`。转换出的数据库必须包含可用管理员账号。
+
+成功响应示例：
+
+```json
+{
+  "ok": true,
+  "restartRequired": true,
+  "source": "mikvace",
+  "path": "/app/data/panel.db",
+  "summary": { "users": 12, "groups": 3, "nodes": 4, "admins": 1, "apiKeys": 2 },
+  "warnings": [],
+  "hasAdmin": true,
+  "adminEntry": "Ab3xY9_q",
+  "message": "备份已导入：12 用户 / 4 节点 / 3 分组 / 1 管理员。重启后请使用备份中的管理员账号登录。"
+}
+```
+
+数据库暂存为 `<path>.restore`，`panel.yaml` 写入 `database.driver: sqlite` 与目标路径，随后自动重启；下次启动时替换数据库，原文件保留为 `.pre-restore-<时间>`。备份中没有管理员时 `hasAdmin` 为 `false`，重启后安装页会继续要求创建管理员；已有管理员时接口返回 `409`。导入过程与保存数据库配置、创建管理员共用同一把安装锁，并按 IP 限速。
 
 初始化完成后，`/install` 页面按 404 处理（前端路由直接渲染 NotFound），这是预期行为，不是故障。
 
@@ -418,10 +488,74 @@ Xray 扩展选项放在请求体的 `xray` 对象中：
 
 | Method | Path | 说明 |
 | --- | --- | --- |
-| GET | `/api/maintenance/usage` | 数据库大小、WAL 大小和各遥测表行数 |
+| GET | `/api/maintenance/usage` | 数据库大小、WAL 大小、空闲页（`freeBytes`/`freelistPages`/`liveBytes`/`autoVacuum`）和各遥测表行数 |
+| GET | `/api/infra` | 日志库、Redis 与缓存状态（仅管理员会话） |
+| POST | `/api/infra/test` | 测试 PostgreSQL / Redis 连接（仅管理员会话） |
+| PUT | `/api/infra` | 保存 PostgreSQL / Redis 配置并重启（仅管理员会话） |
 | POST | `/api/maintenance/cleanup` | 立即清理过期数据；请求体 `{"vacuum":true,"logRetentionDays":14,"metricRetentionDays":30}`，两个天数可省略以使用设置值 |
 
-清理会删除超过保留期的 `hy2_logs`、`log_batches`、`events`、`stats_batches` 与 `node_metrics`。`vacuum: true` 会在清理后执行 `VACUUM` 压缩数据库文件，可能短暂阻塞写入。
+清理会删除超过保留期的 `hy2_logs`、`log_batches`、`events`、`stats_batches` 与 `node_metrics`。配置 `telemetry.driver: postgres` 时，前两张表位于 PostgreSQL，`DELETE /api/logs` 与清理接口会改写外部日志库；PostgreSQL 使用分区删除与自动 vacuum，SQLite 的 `reclaimedPages`/`freeBytes` 只描述控制库。`DELETE` 只把数据页放回 freelist，文件要靠后续回收才会缩小：`vacuum: true` 在清理后立即执行 `VACUUM`（完整重写，可能短暂阻塞写入）；未勾选时执行增量回收（`PRAGMA incremental_vacuum`），若空闲空间超过 64 MiB 或占文件 25% 以上则自动改为 `VACUUM` 并切换到增量自动回收模式。响应中的 `reclaimedPages`、`freeBytes` 表示本次回收的页数与剩余空闲字节。
+
+`DELETE /api/logs?before=...` 删除日志后也会自动执行同样的回收，并在响应中返回 `reclaimedPages`/`freeBytes`（回收失败时为 `maintenanceError`，日志删除本身仍然成功）。
+
+```json
+GET /api/maintenance/usage
+{
+  "databaseBytes": 121114624, "walBytes": 395552,
+  "liveBytes": 15728640, "freeBytes": 105385984,
+  "freelistPages": 25729, "pageSize": 4096, "autoVacuum": 0,
+  "logs": 0, "logBatches": 0, "events": 12, "statsBatches": 91209, "nodeMetrics": 0,
+  "logRetentionDays": 14, "metricRetentionDays": 30,
+  "telemetryDriver": "sqlite", "telemetryConfigured": "sqlite", "telemetryFallback": false,
+  "telemetryBytes": 0, "telemetryRows": 0, "telemetryPartitions": 0, "telemetryOk": true,
+  "cache": { "backend": "redis", "entries": 4, "hits": 18, "misses": 3,
+             "sets": 3, "deletes": 0, "errors": 0, "hitRate": 0.857 }
+}
+```
+
+### 存储与缓存
+
+仅管理员会话可调用；API Key 会收到 `403`。
+
+```json
+GET /api/infra
+{
+  "telemetry": {
+    "driver": "postgres", "activeDriver": "postgres", "schema": "mikvace",
+    "required": false, "configured": true, "ok": true, "fallback": false,
+    "stats": { "driver": "postgres", "bytes": 24576, "rows": 1200, "partitions": 3, "detail": "mikvace" }
+  },
+  "redis": { "enabled": true, "prefix": "mikvace:", "required": false, "configured": true, "ok": true },
+  "cache": { "backend": "redis", "entries": 4, "hits": 18, "misses": 3, "hitRate": 0.857 },
+  "dsnTemplates": {
+    "postgres": [{ "id": "postgres-local", "label": "本地 / 内网", "value": "postgres://USER:PASSWORD@HOST:5432/DATABASE?sslmode=disable" }],
+    "redis": [{ "id": "redis-password", "label": "密码", "value": "redis://:PASSWORD@HOST:6379/0" }]
+  }
+}
+```
+
+```json
+POST /api/infra/test
+PUT  /api/infra
+{
+  "telemetry": {
+    "enabled": true,
+    "dsn": "postgres://panel:***@db:5432/mikvace",
+    "schema": "mikvace",
+    "required": false
+  },
+  "redis": {
+    "enabled": true,
+    "url": "redis://:***@cache:6379/0",
+    "prefix": "mikvace:",
+    "required": false
+  }
+}
+```
+
+- 密钥留空表示复用当前已保存的 DSN / Redis URL；
+- `required: false` 的后端测试失败只告警，保存后启动时回退（日志回退 SQLite，缓存回退内存）；
+- 保存成功返回 `{"ok":true,"telemetry":"postgres","redis":true,"restartRequired":true}`，DSN / URL 写入 `server.data_dir` 下的 0600 文件。
 
 ### 仪表盘 / 设置
 

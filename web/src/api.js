@@ -53,6 +53,23 @@ export function testInstallDatabase(data) {
 export function saveInstallDatabase(data) {
   return send('/install/database', { method: 'POST', body: data }, '', null, false)
 }
+// Import a MikvAce or CELERITY backup during the first-run wizard. The archive
+// is staged on the server and applied after the automatic restart.
+export async function importInstallBackup(file, path) {
+  const fd = new FormData()
+  fd.append('file', file)
+  const target = String(path || '').trim()
+  if (target) fd.append('path', target)
+  const res = await fetch(BASE + '/install/import', { method: 'POST', body: fd })
+  const data = await res.json().catch(() => null)
+  if (!res.ok) {
+    const err = new Error((data && data.error) || `Import failed (${res.status})`)
+    err.status = res.status
+    err.data = data
+    throw err
+  }
+  return data
+}
 
 // Build an administrator URL that keeps the current security entrance.
 export function adminPath(subpath = '') {
@@ -135,6 +152,7 @@ export const api = {
   install: (data) => installPanel(data),
   installDatabaseTest: (data) => testInstallDatabase(data),
   installDatabase: (data) => saveInstallDatabase(data),
+  installImport: (file, path) => importInstallBackup(file, path),
   login: (username, password, captchaId, captchaAnswer) =>
     request('/login', { method: 'POST', body: { username, password, captchaId, captchaAnswer } }),
   loginCaptcha: () => request('/login/captcha'),
@@ -199,6 +217,10 @@ export const api = {
   clearLogs: (before) => request('/logs', { method: 'DELETE', query: { before } }),
   maintenanceUsage: () => request('/maintenance/usage'),
   cleanupData: (data) => request('/maintenance/cleanup', { method: 'POST', body: data }),
+
+  infraStatus: () => request('/infra'),
+  testInfra: (data) => request('/infra/test', { method: 'POST', body: data }),
+  saveInfra: (data) => request('/infra', { method: 'PUT', body: data }),
   async downloadLogs(query) {
     const params = new URLSearchParams()
     Object.entries(query || {}).forEach(([k, v]) => {

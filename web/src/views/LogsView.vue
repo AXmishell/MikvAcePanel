@@ -42,7 +42,7 @@
         <div class="card-header">
           <div class="card-title">发现</div>
           <div class="spacer"></div>
-          <span class="dim small">{{ summary?.findings?.length || 0 }} 个问题</span>
+          <div class="dim small">{{ summary?.findings?.length || 0 }} 个问题</div>
         </div>
         <div class="card-body" style="max-height: 286px; overflow-y: auto">
           <div v-if="!summary?.findings?.length" class="finding info">
@@ -52,9 +52,10 @@
           <div v-for="f in summary?.findings || []" :key="f.id" class="finding" :class="f.severity">
             <div class="sev"></div>
             <div>
-              <div class="finding-title">{{ f.title }}<span v-if="f.nodeName" class="dim"> · {{ f.nodeName }}</span></div>
+              <div class="finding-title">{{ f.title }}</div>
+              <div v-if="f.nodeName" class="dim small">{{ f.nodeName }}</div>
               <div class="finding-desc">{{ f.description }}</div>
-              <div v-if="f.details?.length" class="finding-meta">{{ f.details.join(' · ') }}</div>
+              <div v-for="(line, i) in (f.details || [])" :key="i" class="finding-meta">{{ line }}</div>
               <div class="finding-meta">{{ f.countLabel ? f.countLabel + ' · ' : (f.count ? f.count + ' 条观察 · ' : '') }}{{ fmtRelative(f.lastSeen) }}</div>
             </div>
           </div>
@@ -161,7 +162,7 @@ import {
   ChevronRight, Copy, Download, RefreshCw, ScrollText, ShieldAlert, Trash2, TriangleAlert, Wifi,
 } from 'lucide-vue-next'
 import { api } from '../api'
-import { notify } from '../store'
+import { askConfirm, notify } from '../store'
 import StatCard from '../components/StatCard.vue'
 import LineChart from '../components/LineChart.vue'
 import Pagination from '../components/Pagination.vue'
@@ -319,10 +320,19 @@ async function downloadLogs() {
   }
 }
 async function clearLogs() {
-  if (!confirm('删除所有已存储的代理日志？分析历史将丢失。')) return
+  const ok = await askConfirm('删除所有已存储的代理日志？分析历史将丢失。', {
+    title: '清空代理日志',
+    confirmText: '清空日志',
+    tone: 'danger',
+  })
+  if (!ok) return
   try {
     const res = await api.clearLogs(new Date().toISOString())
-    notify(`已删除 ${res.deleted} 条日志`)
+    let msg = `已删除 ${res.deleted} 条日志`
+    if (res.reclaimedPages > 0) msg += '，数据库空间已回收'
+    else if (res.freeBytes > 0) msg += `，仍有 ${fmtBytes(res.freeBytes)} 空闲页待下次自动回收`
+    if (res.maintenanceError) msg += `（空间回收失败：${res.maintenanceError}）`
+    notify(msg, res.maintenanceError ? 'warn' : 'success', 6000)
     refreshAll()
   } catch (e) {
     notify(e.message, 'error')

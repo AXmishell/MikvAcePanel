@@ -5,7 +5,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -62,16 +64,17 @@ func TestRootReturnsNotFound(t *testing.T) {
 		}
 	}
 
-	// The administrator console is the only SPA surface. The retired user
-	// portal paths are hidden like any other unknown route.
-	for _, path := range []string{"/admin/login", "/admin/dashboard"} {
+	// The administrator console is only reachable through the mandatory
+	// security entrance. The retired user portal paths are hidden like any
+	// other unknown route.
+	for _, path := range []string{"/admin", "/admin/login", "/admin/dashboard"} {
 		r, err := client.Get(ts.URL + path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		r.Body.Close()
-		if r.StatusCode != http.StatusOK {
-			t.Fatalf("%s status = %d", path, r.StatusCode)
+		if r.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s status = %d, want 404", path, r.StatusCode)
 		}
 	}
 
@@ -91,15 +94,14 @@ func TestRootReturnsNotFound(t *testing.T) {
 		}
 	}
 
-	// Enabling the security entrance hides /admin and requires the secret
-	// segment for both the SPA shell and the login API.
-	if err := st.SetSetting(context.Background(), "admin_security_enabled", "true"); err != nil {
-		t.Fatal(err)
-	}
+	// Rotating the entrance invalidates the generated one immediately.
 	if err := st.SetSetting(context.Background(), "admin_security_path", "secret-entry"); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/admin", "/admin/", "/Admin", "/ADMIN", "/admin/login", "/Admin/login", "/admin/wrong-entry/login"} {
+	for _, path := range []string{
+		"/admin", "/admin/", "/Admin", "/ADMIN", "//admin", "/admin;/", "/admin;foo",
+		"/admin/login", "/Admin/login", "/admin/wrong-entry/login",
+	} {
 		resp, err := client.Get(ts.URL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -119,6 +121,54 @@ func TestRootReturnsNotFound(t *testing.T) {
 			t.Fatalf("%s with valid entrance = %d, want 200", path, resp.StatusCode)
 		}
 	}
+
+	// Visiting the entrance mints the HttpOnly gate cookie. The plain /admin
+	// console then works in that browser without keeping the secret in the URL.
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gated := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	first, err := gated.Get(ts.URL + "/admin/secret-entry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Body.Close()
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("entrance status = %d, want 200", first.StatusCode)
+	}
+	if setCookie := first.Header.Get("Set-Cookie"); !strings.Contains(setCookie, adminEntryCookieName+"=") || !strings.Contains(setCookie, "HttpOnly") {
+		t.Fatalf("entrance Set-Cookie = %q, want HttpOnly gate cookie", setCookie)
+	}
+	foundGate := false
+	for _, c := range jar.Cookies(mustParseURL(ts.URL)) {
+		if c.Name == adminEntryCookieName && c.Value != "" {
+			foundGate = true
+		}
+	}
+	if !foundGate {
+		t.Fatal("entrance did not issue the admin gate cookie")
+	}
+	for _, path := range []string{"/admin", "/admin/login", "/admin/dashboard"} {
+		resp, err := gated.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s with gate cookie = %d, want 200", path, resp.StatusCode)
+		}
+	}
+}
+
+func mustParseURL(raw string) *url.URL {
+	u, err := url.Parse(raw)
+	if err != nil {
+		panic(err)
+	}
+	return u
 }
 
 func TestLegacyPanelPrefixReturnsNotFoundInAPIOnlyMode(t *testing.T) {
