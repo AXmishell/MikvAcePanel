@@ -107,8 +107,10 @@ docs/               API、节点、证书签发、2FA、日志分析文档
 ```bash
 mkdir -p config
 cp panel.example.yaml config/panel.yaml  # 修改 panel.public_url、server.data_dir 等
-docker compose up -d --build
+docker compose up -d
 ```
+
+> **注意**：compose 默认使用 1Panel 的外部网络 `1panel-network`。如果宿主机没有该网络（非 1Panel 部署），先执行一次 `docker network create 1panel-network`，或把 `docker-compose.yml` 中的 `external: true` 改为 `false` 让 Compose 自行创建。
 
 > **注意**：compose 使用 `./config:/app/config` 目录映射，配置放在 `./config/panel.yaml`。如果沿用旧版的单文件挂载 `./panel.yaml:/app/config/panel.yaml`，而宿主机上没有该文件，Docker / 1Panel 会把挂载点创建成目录，日志出现 `read /app/config/panel.yaml: is a directory`。新版面板会自动回退到 `/app/data/panel.yaml` 继续启动，详见[常见问题](docs/faq.md#启动日志反复出现-read-appconfigpanelyaml-is-a-directory)。
 
@@ -151,7 +153,7 @@ redis:
 
 ```bash
 # config/panel.yaml 中设置 redis.url_file，并把 redis.url 放到 ./config/ 下
-docker compose --profile redis up -d --build
+docker compose --profile redis up -d
 ```
 
 不启用 Redis 时保持 `redis.url_file` 为空即可。启用 Redis 后，新登录的管理员会话会写入 Redis，旧的无状态 JWT 在 Redis 中不存在时会失效，需要重新登录一次。

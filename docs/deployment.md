@@ -123,16 +123,28 @@ services:
     container_name: mikvace-panel
     restart: unless-stopped
     command: ["--config", "/app/config/panel.yaml"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
       - ./data:/app/data
       - ./config:/app/config
+    networks:
+      - 1panel-network
+
+networks:
+  1panel-network:
+    external: true
 ```
 
 - 只监听 `127.0.0.1:8080`，由反向代理对外提供 HTTPS；
 - 需要修改宿主机端口时，直接改 compose 的 `ports`，或用 `compose.override.yaml` 覆盖；不再使用 `.env` 插值；
 - 如果面板直接暴露，改为 `8080:8080` 并配置防火墙；
+- 仓库自带的 `docker-compose.yml` 使用 `8080:8080`，并加入 1Panel 的外部网络 `1panel-network`，方便反向代理或其他应用按容器名 `mikvace-panel` 访问。非 1Panel 环境请先 `docker network create 1panel-network`，或把该网络的 `external` 改为 `false`；不想加入外部网络时删掉 `networks` 段即可；
 - 数据使用当前目录映射（`./data`），不使用 Docker 命名卷。`./data` 必须持久化，否则重启后用户、节点、证书全部丢失。
 - 配置目录使用 `./config` 映射到容器 `/app/config`。`./config/panel.yaml` 需要可写，`/install` 会把面板名称、公共地址、管理员用户名和数据库配置写回；也可以预先配置 `admin.password_file` 进行无人值守初始化。
 - 容器内数据目录为 `/app/data`（镜像 `WORKDIR /app`）。升级旧部署时，请把 `config/panel.yaml` 中的 `server.data_dir` 和 `database.path` 从 `/data/...` 改为 `/app/data/...`，否则数据会写进容器内未挂载的 `/data`，重建容器后丢失。
@@ -411,7 +423,7 @@ docker compose --profile redis up -d
 ```bash
 # 先在面板 设置 → 备份 点击“立即备份”
 git pull
-docker compose up -d --build
+docker compose up -d
 ```
 
 数据库迁移是幂等的，启动时自动补齐表与列。升级前建议备份 `server.data_dir`，尤其是：

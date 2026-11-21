@@ -1,8 +1,5 @@
 services:
   panel:
-    build:
-      context: .
-      dockerfile: Dockerfile
     image: ghcr.io/axmishell/mikvacepanel:latest
     container_name: mikvace-panel
     restart: unless-stopped
@@ -21,6 +18,12 @@ services:
     volumes:
       - ./data:/app/data
       - ./config:/app/config
+    # Use the network managed by 1Panel so reverse proxies and other apps on
+    # the same network can reach the panel by container name (mikvace-panel).
+    # Without 1Panel create it once: docker network create 1panel-network
+    # or change external to false to let Compose manage it.
+    networks:
+      - 1panel-network
 
   redis:
     image: redis:7-alpine
@@ -30,6 +33,8 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - ./data/redis:/data
+    networks:
+      - 1panel-network
 
   # Optional external log database. Enable with:
   #   docker compose --profile postgres up -d
@@ -52,3 +57,9 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    networks:
+      - 1panel-network
+
+networks:
+  1panel-network:
+    external: true

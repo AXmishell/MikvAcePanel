@@ -89,8 +89,10 @@ cd MikvAcePanel
 mkdir -p config
 cp panel.example.yaml config/panel.yaml
 # 修改 panel.public_url；database.driver 默认 setup，/install 会先确认 SQLite 路径
-docker compose up -d --build
+docker compose up -d
 ```
+
+> compose 默认加入 1Panel 的外部网络 `1panel-network`。非 1Panel 环境请先 `docker network create 1panel-network`，或把 compose 中该网络的 `external` 改为 `false`。
 
 访问 `http://服务器IP:8080/install` 初始化面板。未配置 `admin.password_file` 时先打开 `/install`：第一步确认 SQLite 数据文件（`setup` 模式不会提前创建 SQLite 文件），第二步创建管理员；管理员控制台只通过 `/admin/<入口>` 访问（入口见 `data_dir/admin-entry.txt`，直接访问 `/admin` 返回 404）。站点根路径 `/` 不提供公开首页，初始化完成后直接返回 404；尚未创建管理员时会跳转到 `/install`。登录后：
 
