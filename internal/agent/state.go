@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 func (a *Agent) handleCommand(raw json.RawMessage) {
@@ -19,6 +20,34 @@ func (a *Agent) handleCommand(raw json.RawMessage) {
 	}
 	var errs []string
 	runtimes, cores := a.runtimesState()
+	if cmd.Action == "restart-node" {
+		// Stop cores cleanly before re-executing the agent. The new process
+		// reads the persisted configs and starts them again. Keeping the stop
+		// here avoids two agents fighting over the same listening ports.
+		for _, core := range cores {
+			rt := runtimes[core]
+			if rt == nil {
+				continue
+			}
+			if err := rt.Stop(); err != nil {
+				errs = append(errs, core+": "+err.Error())
+			}
+			a.enqueueLog(LogLine{
+				TS: time.Now().UTC(), Level: "INFO",
+				Message: "agent restart requested; stopped " + core,
+			})
+		}
+		output := "cores stopped; agent restart scheduled"
+		if len(errs) > 0 {
+			output += "; " + strings.Join(errs, "; ")
+		}
+		a.write("command.ack", map[string]any{
+			"id": cmd.ID, "action": cmd.Action, "ok": len(errs) == 0,
+			"output": output,
+		})
+		go a.restartAgent()
+		return
+	}
 	if len(runtimes) == 0 {
 		a.write("command.ack", map[string]any{"id": cmd.ID, "action": cmd.Action, "ok": false, "output": "no configuration applied yet"})
 		return
@@ -50,6 +79,33 @@ func (a *Agent) handleCommand(raw json.RawMessage) {
 		payload["output"] = "ok"
 	}
 	a.write("command.ack", payload)
+}
+
+// restartAgent re-executes the node agent after the command acknowledgement
+// and the shutdown log batch have been flushed. It intentionally keeps the
+// PID, so it works inside Docker, systemd and a manually started binary
+// without relying on a supervisor.
+func (a *Agent) restartAgent() {
+	// logBatcher flushes every two seconds; letting it run once more keeps the
+	// panel's restart-loop analysis from classifying this as a crash.
+	time.Sleep(2500 * time.Millisecond)
+	if err := restartProcess(); err != nil {
+		a.log.Error("restart node agent", "error", err)
+		a.enqueueLog(LogLine{
+			TS: time.Now().UTC(), Level: "ERROR",
+			Message: "agent self-restart failed: " + err.Error(),
+		})
+		// The cores were stopped before the restart attempt. Bring them back
+		// instead of leaving the node offline.
+		runtimes, cores := a.runtimesState()
+		for _, core := range cores {
+			if rt := runtimes[core]; rt != nil {
+				if startErr := rt.Start(); startErr != nil {
+					a.log.Error("restart core after failed agent restart", "core", core, "error", startErr)
+				}
+			}
+		}
+	}
 }
 
 func (a *Agent) loadLocalState() {

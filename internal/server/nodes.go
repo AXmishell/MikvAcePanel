@@ -49,6 +49,7 @@ type nodePayload struct {
 	MaxOnline        int                `json:"maxOnline"`
 	Ranking          float64            `json:"ranking"`
 	Active           *bool              `json:"active"`
+	AutoRestart      *bool              `json:"autoRestart"`
 	GroupIDs         []int64            `json:"groupIds"`
 	Groups           []int64            `json:"groups"`
 }
@@ -74,7 +75,8 @@ func (p *nodePayload) input() *nodes.Input {
 		Outbounds: p.Outbounds, Xray: p.Xray, Hy2: p.Hy2, ECHPEM: p.ECHPEM,
 		ClearECH: p.ClearECH, Cores: p.Cores, RuntimeMode: p.RuntimeMode,
 		MaxOnline: p.MaxOnline, Ranking: p.Ranking, Active: p.Active,
-		GroupIDs: p.GroupIDs, Groups: p.Groups,
+		AutoRestart: p.AutoRestart,
+		GroupIDs:    p.GroupIDs, Groups: p.Groups,
 	}
 }
 

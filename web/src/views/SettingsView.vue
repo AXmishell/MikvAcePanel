@@ -3,7 +3,7 @@
     <div class="toolbar">
       <div>
         <div class="page-title">设置</div>
-        <div class="dim small">面板信息、订阅页面、日志分析与安全设置。</div>
+        <div class="dim small">面板信息、订阅页面、日志分析、节点恢复与安全设置。</div>
       </div>
     </div>
 
@@ -14,6 +14,7 @@
       <button class="tab" :class="{ active: tab === 'general' }" @click="tab = 'general'">常规</button>
       <button class="tab" :class="{ active: tab === 'subscription' }" @click="tab = 'subscription'">订阅页面</button>
       <button class="tab" :class="{ active: tab === 'analysis' }" @click="tab = 'analysis'">日志分析</button>
+      <button class="tab" :class="{ active: tab === 'recovery' }" @click="tab = 'recovery'">节点恢复</button>
       <button class="tab" :class="{ active: tab === 'infra' }" @click="tab = 'infra'; loadInfra()">存储与缓存</button>
       <button class="tab" :class="{ active: tab === 'security' }" @click="tab = 'security'">安全</button>
       <button class="tab" :class="{ active: tab === 'certs' }" @click="tab = 'certs'; loadCertSettings()">证书签发</button>
@@ -135,6 +136,44 @@
         </div>
         <div class="modal-footer" style="border-radius: 0">
           <button class="btn btn-primary" :disabled="saving" @click="save(['log_ingest_enabled', 'device_grace_minutes', 'alert_auth_fail_threshold', 'alert_error_burst_threshold'])">保存分析设置</button>
+        </div>
+      </section>
+
+      <section v-show="tab === 'recovery'" class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">节点异常自动重启</div>
+            <div class="card-sub">核心异常停止时通过 Agent 下发重启；Agent 失联时使用节点保存的 SSH 凭据重启容器或服务。手动停止的核心不会被自动拉起。</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="field full">
+              <label class="checkbox">
+                <span class="switch"><input v-model="form.node_auto_restart_enabled" type="checkbox" /><span></span></span>
+                启用节点异常自动重启
+              </label>
+              <span class="hint">总开关。节点编辑页还可以单独关闭某个节点；离线恢复要求节点已配置 SSH 用户和密码/私钥。</span>
+            </div>
+            <div class="field">
+              <label>异常持续阈值（秒）</label>
+              <input v-model="form.node_auto_restart_grace_seconds" type="number" min="10" />
+              <span class="hint">核心或 Agent 异常持续超过该时间才执行恢复，避免网络抖动触发。</span>
+            </div>
+            <div class="field">
+              <label>重启冷却（秒）</label>
+              <input v-model="form.node_auto_restart_cooldown_seconds" type="number" min="30" />
+              <span class="hint">同一节点两次自动重启之间的最短间隔。</span>
+            </div>
+            <div class="field">
+              <label>每小时最多尝试次数</label>
+              <input v-model="form.node_auto_restart_max_attempts" type="number" min="1" max="20" />
+              <span class="hint">达到上限后停止重试，等待下一小时窗口或人工处理。</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer" style="border-radius: 0">
+          <button class="btn btn-primary" :disabled="saving" @click="save(['node_auto_restart_enabled', 'node_auto_restart_grace_seconds', 'node_auto_restart_cooldown_seconds', 'node_auto_restart_max_attempts'])">保存节点恢复设置</button>
         </div>
       </section>
 
@@ -797,6 +836,7 @@ const DNS_PROVIDER_OPTIONS = [
 // when loading and stringified when saving.
 const BOOL_KEYS = [
   'log_ingest_enabled',
+  'node_auto_restart_enabled',
 ]
 
 function applySettings(src) {

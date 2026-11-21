@@ -108,6 +108,7 @@ var permissionRules = []permissionRule{
 	{http.MethodPost, "/api/nodes/{id}/token", []string{"nodes:operate"}},
 	{http.MethodPost, "/api/nodes/{id}/sync", []string{"nodes:operate", "sync:write"}},
 	{http.MethodPost, "/api/nodes/{id}/command", []string{"nodes:operate"}},
+	{http.MethodPost, "/api/nodes/{id}/restart", []string{"nodes:operate"}},
 	{http.MethodPost, "/api/nodes/{id}/ssh/install", []string{"nodes:operate"}},
 	{http.MethodGet, "/api/nodes/{id}/config", []string{"nodes:secrets"}},
 	{http.MethodGet, "/api/nodes/{id}/install", []string{"nodes:secrets"}},

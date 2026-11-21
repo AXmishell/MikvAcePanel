@@ -96,6 +96,7 @@ func main() {
 	}
 	defer app.Close()
 	go app.Hub().Monitor(ctx)
+	go app.RunNodeWatchdog(ctx)
 	go scheduler(ctx, app, logger)
 	serveHTTP(ctx, cfg, app.Handler(), logger, stop)
 }

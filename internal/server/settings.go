@@ -25,6 +25,8 @@ var editableSettings = map[string]bool{
 	"analysis_window_hours": true, "alert_auth_fail_threshold": true,
 	"alert_error_burst_threshold": true,
 	"backup_enabled":              true, "backup_interval_hours": true, "backup_keep": true,
+	"node_auto_restart_enabled": true, "node_auto_restart_grace_seconds": true,
+	"node_auto_restart_cooldown_seconds": true, "node_auto_restart_max_attempts": true,
 	"admin_security_enabled": true, "admin_security_path": true,
 }
 
@@ -98,7 +100,8 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, key := range []string{"subscription_update_interval", "device_grace_minutes", "log_retention_days",
 		"metric_retention_days", "analysis_window_hours", "alert_auth_fail_threshold", "alert_error_burst_threshold",
-		"backup_interval_hours", "backup_keep"} {
+		"backup_interval_hours", "backup_keep", "node_auto_restart_grace_seconds",
+		"node_auto_restart_cooldown_seconds", "node_auto_restart_max_attempts"} {
 		if v, ok := values[key]; ok {
 			n, err := strconv.Atoi(v)
 			if err != nil || n < 0 || n > 100000 {
@@ -159,24 +162,34 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		s.log.Info("administrator security entrance rotated",
 			"file", filepath.Join(s.cfg.DataDir, adminEntryFileName))
 	}
+	autoRestartChanged := false
+	if v, ok := values["node_auto_restart_enabled"]; ok {
+		autoRestartChanged = parseBoolSetting(v, true) != parseBoolSetting(current["node_auto_restart_enabled"], true)
+	}
+	publicURLChanged := false
 	if v, ok := values["public_url"]; ok && v != oldURL {
+		publicURLChanged = true
+	}
+	if publicURLChanged || autoRestartChanged {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
-			s.syncAllNodes(ctx)
+			// Auto-restart lives in the config message. Force a push so
+			// connected agents apply the new policy immediately.
+			s.syncAllNodes(ctx, autoRestartChanged)
 		}()
 	}
 	settings, _ := s.store.GetSettings(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "settings": redactSettings(settings)})
 }
 
-func (s *Server) syncAllNodes(ctx context.Context) (total, pushed int) {
+func (s *Server) syncAllNodes(ctx context.Context, force bool) (total, pushed int) {
 	nodes, err := s.store.ListNodes(ctx)
 	if err != nil {
 		return 0, 0
 	}
 	for i := range nodes {
-		_, p := s.syncNodeConfig(ctx, &nodes[i], false)
+		_, p := s.syncNodeConfig(ctx, &nodes[i], force)
 		if p {
 			pushed++
 		}

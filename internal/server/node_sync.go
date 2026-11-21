@@ -24,6 +24,8 @@ func (s *Server) syncNodeConfig(ctx context.Context, n *model.Node, force bool) 
 	if pub == "" {
 		pub = s.cfg.PublicURL
 	}
+	autoRestartSetting, _ := s.store.GetSetting(ctx, "node_auto_restart_enabled")
+	autoRestart := n.AutoRestart && parseBoolSetting(autoRestartSetting, true)
 	configs, hash, err := s.renderNodeConfigs(ctx, n, pub)
 	if err != nil {
 		_ = s.store.SetNodeConfigError(ctx, n.ID, err.Error())
@@ -70,11 +72,11 @@ func (s *Server) syncNodeConfig(ctx context.Context, n *model.Node, force bool) 
 		// The node port and the listen address may differ on legacy rows.
 		listenPort := n.EffectiveListenPort()
 		if hasCapability(n.Capabilities, CapabilityMultiCore) {
-			pushed = s.hub.PushConfigBundle(n.ID, cfg.Revision, configs, cfg.Cores, n.TLSMode, n.Domain, host, agentPortRange, listenPort, files)
+			pushed = s.hub.PushConfigBundle(n.ID, cfg.Revision, configs, cfg.Cores, n.TLSMode, n.Domain, host, agentPortRange, listenPort, autoRestart, files)
 		} else {
 			// Older agents only understand a single core; keep them working
 			// with the node's primary core.
-			pushed = s.hub.PushConfig(n.ID, cfg.Revision, primary, configs[primary], n.TLSMode, n.Domain, host, agentPortRange, listenPort, files)
+			pushed = s.hub.PushConfig(n.ID, cfg.Revision, primary, configs[primary], n.TLSMode, n.Domain, host, agentPortRange, listenPort, autoRestart, files)
 		}
 	}
 	return cfg, pushed

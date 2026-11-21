@@ -389,7 +389,8 @@ HAPP/Incy 请求还会把 routing 指令前置到 URI 订阅正文。
 | DELETE | `/api/nodes/:id` | 删除并断开 Agent |
 | POST | `/api/nodes/:id/token` | 重置 Agent Token |
 | POST | `/api/nodes/:id/sync` | 生成/保存配置，在线则推送 |
-| POST | `/api/nodes/:id/command` | `{action:"start"|"stop"|"restart"|"sync"}` |
+| POST | `/api/nodes/:id/command` | `{action:"start"|"stop"|"restart"|"restart-node"|"sync"}` |
+| POST | `/api/nodes/:id/restart` | 重启整节点：在线时经 Agent 重启 Agent 与核心，离线时用已保存的 SSH 凭据重启容器/服务 |
 | GET | `/api/nodes/:id/config` | 最新配置：`configs`（每个核心一份）、`cores`、revision、hash、appliedAt |
 | GET | `/api/nodes/:id/install` | Token、Docker 命令、安装脚本、compose |
 | POST | `/api/nodes/:id/ssh/install` | 通过 SSH 执行节点安装脚本，返回输出 |
@@ -402,7 +403,7 @@ HAPP/Incy 请求还会把 routing 指令前置到 URI 订阅正文。
 | GET/PUT | `/api/cert/settings` | ACME CA、邮箱、EAB 凭据、DNS 服务商与凭据 |
 | POST | `/api/sync` | 同步所有节点 |
 
-节点请求字段见 [node-agent.md](node-agent.md)。其中 `runtimeMode` 可选 `process`（默认）或 `docker`，会影响 `/install` 返回的 `installCommand`、`installScript` 与 `compose`；Agent 实际回报的运行方式在只读字段 `runtime` 中。
+节点请求字段见 [node-agent.md](node-agent.md)。其中 `runtimeMode` 可选 `process`（默认）或 `docker`，会影响 `/install` 返回的 `installCommand`、`installScript` 与 `compose`；Agent 实际回报的运行方式在只读字段 `runtime` 中。`autoRestart`（默认 `true`）控制该节点是否参与面板的异常自动重启；全局开关与阈值在设置接口的 `node_auto_restart_*` 项中。
 
 只读版本字段 `agentVersion`、`hy2Version`、`xrayVersion`、`os`、`arch` 来自 Agent 的 `hello`；`heartbeat` 也会携带 `version/hy2Version/xrayVersion/runtime`，因此替换核心二进制后无需重连，面板会在下一次心跳刷新核心版本（Agent 自身版本仍需 Agent 进程重启后重新上报）。
 
@@ -623,7 +624,9 @@ X-RateLimit-Remaining: 58
 
 超限返回 `429` 和 `Retry-After: 60`。
 
-可写设置项：`panel_name`、`public_url`、`logo_url`、`page_title`、`page_note`、`support_url`、`web_page_url`、`subscription_title`、`subscription_update_interval`、`subscription_buttons`、`subscription_hy2_endpoints`、`device_grace_minutes`、`log_retention_days`、`metric_retention_days`、`log_ingest_enabled`、`analysis_window_hours`、`alert_auth_fail_threshold`、`alert_error_burst_threshold`。
+可写设置项：`panel_name`、`public_url`、`logo_url`、`page_title`、`page_note`、`support_url`、`web_page_url`、`subscription_title`、`subscription_update_interval`、`subscription_buttons`、`subscription_hy2_endpoints`、`device_grace_minutes`、`log_retention_days`、`metric_retention_days`、`log_ingest_enabled`、`analysis_window_hours`、`alert_auth_fail_threshold`、`alert_error_burst_threshold`、`node_auto_restart_enabled`、`node_auto_restart_grace_seconds`、`node_auto_restart_cooldown_seconds`、`node_auto_restart_max_attempts`。
+
+节点自动恢复：面板发现核心“应运行但已停止”超过阈值时下发 `restart`；Agent 心跳超过阈值未上报且节点启用了 SSH 凭据时，使用 SSH 重启 `mikvace-node` 容器或 systemd 服务。每个节点受冷却时间与每小时尝试次数限制，手停的核心不会被自动拉起。
 
 `subscription_hy2_endpoints` 取值为 `both`、`tls` 或 `hopping`，仅作为新建节点时 `includeTls` / `includeHopping` 的初始值；已有节点的订阅输出始终以节点自身的开关为准。
 
@@ -651,7 +654,7 @@ Authorization: Bearer <node token>
 | type | payload |
 | --- | --- |
 | `hello` | `version, os, arch, hy2Version, xrayVersion, cores, runtime, onlineUsers, capabilities` |
-| `heartbeat` | `cpuPct, memUsed, memTotal, diskUsed, diskTotal, load1, uptimeSec, online, trafficTx, trafficRx, hy2Running, coresRunning, version, hy2Version, xrayVersion, runtime` |
+| `heartbeat` | `cpuPct, memUsed, memTotal, diskUsed, diskTotal, load1, uptimeSec, online, trafficTx, trafficRx, hy2Running, coresRunning, coresDesired, version, hy2Version, xrayVersion, runtime` |
 | `stats` | `batchId, users {userId:{tx,rx}}, online {userId:count}, trafficTx, trafficRx` |
 | `logs` | `batchId, entries [{ts,level,message,raw}]` |
 | `config.ack` | `revision, ok, pending, error` |
@@ -666,11 +669,11 @@ Authorization: Bearer <node token>
 
 | type | payload |
 | --- | --- |
-| `config` | `revision, yaml, tlsMode, domain, host, port, portRange` |
+| `config` | `revision, yaml, tlsMode, domain, host, port, portRange, autoRestart` |
 | `cert.push` | `requestId, revision, domains, notBefore, notAfter, fingerprint, certPEM, keyPEM` |
 | `cert.error` | `requestId, error` |
 | `cert.renew` | `reason` |
-| `command` | `id, action: start/stop/restart` |
+| `command` | `id, action: start/stop/restart/restart-node` |
 | `log.ack` | `batchId` |
 | `stats.ack` | `batchId` |
 | `ping` | `{ts}` |

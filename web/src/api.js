@@ -200,6 +200,7 @@ export const api = {
   resetNodeToken: (id) => request(`/nodes/${id}/token`, { method: 'POST' }),
   syncNode: (id) => request(`/nodes/${id}/sync`, { method: 'POST' }),
   nodeCommand: (id, action) => request(`/nodes/${id}/command`, { method: 'POST', body: { action } }),
+  restartNode: (id) => request(`/nodes/${id}/restart`, { method: 'POST' }),
   nodeSSHInstall: (id) => request(`/nodes/${id}/ssh/install`, { method: 'POST' }),
   nodeConfig: (id) => request(`/nodes/${id}/config`),
   nodeInstall: (id) => request(`/nodes/${id}/install`),

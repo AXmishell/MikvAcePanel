@@ -33,9 +33,15 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 			tx, rx := a.trafficTotals()
 			runtimes, cores := a.runtimesState()
 			running := map[string]bool{}
+			desired := map[string]bool{}
 			hy2Running := false
 			for _, core := range cores {
-				if rt := runtimes[core]; rt != nil && rt.Running() {
+				rt := runtimes[core]
+				if rt == nil {
+					continue
+				}
+				desired[core] = rt.DesiredRunning()
+				if rt.Running() {
 					running[core] = true
 					if core == "hysteria" {
 						hy2Running = true
@@ -48,11 +54,11 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 				"diskUsed": sys.DiskUsed, "diskTotal": sys.DiskTotal, "load1": sys.Load1,
 				"uptimeSec": sys.UptimeSec, "online": a.onlineCount(),
 				"trafficTx": tx, "trafficRx": rx, "hy2Running": hy2Running,
-				"coresRunning": running,
-				"version":      a.cfg.Version,
-				"hy2Version":   hy2Version,
-				"xrayVersion":  xrayVersion,
-				"runtime":      runtimeName,
+				"coresRunning": running, "coresDesired": desired,
+				"version":     a.cfg.Version,
+				"hy2Version":  hy2Version,
+				"xrayVersion": xrayVersion,
+				"runtime":     runtimeName,
 			})
 		}
 	}

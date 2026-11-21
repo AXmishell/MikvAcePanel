@@ -30,6 +30,7 @@ type Server struct {
 	users     *usersvc.Service
 	nodes     *nodesvc.Service
 	hub       *Hub
+	watchdog  *nodeWatchdog
 	analyzer  *logs.Analyzer
 	cache     *cache.Store
 	certs     *certmanager.Manager
@@ -128,6 +129,7 @@ func NewWithLogs(cfg Config, st *store.Store, logStore store.LogStore, logger *s
 	s.redis = redisClient
 	s.sessions = newSessionStore(redisClient, cfg.SessionTTL, logger)
 	s.hub = NewHub(st, logger)
+	s.watchdog = newNodeWatchdog()
 	s.analyzer = logs.New(st, logStore)
 	s.cache = cache.New(redisClient, cache.DefaultMaxEntries, cache.DefaultL1TTL)
 	certKey, err := certcrypto.LoadKey(cfg.DataDir, cfg.CertKeyFile)

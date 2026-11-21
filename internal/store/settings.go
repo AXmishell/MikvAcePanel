@@ -202,6 +202,12 @@ var DefaultSettings = map[string]string{
 	"backup_enabled":               "true",
 	"backup_interval_hours":        "24",
 	"backup_keep":                  "7",
+	// Node recovery: core failures are restarted through the agent, while an
+	// offline agent is restarted over SSH when credentials are configured.
+	"node_auto_restart_enabled":          "true",
+	"node_auto_restart_grace_seconds":    "60",
+	"node_auto_restart_cooldown_seconds": "300",
+	"node_auto_restart_max_attempts":     "3",
 	// The administrator security entrance is mandatory. The enabled flag is
 	// kept for older backups and API clients; the server forces it to "true".
 	"admin_security_enabled": "true",

@@ -74,6 +74,13 @@ type nodeMeta struct {
 	CertFingerprint string `json:"certFingerprint,omitempty"`
 	CertNotAfter    int64  `json:"certNotAfter,omitempty"`
 	KeyFingerprint  string `json:"keyFingerprint,omitempty"`
+	// AutoRestart is the effective panel policy for runtime crash recovery.
+	// A nil value keeps the historical default (enabled).
+	AutoRestart *bool `json:"autoRestart,omitempty"`
+}
+
+func (m nodeMeta) autoRestartEnabled() bool {
+	return m.AutoRestart == nil || *m.AutoRestart
 }
 
 type wsMessage struct {
@@ -105,6 +112,7 @@ func New(cfg Config, logger *slog.Logger) (*Agent, error) {
 			logger.Warn("core runtime unavailable", "core", core, "error", err)
 			continue
 		}
+		rt.SetAutoRestart(a.meta.autoRestartEnabled())
 		a.runtimes[core] = rt
 		a.cores = append(a.cores, core)
 	}
@@ -194,6 +202,16 @@ func (a *Agent) refreshStoredConfigs() {
 			a.currentConfig = next
 		}
 		a.configMu.Unlock()
+	}
+}
+
+// setAutoRestart applies the effective panel recovery policy to every core.
+func (a *Agent) setAutoRestart(enabled bool) {
+	runtimes, _ := a.runtimesState()
+	for _, rt := range runtimes {
+		if rt != nil {
+			rt.SetAutoRestart(enabled)
+		}
 	}
 }
 

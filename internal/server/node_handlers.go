@@ -124,6 +124,12 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		writeNodeError(w, err, "node")
 		return
 	}
+	// Auto-restart is carried in the config push. Changing only this flag does
+	// not alter the rendered proxy config, so force a push to update the agent
+	// without waiting for the next unrelated config revision.
+	if existing.AutoRestart != saved.AutoRestart {
+		cfg, pushed = s.syncNodeConfig(r.Context(), saved, true)
+	}
 	resp := s.nodeResponse(saved)
 	resp["configRevision"] = int64(0)
 	resp["configChanged"] = false
@@ -217,7 +223,7 @@ func (s *Server) handleSyncNode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSyncAll(w http.ResponseWriter, r *http.Request) {
-	total, pushed := s.syncAllNodes(r.Context())
+	total, pushed := s.syncAllNodes(r.Context(), false)
 	s.store.AddEvent(r.Context(), "sync.completed", 0, "info",
 		fmt.Sprintf("已同步 %d 个节点（推送 %d 份配置）", total, pushed))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "nodes": total, "pushed": pushed})
@@ -237,7 +243,7 @@ func (s *Server) handleNodeCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch req.Action {
-	case "start", "stop", "restart", "sync":
+	case "start", "stop", "restart", "restart-node", "sync":
 	default:
 		writeError(w, http.StatusBadRequest, "unsupported action")
 		return
@@ -257,8 +263,49 @@ func (s *Server) handleNodeCommand(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "node agent is not connected")
 		return
 	}
+	if s.watchdog != nil {
+		s.watchdog.markCommand(id, req.Action)
+	}
 	s.store.AddEvent(r.Context(), "node.command", id, "info", "已向节点发送命令 "+req.Action)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "commandId": cmdID})
+}
+
+// handleRestartNode restarts the whole node: the agent process and every
+// configured core. It uses the live control channel when available and falls
+// back to SSH for an offline agent.
+func (s *Server) handleRestartNode(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	n, err := s.store.GetNode(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err, "node")
+		return
+	}
+	method, result := s.performNodeRestart(n)
+	if method == "" {
+		writeError(w, http.StatusConflict, result.Error)
+		return
+	}
+	if !result.OK {
+		reason := result.Error
+		if reason == "" {
+			reason = "unknown error"
+		}
+		s.store.AddEvent(r.Context(), "node.restart_failed", id, "warning",
+			"节点 "+n.Name+" 重启失败（"+method+"）："+reason)
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"ok": false, "method": method, "error": reason, "output": result.Output,
+		})
+		return
+	}
+	s.store.AddEvent(r.Context(), "node.restart", id, "info",
+		"已重启节点 "+n.Name+"（"+method+"）")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "method": method, "output": result.Output,
+	})
 }
 
 func (s *Server) handleNodeConfig(w http.ResponseWriter, r *http.Request) {

@@ -40,6 +40,7 @@ type Input struct {
 	MaxOnline        int                `json:"maxOnline"`
 	Ranking          float64            `json:"ranking"`
 	Active           *bool              `json:"active"`
+	AutoRestart      *bool              `json:"autoRestart"`
 	GroupIDs         []int64            `json:"groupIds"`
 	Groups           []int64            `json:"groups"`
 }

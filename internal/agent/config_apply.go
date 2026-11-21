@@ -48,18 +48,19 @@ func (a *Agent) writeConfigFiles(files map[string]string) error {
 
 func (a *Agent) handleConfig(raw json.RawMessage) {
 	var msg struct {
-		Revision  int64             `json:"revision"`
-		Protocol  string            `json:"protocol"`
-		Config    string            `json:"config"`
-		YAML      string            `json:"yaml"`
-		Configs   map[string]string `json:"configs"`
-		Cores     []string          `json:"cores"`
-		TLSMode   string            `json:"tlsMode"`
-		Domain    string            `json:"domain"`
-		Host      string            `json:"host"`
-		Port      int               `json:"port"`
-		PortRange string            `json:"portRange"`
-		Files     map[string]string `json:"files"`
+		Revision    int64             `json:"revision"`
+		Protocol    string            `json:"protocol"`
+		Config      string            `json:"config"`
+		YAML        string            `json:"yaml"`
+		Configs     map[string]string `json:"configs"`
+		Cores       []string          `json:"cores"`
+		TLSMode     string            `json:"tlsMode"`
+		Domain      string            `json:"domain"`
+		Host        string            `json:"host"`
+		Port        int               `json:"port"`
+		PortRange   string            `json:"portRange"`
+		Files       map[string]string `json:"files"`
+		AutoRestart *bool             `json:"autoRestart"`
 	}
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		a.log.Warn("invalid config push")
@@ -101,6 +102,19 @@ func (a *Agent) handleConfig(raw json.RawMessage) {
 			cores = append(cores, core)
 		}
 		sort.Strings(cores)
+	}
+
+	if msg.AutoRestart != nil {
+		a.configMu.Lock()
+		changed := a.meta.AutoRestart == nil || *a.meta.AutoRestart != *msg.AutoRestart
+		if changed {
+			a.meta.AutoRestart = msg.AutoRestart
+		}
+		a.configMu.Unlock()
+		if changed {
+			a.setAutoRestart(*msg.AutoRestart)
+			a.saveLocalState()
+		}
 	}
 
 	if err := a.writeConfigFiles(msg.Files); err != nil {

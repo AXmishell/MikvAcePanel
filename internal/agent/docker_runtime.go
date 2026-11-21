@@ -20,11 +20,13 @@ type dockerRuntime struct {
 	container  string
 	configPath string
 
-	mu      sync.Mutex
-	logCmd  *exec.Cmd
-	logStop chan struct{}
-	version string
-	started bool
+	mu          sync.Mutex
+	logCmd      *exec.Cmd
+	logStop     chan struct{}
+	version     string
+	started     bool
+	desired     bool
+	autoRestart bool
 	// versionCheckedAt is the last time detectVersion ran. Guarded by mu.
 	versionCheckedAt time.Time
 }
@@ -55,11 +57,17 @@ func (d *dockerRuntime) RefreshVersion() {
 
 func (d *dockerRuntime) Start() error {
 	d.mu.Lock()
+	d.desired = true
+	autoRestart := d.autoRestart
 	if d.started {
 		d.mu.Unlock()
 		return nil
 	}
 	d.mu.Unlock()
+	restartPolicy := "no"
+	if autoRestart {
+		restartPolicy = "unless-stopped"
+	}
 	// Remove a stale container with our name.
 	_ = exec.Command("docker", "rm", "-f", d.container).Run()
 	containerConfig := "/data/config/config.yaml"
@@ -68,7 +76,7 @@ func (d *dockerRuntime) Start() error {
 	}
 	args := []string{
 		"run", "-d", "--name", d.container,
-		"--restart", "unless-stopped", "--network", "host", "--cap-add", "NET_ADMIN",
+		"--restart", restartPolicy, "--network", "host", "--cap-add", "NET_ADMIN",
 		"-v", d.cfg.HostDataDir + ":/data",
 		d.image,
 	}
@@ -141,6 +149,7 @@ func (d *dockerRuntime) startLogs() {
 func (d *dockerRuntime) Stop() error {
 	d.mu.Lock()
 	d.started = false
+	d.desired = false
 	logCmd := d.logCmd
 	d.mu.Unlock()
 	if logCmd != nil && logCmd.Process != nil {
@@ -174,6 +183,29 @@ func (d *dockerRuntime) Running() bool {
 		return false
 	}
 	return strings.TrimSpace(string(out)) == "true"
+}
+
+func (d *dockerRuntime) DesiredRunning() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.desired
+}
+
+func (d *dockerRuntime) SetAutoRestart(enabled bool) {
+	d.mu.Lock()
+	d.autoRestart = enabled
+	started := d.started
+	d.mu.Unlock()
+	if !started {
+		return
+	}
+	policy := "no"
+	if enabled {
+		policy = "unless-stopped"
+	}
+	if out, err := exec.Command("docker", "update", "--restart", policy, d.container).CombinedOutput(); err != nil {
+		emit(d.sink, "WARN", "update docker restart policy: "+strings.TrimSpace(string(out)))
+	}
 }
 
 func (d *dockerRuntime) Close() { _ = d.Stop() }

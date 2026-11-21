@@ -137,6 +137,27 @@ WantedBy=multi-user.target
 
 ---
 
+## 重启与自动恢复
+
+Agent 支持三种重启范围：
+
+| 入口 | 行为 |
+| --- | --- |
+| 面板节点卡片/列表的 **重启节点** | Agent 在线时下发 `restart-node`：依次停止核心，再 `exec` 自身进程；新进程读取本地配置并重新启动核心。离线时面板使用已保存的 SSH 凭据执行 `docker restart mikvace-node`，并回退到 `systemctl restart mikvace-node` |
+| 启动/停止/重启核心 | 现有 `start` / `stop` / `restart` 命令，只影响代理核心 |
+| 异常自动重启 | 面板看门狗 + Agent 本地守护，见下 |
+
+自动恢复同时受全局设置（设置 → 节点恢复）和节点级 `autoRestart` 控制：
+
+- Agent 心跳上报 `coresRunning` 与 `coresDesired`。面板只在核心“应运行但已停止”超过阈值时下发 `restart`，因此管理员手动 `stop` 的核心不会被自动拉起。
+- Agent 失联超过阈值后，面板才会尝试 SSH 重启；要求节点已启用、`autoRestart=true`，并配置了 SSH 用户与密码/私钥。
+- 恢复动作带冷却时间与每小时次数上限，避免故障节点反复重启。
+- 面板把有效策略随 `config` 消息的 `autoRestart` 字段下发；Agent 进程模式据此决定进程退出后是否自动拉起，Docker 模式据此设置容器的 `--restart` 策略。旧版 Agent 会忽略该字段，仍保留原有的本地守护行为。
+
+`restart-node` 依赖平台支持 `exec` 自身二进制；Linux 容器与 systemd 部署下无需额外 supervisor，非 Unix 平台会返回错误并保持核心运行。
+
+---
+
 ## 配置
 
 配置优先级：环境变量 > `node.yaml` > 默认值。`--config` 只用于指定 YAML 路径；文件不存在时会自动使用环境变量，因此纯容器部署不需要任何配置文件。默认查找顺序：`--config` → `node.yaml` → `config/node.yaml` → `/config/node.yaml` → `/data/node.yaml`。

@@ -92,6 +92,13 @@ func Build(p *Input, existing *model.Node) (*model.Node, error) {
 	if p.Active != nil {
 		active = *p.Active
 	}
+	autoRestart := true
+	if existing != nil {
+		autoRestart = existing.AutoRestart
+	}
+	if p.AutoRestart != nil {
+		autoRestart = *p.AutoRestart
+	}
 	acl := []string{}
 	for _, line := range p.ACL {
 		line = strings.TrimSpace(line)
@@ -151,7 +158,7 @@ func Build(p *Input, existing *model.Node) (*model.Node, error) {
 		BandwidthUp: strings.TrimSpace(p.BandwidthUp), BandwidthDown: strings.TrimSpace(p.BandwidthDown),
 		MasqueradeURL: strings.TrimSpace(p.MasqueradeURL), ACL: acl, Outbounds: outbounds,
 		Xray: p.Xray, Hy2: hy2, Cores: cores, MaxOnline: p.MaxOnline, Ranking: ranking, Active: active,
-		RuntimeMode: runtimeMode,
+		AutoRestart: autoRestart, RuntimeMode: runtimeMode,
 	}
 	if n.HasCore("xray") {
 		if existing != nil && existing.HasCore("xray") {

@@ -21,12 +21,13 @@ type processRuntime struct {
 	args       []string
 	configPath string
 
-	mu      sync.Mutex
-	cmd     *exec.Cmd
-	running bool
-	desired bool
-	closed  bool
-	version string
+	mu          sync.Mutex
+	cmd         *exec.Cmd
+	running     bool
+	desired     bool
+	closed      bool
+	autoRestart bool
+	version     string
 	// versionCheckedAt is the last time detectVersion ran. Guarded by mu.
 	versionCheckedAt time.Time
 }
@@ -107,7 +108,7 @@ func (p *processRuntime) wait(cmd *exec.Cmd) {
 	p.mu.Lock()
 	p.running = false
 	p.cmd = nil
-	desired := p.desired && !p.closed
+	desired := p.desired && !p.closed && p.autoRestart
 	p.mu.Unlock()
 	if err != nil {
 		emit(p.sink, "ERROR", p.protocol+" process exited: "+err.Error())
@@ -117,7 +118,7 @@ func (p *processRuntime) wait(cmd *exec.Cmd) {
 	if desired {
 		time.AfterFunc(3*time.Second, func() {
 			p.mu.Lock()
-			retry := p.desired && !p.closed && !p.running
+			retry := p.desired && p.autoRestart && !p.closed && !p.running
 			p.mu.Unlock()
 			if retry {
 				if err := p.Start(); err != nil {
@@ -166,6 +167,18 @@ func (p *processRuntime) Running() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.running
+}
+
+func (p *processRuntime) DesiredRunning() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.desired && !p.closed
+}
+
+func (p *processRuntime) SetAutoRestart(enabled bool) {
+	p.mu.Lock()
+	p.autoRestart = enabled
+	p.mu.Unlock()
 }
 
 func (p *processRuntime) Close() {

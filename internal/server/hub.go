@@ -129,16 +129,16 @@ func (h *Hub) SendToNode(nodeID int64, msgType string, payload any) bool {
 }
 
 // PushConfig sends a configuration revision to a node.
-func (h *Hub) PushConfig(nodeID, revision int64, protocol, config, tlsMode, domain, host, portRange string, port int, files map[string]string) bool {
+func (h *Hub) PushConfig(nodeID, revision int64, protocol, config, tlsMode, domain, host, portRange string, port int, autoRestart bool, files map[string]string) bool {
 	return h.SendToNode(nodeID, "config", map[string]any{
 		"revision": revision, "protocol": protocol, "config": config, "yaml": config,
 		"tlsMode": tlsMode, "domain": domain, "host": host, "portRange": portRange, "port": port,
-		"files": files,
+		"autoRestart": autoRestart, "files": files,
 	})
 }
 
 // PushConfigBundle sends one configuration per core to a multi-core agent.
-func (h *Hub) PushConfigBundle(nodeID, revision int64, configs map[string]string, cores []string, tlsMode, domain, host, portRange string, port int, files map[string]string) bool {
+func (h *Hub) PushConfigBundle(nodeID, revision int64, configs map[string]string, cores []string, tlsMode, domain, host, portRange string, port int, autoRestart bool, files map[string]string) bool {
 	primary := ""
 	primaryConfig := ""
 	if len(cores) > 0 {
@@ -149,7 +149,7 @@ func (h *Hub) PushConfigBundle(nodeID, revision int64, configs map[string]string
 		"revision": revision, "cores": cores, "configs": configs,
 		"protocol": primary, "config": primaryConfig, "yaml": primaryConfig,
 		"tlsMode": tlsMode, "domain": domain, "host": host, "portRange": portRange, "port": port,
-		"files": files,
+		"autoRestart": autoRestart, "files": files,
 	})
 }
 

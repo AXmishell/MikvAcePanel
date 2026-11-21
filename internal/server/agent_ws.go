@@ -56,6 +56,11 @@ type heartbeatPayload struct {
 	TrafficTx  int64   `json:"trafficTx"`
 	TrafficRx  int64   `json:"trafficRx"`
 	Hy2Running bool    `json:"hy2Running"`
+	// CoresRunning and CoresDesired let the panel distinguish an unexpected
+	// core failure (desired but not running) from an operator stop (not
+	// desired). Older agents omit both maps.
+	CoresRunning map[string]bool `json:"coresRunning"`
+	CoresDesired map[string]bool `json:"coresDesired"`
 	// Version fields are optional for backward compatibility with older
 	// agents. Pointers distinguish "not reported" from an empty core value
 	// (for example xrayVersion on a Hysteria-only node).
@@ -252,6 +257,9 @@ func (s *Server) handleHeartbeat(ctx context.Context, nodeID int64, nodeName str
 	var hb heartbeatPayload
 	if err := json.Unmarshal(raw, &hb); err != nil {
 		return
+	}
+	if s.watchdog != nil && len(hb.CoresDesired) > 0 {
+		s.watchdog.observeHeartbeat(nodeID, hb.CoresRunning, hb.CoresDesired)
 	}
 	dtx, drx := s.hub.HeartbeatDelta(nodeID, hb.TrafficTx, hb.TrafficRx)
 	if err := s.store.UpdateNodeHeartbeat(ctx, nodeID, hb.Online, dtx, drx); err != nil {

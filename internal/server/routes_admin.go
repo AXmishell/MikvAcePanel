@@ -55,6 +55,7 @@ func (s *Server) registerAdminRoutes(r chi.Router) {
 		pr.Post("/api/nodes/{id}/token", s.handleResetNodeToken)
 		pr.Post("/api/nodes/{id}/sync", s.handleSyncNode)
 		pr.Post("/api/nodes/{id}/command", s.handleNodeCommand)
+		pr.Post("/api/nodes/{id}/restart", s.handleRestartNode)
 		pr.Post("/api/nodes/{id}/ssh/install", s.handleNodeSSHInstall)
 		pr.Get("/api/nodes/{id}/config", s.handleNodeConfig)
 		pr.Get("/api/nodes/{id}/install", s.handleNodeInstall)

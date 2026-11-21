@@ -246,6 +246,7 @@ func nodesTable() Table {
 			integer("max_online", 0),
 			real("ranking", 1),
 			boolean("active", true),
+			boolean("auto_restart", true),
 			strDef("status", 32, "offline"),
 			unique(str("token_hash", 64)),
 			strDef("token", 191, ""),

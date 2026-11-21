@@ -89,7 +89,7 @@
           <router-link class="btn btn-sm" :to="adminPath('logs') + '?nodeId=' + n.id"><ScrollText :size="13" /> 日志</router-link>
           <button class="btn btn-sm" @click="openConfig(n)"><FileCode2 :size="13" /> 配置</button>
           <button class="btn btn-sm" @click="sync(n)"><RefreshCw :size="13" /> 同步</button>
-          <button class="btn btn-sm" :disabled="!n.connected" @click="command(n, 'restart')"><RotateCcw :size="13" /> 重启</button>
+          <button class="btn btn-sm" @click="restartNode(n)"><RotateCcw :size="13" /> 重启节点</button>
           <button class="btn btn-sm" :disabled="!n.connected" @click="command(n, 'stop')"><Square :size="13" /> 停止</button>
           <button class="btn btn-sm" @click="openEdit(n)"><Pencil :size="13" /> 编辑</button>
           <button v-tip="'删除节点'" class="icon-btn danger" @click="askDelete(n)"><Trash2 :size="15" /></button>
@@ -176,6 +176,7 @@
                   <router-link v-tip="'日志'" class="icon-btn" :to="adminPath('logs') + '?nodeId=' + n.id"><ScrollText :size="14" /></router-link>
                   <button v-tip="'配置'" class="icon-btn" @click="openConfig(n)"><FileCode2 :size="14" /></button>
                   <button v-tip="'同步'" class="icon-btn" @click="sync(n)"><RefreshCw :size="14" /></button>
+                  <button v-tip="'重启节点'" class="icon-btn" @click="restartNode(n)"><RotateCcw :size="14" /></button>
                   <button v-tip="'编辑'" class="icon-btn" @click="openEdit(n)"><Pencil :size="14" /></button>
                   <button v-tip="'删除节点'" class="icon-btn danger" @click="askDelete(n)"><Trash2 :size="14" /></button>
                 </div>
@@ -225,6 +226,8 @@
         </div>
         <div class="field full">
           <label class="checkbox"><input v-model="form.active" type="checkbox" /> 启用 — 加入订阅并允许 Agent 连接</label>
+          <label class="checkbox"><input v-model="form.autoRestart" type="checkbox" /> 异常故障时自动重启</label>
+          <span class="hint">核心异常停止或 Agent 离线时，面板按全局策略自动恢复；手动停止的核心不会被自动拉起。离线恢复需要配置 SSH 凭据。</span>
         </div>
         <div v-if="hasHysteria" class="field full" style="border-top: 1px solid var(--border); padding-top: 12px">
           <strong>订阅入口</strong>
@@ -1134,7 +1137,7 @@ function emptyForm() {
     name: '', flag: '', ip: '', domain: '', sni: '', listen: '', port: 443, statsPort: 9999,
     tlsMode: 'selfsigned', acmeEmail: '', portRange: '', hopInterval: '30s', obfsType: '',
     obfsPassword: '', bandwidthUp: '', bandwidthDown: '', masqueradeUrl: '',
-    type: 'hysteria', cores: ['hysteria'], runtimeMode: 'process', maxOnline: 0, ranking: 1, active: true, groupIds: [], aclText: 'direct(all)',
+    type: 'hysteria', cores: ['hysteria'], runtimeMode: 'process', maxOnline: 0, ranking: 1, active: true, autoRestart: true, groupIds: [], aclText: 'direct(all)',
     outbounds: [], sshPort: 22, sshUser: 'root', sshPassword: '', sshKey: '', sshHostKey: '', sshInstallDocker: false,
     hy2: hy2Defaults(),
     xray: {
@@ -1497,6 +1500,7 @@ function openEdit(n) {
     hopInterval: n.hopInterval || '', obfsType: n.obfsType || '', obfsPassword: n.obfsPassword || '',
     bandwidthUp: n.bandwidthUp || '', bandwidthDown: n.bandwidthDown || '', masqueradeUrl: n.masqueradeUrl || '',
     maxOnline: n.maxOnline || 0, ranking: n.ranking || 1, active: n.active,
+    autoRestart: n.autoRestart !== false,
     runtimeMode: n.runtimeMode || 'process',
     sshPort: n.sshPort || 22, sshUser: n.sshUser || '', sshPassword: '', sshKey: '',
     sshHostKey: n.sshHostKey || '', sshInstallDocker: !!n.sshInstallDocker,
@@ -1613,6 +1617,7 @@ async function save() {
       echPem: form.hy2.echPem,
       clearEch: !!form.hy2.clearEch,
       maxOnline: Number(form.maxOnline) || 0, ranking: Number(form.ranking) || 1, active: form.active,
+      autoRestart: !!form.autoRestart,
       runtimeMode: form.runtimeMode,
       sshPort: Number(form.sshPort) || 22, sshUser: form.sshUser,
       sshPassword: form.sshPassword, sshKey: form.sshKey, sshHostKey: form.sshHostKey,
@@ -1718,6 +1723,19 @@ async function command(n, action) {
   try {
     await api.nodeCommand(n.id, action)
     notify(`Command "${action}" sent`)
+  } catch (e) {
+    notify(e.message, 'error')
+  }
+}
+async function restartNode(n) {
+  const ok = await askConfirm(
+    `重启 ${n.name} 会短暂中断该节点的所有连接，并重启 Agent 与代理核心。继续？`,
+    { title: '重启节点', confirmText: '重启节点', tone: 'warn' },
+  )
+  if (!ok) return
+  try {
+    const res = await api.restartNode(n.id)
+    notify(res.method === 'ssh' ? '已通过 SSH 发送重启命令' : '已通过 Agent 重启节点')
   } catch (e) {
     notify(e.message, 'error')
   }

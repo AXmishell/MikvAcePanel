@@ -23,6 +23,12 @@ type Runtime interface {
 	Stop() error
 	Restart() error
 	Running() bool
+	// DesiredRunning reports whether the core should be running. A manual stop
+	// clears it so automatic recovery does not fight the operator.
+	DesiredRunning() bool
+	// SetAutoRestart controls the runtime's own crash supervision. The panel
+	// combines its global switch with the node-level setting before pushing it.
+	SetAutoRestart(bool)
 	Name() string
 	Version() string
 	// RefreshVersion re-reads the core version from the installed binary. It is
@@ -78,8 +84,9 @@ func NewRuntime(cfg Config, protocol string, sink func(LogLine)) (Runtime, error
 		}
 		return &dockerRuntime{
 			cfg: cfg, sink: sink, protocol: protocol, image: image, command: command,
-			container:  containerName(cfg, protocol),
-			configPath: filepath.Join(cfg.DataDir, "config", configName),
+			container:   containerName(cfg, protocol),
+			configPath:  filepath.Join(cfg.DataDir, "config", configName),
+			autoRestart: true,
 		}, nil
 	default:
 		if _, err := exec.LookPath(bin); err != nil {
@@ -87,8 +94,9 @@ func NewRuntime(cfg Config, protocol string, sink func(LogLine)) (Runtime, error
 		}
 		return &processRuntime{
 			cfg: cfg, sink: sink, protocol: protocol, bin: bin,
-			args:       append(args, "-c", filepath.Join(cfg.DataDir, "config", configName)),
-			configPath: filepath.Join(cfg.DataDir, "config", configName),
+			args:        append(args, "-c", filepath.Join(cfg.DataDir, "config", configName)),
+			configPath:  filepath.Join(cfg.DataDir, "config", configName),
+			autoRestart: true,
 		}, nil
 	}
 }

@@ -264,15 +264,18 @@ type Node struct {
 	MaxOnline        int          `json:"maxOnline"`
 	Ranking          float64      `json:"ranking"`
 	Active           bool         `json:"active"`
-	Status           string       `json:"status"`
-	Token            string       `json:"-"`
-	TokenPrefix      string       `json:"tokenPrefix"`
-	AgentVersion     string       `json:"agentVersion"`
-	OS               string       `json:"os"`
-	Arch             string       `json:"arch"`
-	Hy2Version       string       `json:"hy2Version"`
-	XrayVersion      string       `json:"xrayVersion"`
-	Runtime          string       `json:"runtime"`
+	// AutoRestart allows the panel watchdog to restart a failed core or an
+	// offline agent automatically. It is overridden by the global setting.
+	AutoRestart  bool   `json:"autoRestart"`
+	Status       string `json:"status"`
+	Token        string `json:"-"`
+	TokenPrefix  string `json:"tokenPrefix"`
+	AgentVersion string `json:"agentVersion"`
+	OS           string `json:"os"`
+	Arch         string `json:"arch"`
+	Hy2Version   string `json:"hy2Version"`
+	XrayVersion  string `json:"xrayVersion"`
+	Runtime      string `json:"runtime"`
 	// RuntimeMode is the operator-selected agent runtime (process or docker).
 	// Runtime is the value reported by the connected agent.
 	RuntimeMode     string     `json:"runtimeMode"`

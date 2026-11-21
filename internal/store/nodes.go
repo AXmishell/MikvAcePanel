@@ -27,12 +27,12 @@ const nodeSelect = `SELECT id, name, type, flag, ip, domain, sni, listen, port, 
 	masquerade_url, acl_json, outbounds_json, max_online, ranking, active, status, token_hash, token, token_prefix,
 	agent_version, os, arch, hy2_version, runtime, runtime_mode, last_seen_at, config_revision, applied_revision,
 	config_error, traffic_tx, traffic_rx, online_users, created_at, updated_at,
-	capabilities_json, cert_fingerprint, cert_not_after, cores_json, xray_version FROM nodes`
+	capabilities_json, cert_fingerprint, cert_not_after, cores_json, xray_version, auto_restart FROM nodes`
 
 func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
 	var n model.Node
 	var acl, outbounds, xrayJSON, hy2JSON string
-	var active, sshInstallDocker int
+	var active, sshInstallDocker, autoRestart int
 	var last sql.NullString
 	var capsJSON, certAfter, coresJSON sql.NullString
 	var created, updated string
@@ -43,7 +43,7 @@ func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
 		&n.MaxOnline, &n.Ranking, &active, &n.Status, new(string), &n.Token, &n.TokenPrefix, &n.AgentVersion,
 		&n.OS, &n.Arch, &n.Hy2Version, &n.Runtime, &n.RuntimeMode, &last, &n.ConfigRevision, &n.AppliedRevision,
 		&n.ConfigError, &n.TrafficTx, &n.TrafficRx, &n.OnlineUsers, &created, &updated,
-		&capsJSON, &n.CertFingerprint, &certAfter, &coresJSON, &n.XrayVersion)
+		&capsJSON, &n.CertFingerprint, &certAfter, &coresJSON, &n.XrayVersion, &autoRestart)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -51,6 +51,7 @@ func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
 		return nil, err
 	}
 	n.Active = active == 1
+	n.AutoRestart = autoRestart == 1
 	n.SSHInstallDocker = sshInstallDocker == 1
 	n.LastSeenAt = nullTime(last)
 	n.CertNotAfter = nullTime(certAfter)
@@ -266,13 +267,13 @@ func (s *Store) CreateNode(ctx context.Context, n *model.Node, tokenHash, tokenP
 		`INSERT INTO nodes (name, type, flag, ip, domain, sni, listen, port, port_range, hop_interval,
 		 obfs_type, obfs_password, stats_port, stats_secret, xray_json, hy2_json, cores_json, ssh_port, ssh_user, ssh_password, ssh_key, ssh_host_key, ssh_install_docker,
 		 tls_mode, acme_email, bandwidth_up, bandwidth_down,
-		 masquerade_url, acl_json, outbounds_json, max_online, ranking, active, status, token_hash, token, token_prefix,
+		 masquerade_url, acl_json, outbounds_json, max_online, ranking, active, auto_restart, status, token_hash, token, token_prefix,
 		 runtime_mode, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.Name, n.Type, n.Flag, n.IP, n.Domain, n.SNI, n.Listen, n.Port, n.PortRange, n.HopInterval,
 		n.ObfsType, n.ObfsPassword, n.StatsPort, n.StatsSecret, marshalJSON(n.Xray), marshalJSON(n.Hy2), marshalJSON(n.Cores), n.SSHPort, n.SSHUser, n.SSHPassword, n.SSHKey, n.SSHHostKey,
 		boolInt(n.SSHInstallDocker), n.TLSMode, n.ACMEEmail, n.BandwidthUp, n.BandwidthDown,
-		n.MasqueradeURL, marshalJSON(n.ACL), marshalJSON(n.Outbounds), n.MaxOnline, n.Ranking, boolInt(n.Active),
+		n.MasqueradeURL, marshalJSON(n.ACL), marshalJSON(n.Outbounds), n.MaxOnline, n.Ranking, boolInt(n.Active), boolInt(n.AutoRestart),
 		"offline", tokenHash, n.Token, tokenPrefix, nodeRuntimeMode(n), ts(nowT), ts(nowT))
 	if err != nil {
 		return nil, attr(err, "create node")
@@ -290,12 +291,12 @@ func (s *Store) UpdateNode(ctx context.Context, n *model.Node, groupIDs []int64)
 		 hop_interval = ?, obfs_type = ?, obfs_password = ?, stats_port = ?, xray_json = ?, hy2_json = ?, cores_json = ?, ssh_port = ?, ssh_user = ?,
 		 ssh_password = ?, ssh_key = ?, ssh_host_key = ?, ssh_install_docker = ?, tls_mode = ?, acme_email = ?,
 		 bandwidth_up = ?, bandwidth_down = ?, masquerade_url = ?, acl_json = ?, outbounds_json = ?,
-		 max_online = ?, ranking = ?, active = ?, runtime_mode = ?, updated_at = ? WHERE id = ?`,
+		 max_online = ?, ranking = ?, active = ?, auto_restart = ?, runtime_mode = ?, updated_at = ? WHERE id = ?`,
 		n.Name, n.Type, n.Flag, n.IP, n.Domain, n.SNI, n.Listen, n.Port, n.PortRange, n.HopInterval,
 		n.ObfsType, n.ObfsPassword, n.StatsPort, marshalJSON(n.Xray), marshalJSON(n.Hy2), marshalJSON(n.Cores), n.SSHPort, n.SSHUser, n.SSHPassword, n.SSHKey, n.SSHHostKey,
 		boolInt(n.SSHInstallDocker), n.TLSMode, n.ACMEEmail, n.BandwidthUp, n.BandwidthDown,
 		n.MasqueradeURL, marshalJSON(n.ACL), marshalJSON(n.Outbounds), n.MaxOnline, n.Ranking,
-		boolInt(n.Active), nodeRuntimeMode(n), ts(now()), n.ID)
+		boolInt(n.Active), boolInt(n.AutoRestart), nodeRuntimeMode(n), ts(now()), n.ID)
 	if err != nil {
 		return nil, attr(err, "update node")
 	}

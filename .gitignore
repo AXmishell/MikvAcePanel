@@ -5,6 +5,12 @@ bin/
 /dist/
 *.exe
 *.test
+*.prof
+*.pprof
+/coverage.out
+/coverage.html
+coverage/
+.go-build/
 
 # documentation build
 site/
@@ -26,9 +32,25 @@ data-*/
 *.p12
 *.pfx
 
-# frontend deps (dist is committed so `go build` works without npm)
+# frontend deps and local caches (dist is committed so `go build` works without npm)
+node_modules/
 web/node_modules/
 web/.vite/
+web/coverage/
+web/.eslintcache
+*.tsbuildinfo
+test-results/
+playwright-report/
+blob-report/
+
+# documentation build environment
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # local configuration and secrets
 panel.yaml
@@ -38,10 +60,22 @@ node.token
 config/*
 !config/*.example.yaml
 .env
+.env.local
+.env.*.local
 docker.env
 
-# editor / OS
+# temporary files and editor / OS metadata
+*.tmp
+*.bak
+*.orig
+*.rej
+*~
+.cache/
+.history/
 .DS_Store
+Thumbs.db
+Desktop.ini
 .idea/
 .vscode/
+.fleet/
 *.swp
